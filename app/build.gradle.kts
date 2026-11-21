@@ -14,6 +14,17 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // Telegram API credentials, injected at build time. CI Secrets
+        // (TUXUNGRAM_API_ID / TUXUNGRAM_API_HASH) win when present.
+        // The fallback is Telegram Desktop's publicly known pair, used
+        // TEMPORARILY for development until the project's own api
+        // application is approved; swapping means filling the Secrets,
+        // nothing else in the app depends on these values.
+        val apiId = System.getenv("TUXUNGRAM_API_ID") ?: "2040"
+        val apiHash = System.getenv("TUXUNGRAM_API_HASH") ?: "b18441a1ff607e10a989891a5462e627"
+        buildConfigField("int", "API_ID", apiId)
+        buildConfigField("String", "API_HASH", "\"$apiHash\"")
     }
 
     // Release signing is injected by CI from repository secrets (the
@@ -67,6 +78,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
