@@ -57,7 +57,7 @@ object FolderStore {
         TdRepository.sendRaw(query) { response ->
             onDone(
                 if (TdClient.isError(response)) {
-                    response.optString("message")
+                    errorText(response)
                 } else {
                     null
                 }
@@ -76,7 +76,7 @@ object FolderStore {
         }
         TdRepository.sendRaw(fetch) { folder ->
             if (TdClient.isError(folder)) {
-                onDone(folder.optString("message"))
+                onDone(errorText(folder))
                 return@sendRaw
             }
             // Mutate only what the editor owns; icon, color and
@@ -90,7 +90,7 @@ object FolderStore {
             TdRepository.sendRaw(query) { response ->
                 onDone(
                     if (TdClient.isError(response)) {
-                        response.optString("message")
+                        errorText(response)
                     } else {
                         null
                     }
@@ -106,11 +106,26 @@ object FolderStore {
         TdRepository.sendRaw(query) { response ->
             onDone(
                 if (TdClient.isError(response)) {
-                    response.optString("message")
+                    errorText(response)
                 } else {
                     null
                 }
             )
+        }
+    }
+
+    /** Plain-language failure for the folder editor — TDLib's
+     *  raw error text never reaches the screen (audit fix A5;
+     *  the numeric code stays so a screenshot remains useful). */
+    private fun errorText(error: JSONObject): String {
+        val message = error.optString("message")
+        return when {
+            message.contains("FLOOD_WAIT") ->
+                "操作太频繁了，等一会儿再试。"
+            message.contains("TOO_MANY") ->
+                "文件夹太多了，先删掉一个不用的再试。"
+            else ->
+                "操作失败，再试一次。（错误码 ${error.optInt("code")}）"
         }
     }
 
