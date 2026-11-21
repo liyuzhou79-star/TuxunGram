@@ -206,6 +206,9 @@ fun ChatScreen(
         // The notifier must not post notifications for the chat
         // the user is already looking at (Batch 3, C1).
         Notifier.foregroundChatId = chatId
+        // Opening the chat also withdraws any notification it
+        // had raised (v0.7.0, F4).
+        Notifier.dismissForChat(context, chatId)
         onDispose {
             MessageStore.close()
             Notifier.foregroundChatId = 0L

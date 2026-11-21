@@ -30,6 +30,12 @@
             android:name=".td.KeepAliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- Notification quick-reply / mark-read actions
+             (v0.7.0, F4); only this app's own pending intents
+             can reach it. -->
+        <receiver
+            android:name=".td.NotificationActionReceiver"
+            android:exported="false" />
         <!-- Shares downloaded TDLib files with viewer/player apps. -->
         <provider
             android:name="androidx.core.content.FileProvider"
