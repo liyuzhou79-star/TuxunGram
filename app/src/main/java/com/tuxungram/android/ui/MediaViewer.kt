@@ -5,8 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -211,20 +214,18 @@ private fun PhotoPage(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(item.id) {
-                // One transform detector drives everything: pinch
-                // zooms, pan moves a zoomed photo, and a plain
-                // vertical pan while unzoomed becomes the
-                // drag-to-close gesture (decided on gesture end).
-                detectTransformGestures(
-                    onGestureEnd = {
-                        if (scale <= 1.01f && abs(dragY) > 140f) {
-                            onClose()
-                        } else {
-                            dragY = 0f
-                            onCloseDragChange(0f)
-                        }
-                    },
-                    onGesture = { _, pan, zoom, _ ->
+                // Hand-rolled transform handling (the callback
+                // overload of detectTransformGestures is not in
+                // this Compose version): pinch zooms, pan moves a
+                // zoomed photo, and a plain one-finger vertical
+                // pan while unzoomed becomes the drag-to-close
+                // gesture, decided when the gesture ends.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val zoom = event.calculateZoom()
+                        val pan = event.calculatePan()
                         if (scale > 1.01f || zoom != 1f) {
                             val newScale = (scale * zoom)
                                 .coerceIn(1f, 5f)
@@ -241,12 +242,19 @@ private fun PhotoPage(
                             }
                             dragY = 0f
                             onCloseDragChange(0f)
-                        } else {
+                            event.changes.forEach { it.consume() }
+                        } else if (event.changes.size == 1) {
                             dragY += pan.y
                             onCloseDragChange(dragY)
                         }
+                    } while (event.changes.any { it.pressed })
+                    if (scale <= 1.01f && abs(dragY) > 140f) {
+                        onClose()
+                    } else {
+                        dragY = 0f
+                        onCloseDragChange(0f)
                     }
-                )
+                }
             }
             .pointerInput(item.id) {
                 detectTapGestures(
