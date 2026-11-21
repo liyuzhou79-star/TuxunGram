@@ -221,6 +221,32 @@ fun FormColumn(
     }
 }
 
+/** Decode an image file downsampled so its long edge stays
+ *  under [maxDim] px. A full-size decode of a camera original
+ *  (6000x4000 and up) allocates a ~100 MB bitmap and can OOM
+ *  the app; anything shown on a phone screen loses nothing at
+ *  2048 px. Same approach as the media viewer's decoder. */
+fun decodeDownsampled(path: String, maxDim: Int = 2048): android.graphics.Bitmap? {
+    return try {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeFile(path, bounds)
+        var sample = 1
+        while (bounds.outWidth / sample > maxDim ||
+            bounds.outHeight / sample > maxDim
+        ) {
+            sample *= 2
+        }
+        BitmapFactory.decodeFile(
+            path,
+            BitmapFactory.Options().apply { inSampleSize = sample }
+        )
+    } catch (t: Throwable) {
+        null
+    }
+}
+
 /** Round avatar from a downloaded TDLib photo file; the small
  *  renditions are tiny, so a plain decode is fine. */
 @Composable

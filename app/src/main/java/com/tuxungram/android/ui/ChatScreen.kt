@@ -1082,13 +1082,9 @@ fun PhotoPreview(
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path
     ) {
-        value = withContext(Dispatchers.IO) {
-            try {
-                BitmapFactory.decodeFile(path)
-            } catch (t: Throwable) {
-                null
-            }
-        }
+        // The picked photo is a full-size camera original:
+        // decode it downsampled or a huge shot can OOM here.
+        value = withContext(Dispatchers.IO) { decodeDownsampled(path) }
     }
     Column(
         modifier = Modifier
@@ -2119,13 +2115,7 @@ fun LinkPreviewCard(msg: MsgItem) {
         value = if (photoPath == null) {
             null
         } else {
-            withContext(Dispatchers.IO) {
-                try {
-                    BitmapFactory.decodeFile(photoPath)
-                } catch (t: Throwable) {
-                    null
-                }
-            }
+            withContext(Dispatchers.IO) { decodeDownsampled(photoPath) }
         }
     }
     Column(

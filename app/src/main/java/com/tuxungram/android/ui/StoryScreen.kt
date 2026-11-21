@@ -110,11 +110,7 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
                     initialValue = null, current.localPath
                 ) {
                     value = withContext(Dispatchers.IO) {
-                        try {
-                            BitmapFactory.decodeFile(current.localPath)
-                        } catch (t: Throwable) {
-                            null
-                        }
+                        decodeDownsampled(current.localPath)
                     }
                 }
                 val bmp = bitmap
