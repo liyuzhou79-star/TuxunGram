@@ -88,6 +88,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.core.content.FileProvider
 import com.tuxungram.android.td.AccountStore
+import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.KeepAliveService
 import com.tuxungram.android.td.StorageStore
 import com.tuxungram.android.td.ProxyConfig
@@ -389,6 +390,200 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
         TextButton(onClick = { TdRepository.addAccount() }) {
             Text("添加账号")
+        }
+        Spacer(Modifier.height(28.dp))
+        Text("安全", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "应用锁：设一个 4-6 位数字密码，打开 App 和切回来时要先解锁。密码只存哈希，不存明文，Telegram 那边也看不到。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val pinSet by AppLock.pinSet.collectAsState()
+        val biometricEnabled by AppLock.biometricEnabled.collectAsState()
+        val autoLockMinutes by AppLock.autoLockMinutes.collectAsState()
+        var pinDialog by remember { mutableStateOf<String?>(null) }
+        var lockNotice by remember { mutableStateOf<String?>(null) }
+        if (!pinSet) {
+            Button(
+                onClick = { pinDialog = "set" },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+            ) {
+                Text("设置应用锁密码")
+            }
+        } else {
+            Row(modifier = Modifier.padding(top = 6.dp)) {
+                TextButton(onClick = { pinDialog = "change" }) {
+                    Text("修改密码")
+                }
+                TextButton(onClick = { pinDialog = "clear" }) {
+                    Text("关闭应用锁", color = Color(0xFFC62828))
+                }
+            }
+            val biometricOk = remember {
+                AppLock.biometricAvailable(settingsContext)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("指纹解锁")
+                    if (!biometricOk) {
+                        Text(
+                            "这台设备没有可用的指纹（没录入或不支持），所以用不了。",
+                            color = Color.Gray, fontSize = 12.sp
+                        )
+                    }
+                }
+                Switch(
+                    checked = biometricEnabled && biometricOk,
+                    onCheckedChange = { AppLock.setBiometricEnabled(it) },
+                    enabled = biometricOk
+                )
+            }
+            Text(
+                "自动锁定：切到后台多久以后，再回来要重新解锁。",
+                color = Color.Gray, fontSize = 13.sp,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                for (option in AppLock.AUTO_LOCK_OPTIONS) {
+                    TextButton(
+                        onClick = { AppLock.setAutoLockMinutes(option) },
+                        enabled = autoLockMinutes != option
+                    ) {
+                        Text(
+                            (if (autoLockMinutes == option) "● " else "○ ") +
+                                AppLock.autoLockLabel(option)
+                        )
+                    }
+                }
+            }
+        }
+        if (lockNotice != null) {
+            Text(
+                lockNotice!!, color = Color.Gray, fontSize = 13.sp,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+        val dialogMode = pinDialog
+        if (dialogMode != null) {
+            var currentPin by remember(dialogMode) { mutableStateOf("") }
+            var newPin by remember(dialogMode) { mutableStateOf("") }
+            var confirmPin by remember(dialogMode) { mutableStateOf("") }
+            var dialogError by remember(dialogMode) { mutableStateOf<String?>(null) }
+            AlertDialog(
+                onDismissRequest = { pinDialog = null },
+                title = {
+                    Text(
+                        when (dialogMode) {
+                            "set" -> "设置应用锁密码"
+                            "change" -> "修改应用锁密码"
+                            else -> "关闭应用锁"
+                        }
+                    )
+                },
+                text = {
+                    Column {
+                        if (dialogMode != "set") {
+                            OutlinedTextField(
+                                value = currentPin,
+                                onValueChange = {
+                                    currentPin = it.filter { ch -> ch.isDigit() }.take(6)
+                                },
+                                label = { Text("现在的密码") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.NumberPassword
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        if (dialogMode != "clear") {
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = newPin,
+                                onValueChange = {
+                                    newPin = it.filter { ch -> ch.isDigit() }.take(6)
+                                },
+                                label = { Text("新密码（4-6 位数字）") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.NumberPassword
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = confirmPin,
+                                onValueChange = {
+                                    confirmPin = it.filter { ch -> ch.isDigit() }.take(6)
+                                },
+                                label = { Text("再输一次新密码") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.NumberPassword
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        if (dialogError != null) {
+                            Text(
+                                dialogError!!,
+                                color = Color(0xFFC62828),
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        when (dialogMode) {
+                            "set" -> {
+                                if (newPin.length !in 4..6) {
+                                    dialogError = "密码要 4-6 位数字"
+                                } else if (newPin != confirmPin) {
+                                    dialogError = "两次输入不一样"
+                                } else {
+                                    AppLock.setPin(newPin)
+                                    lockNotice = "应用锁已打开。"
+                                    pinDialog = null
+                                }
+                            }
+                            "change" -> {
+                                if (!AppLock.verifyPin(currentPin)) {
+                                    dialogError = "现在的密码不对"
+                                } else if (newPin.length !in 4..6) {
+                                    dialogError = "新密码要 4-6 位数字"
+                                } else if (newPin != confirmPin) {
+                                    dialogError = "两次输入不一样"
+                                } else {
+                                    AppLock.setPin(newPin)
+                                    lockNotice = "密码已修改。"
+                                    pinDialog = null
+                                }
+                            }
+                            else -> {
+                                if (!AppLock.verifyPin(currentPin)) {
+                                    dialogError = "密码不对"
+                                } else {
+                                    AppLock.clearPin()
+                                    lockNotice = "应用锁已关闭。"
+                                    pinDialog = null
+                                }
+                            }
+                        }
+                    }) { Text("确定") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pinDialog = null }) {
+                        Text("取消")
+                    }
+                }
+            )
         }
         Spacer(Modifier.height(28.dp))
         Text("通知", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)

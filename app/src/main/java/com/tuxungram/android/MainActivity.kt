@@ -5,8 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.fragment.app.FragmentActivity
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import android.graphics.BitmapFactory
@@ -86,6 +86,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
@@ -104,6 +105,7 @@ import kotlinx.coroutines.delay
 
 import com.tuxungram.android.ui.ArchiveScreen
 import com.tuxungram.android.ui.ChatListScreen
+import com.tuxungram.android.ui.LockScreen
 import com.tuxungram.android.ui.ChatScreen
 import com.tuxungram.android.ui.ClosedScreen
 import com.tuxungram.android.ui.CodeScreen
@@ -118,9 +120,16 @@ import com.tuxungram.android.ui.SplashScreen
 import com.tuxungram.android.ui.StoryViewerScreen
 import com.tuxungram.android.ui.TransitionScreen
 
-class MainActivity : ComponentActivity() {
+// FragmentActivity (not plain ComponentActivity) because the
+// app lock's fingerprint prompt (BiometricPrompt) requires
+// one; it is a ComponentActivity subclass, so setContent and
+// the rest work unchanged.
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // App lock (v0.6.0, E2): read the persisted state before
+        // the UI composes; a set PIN means the app starts locked.
+        AppLock.init(applicationContext)
         // Edge-to-edge (Phase D, D2): content draws behind the
         // system bars; every screen gets its safe distance from
         // the windowInsetsPadding applied in AppRoot/ReadyHost,
@@ -160,6 +169,16 @@ class MainActivity : ComponentActivity() {
         handleOpenChatIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        AppLock.onForeground()
+    }
+
+    override fun onStop() {
+        AppLock.onBackground()
+        super.onStop()
+    }
+
     /** Notification taps carry the chat to open (Batch 3, C1). */
     private fun handleOpenChatIntent(intent: Intent?) {
         val chatId = intent?.getLongExtra("open_chat_id", 0L) ?: 0L
@@ -171,6 +190,19 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun AppRoot() {
+    // App lock gate (v0.6.0, E2): when locked, the lock screen
+    // covers everything — chat list, login flow, all of it.
+    val locked by AppLock.locked.collectAsState()
+    if (locked) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+        ) {
+            LockScreen()
+        }
+        return
+    }
     val authState by TdRepository.authState.collectAsState()
     var enteredPhone by remember { mutableStateOf("") }
     var forcePhone by remember { mutableStateOf(false) }

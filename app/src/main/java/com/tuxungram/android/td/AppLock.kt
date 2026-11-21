@@ -1,0 +1,162 @@
+package com.tuxungram.android.td
+
+import android.content.Context
+import androidx.biometric.BiometricManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import java.security.MessageDigest
+import java.security.SecureRandom
+
+/**
+ * App lock (v0.6.0, E2): a local PIN (4-6 digits) and optional
+ * fingerprint unlock, gating the whole UI on cold start and
+ * after the app has spent the configured time in the
+ * background. Purely local — nothing here talks to Telegram.
+ *
+ * The PIN is never stored in plain text: only a SHA-256 hash
+ * of (random per-install salt + PIN) is persisted, plus the
+ * PIN length (needed to auto-submit on the lock screen; the
+ * length alone reveals nothing useful).
+ */
+object AppLock {
+    private const val PREFS = "applock"
+    private const val KEY_SALT = "pin_salt"
+    private const val KEY_HASH = "pin_hash"
+    private const val KEY_LEN = "pin_len"
+    private const val KEY_BIOMETRIC = "biometric"
+    private const val KEY_AUTO_LOCK = "auto_lock_minutes"
+
+    /** Auto-lock choices in minutes; -1 = never re-lock while
+     *  the process lives (a cold start still locks). */
+    val AUTO_LOCK_OPTIONS = listOf(0, 1, 5, -1)
+
+    fun autoLockLabel(minutes: Int): String = when (minutes) {
+        0 -> "立即"
+        1 -> "1 分钟"
+        5 -> "5 分钟"
+        -1 -> "从不"
+        else -> "$minutes 分钟"
+    }
+
+    private val _pinSet = MutableStateFlow(false)
+    val pinSet: StateFlow<Boolean> = _pinSet
+
+    private val _biometricEnabled = MutableStateFlow(false)
+    val biometricEnabled: StateFlow<Boolean> = _biometricEnabled
+
+    private val _autoLockMinutes = MutableStateFlow(1)
+    val autoLockMinutes: StateFlow<Int> = _autoLockMinutes
+
+    private val _locked = MutableStateFlow(false)
+    val locked: StateFlow<Boolean> = _locked
+
+    @Volatile
+    private var appContext: Context? = null
+
+    @Volatile
+    private var backgroundedAt = 0L
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+        val prefs = prefs()
+        _pinSet.value = prefs.getString(KEY_HASH, null) != null
+        _biometricEnabled.value = prefs.getBoolean(KEY_BIOMETRIC, false)
+        val saved = prefs.getInt(KEY_AUTO_LOCK, 1)
+        _autoLockMinutes.value =
+            if (saved in AUTO_LOCK_OPTIONS) saved else 1
+        // Cold start: a set PIN means the app starts locked.
+        _locked.value = _pinSet.value
+    }
+
+    private fun prefs() =
+        appContext!!.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun pinLength(): Int = prefs().getInt(KEY_LEN, 4)
+
+    fun setPin(pin: String) {
+        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val saltHex = salt.joinToString("") { "%02x".format(it) }
+        prefs().edit()
+            .putString(KEY_SALT, saltHex)
+            .putString(KEY_HASH, hash(saltHex, pin))
+            .putInt(KEY_LEN, pin.length)
+            .apply()
+        _pinSet.value = true
+    }
+
+    fun verifyPin(pin: String): Boolean {
+        val prefs = prefs()
+        val salt = prefs.getString(KEY_SALT, null) ?: return false
+        val expected = prefs.getString(KEY_HASH, null) ?: return false
+        return hash(salt, pin) == expected
+    }
+
+    /** Remove the PIN entirely (caller verifies the current
+     *  PIN first). Fingerprint unlock goes with it — it is
+     *  only an alternative way past the same lock. */
+    fun clearPin() {
+        prefs().edit()
+            .remove(KEY_SALT)
+            .remove(KEY_HASH)
+            .remove(KEY_LEN)
+            .putBoolean(KEY_BIOMETRIC, false)
+            .apply()
+        _pinSet.value = false
+        _biometricEnabled.value = false
+        _locked.value = false
+    }
+
+    fun setBiometricEnabled(on: Boolean) {
+        _biometricEnabled.value = on
+        prefs().edit().putBoolean(KEY_BIOMETRIC, on).apply()
+    }
+
+    fun setAutoLockMinutes(minutes: Int) {
+        if (minutes !in AUTO_LOCK_OPTIONS) return
+        _autoLockMinutes.value = minutes
+        prefs().edit().putInt(KEY_AUTO_LOCK, minutes).apply()
+    }
+
+    fun unlock() {
+        _locked.value = false
+    }
+
+    /** Activity went to background: remember when. */
+    fun onBackground() {
+        if (backgroundedAt == 0L) {
+            backgroundedAt = System.currentTimeMillis()
+        }
+    }
+
+    /** Activity is foreground again: re-lock if the configured
+     *  timeout has elapsed since backgrounding. */
+    fun onForeground() {
+        val since = backgroundedAt
+        backgroundedAt = 0L
+        if (!_pinSet.value || since == 0L) return
+        val minutes = _autoLockMinutes.value
+        if (minutes < 0) return
+        val elapsed = System.currentTimeMillis() - since
+        if (elapsed >= minutes * 60_000L) {
+            _locked.value = true
+        }
+    }
+
+    /** Whether this device can actually do fingerprint unlock
+     *  (hardware present + at least one fingerprint enrolled). */
+    fun biometricAvailable(context: Context): Boolean {
+        return try {
+            BiometricManager.from(context).canAuthenticate(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG
+            ) == BiometricManager.BIOMETRIC_SUCCESS
+        } catch (t: Throwable) {
+            false
+        }
+    }
+
+    private fun hash(saltHex: String, pin: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest("$saltHex:$pin".toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+}

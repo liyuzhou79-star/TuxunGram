@@ -109,6 +109,10 @@ dependencies {
     // Core Material icons only (the extended set is huge); enough for
     // settings / back / send / attach style icon buttons.
     implementation("androidx.compose.material:material-icons-core")
+    // Fingerprint unlock for the app lock (v0.6.0, E2);
+    // BiometricPrompt needs the host activity to be a
+    // FragmentActivity, which MainActivity now is.
+    implementation("androidx.biometric:biometric:1.1.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.compose.ui:ui-tooling-preview")
     testImplementation("junit:junit:4.13.2")
