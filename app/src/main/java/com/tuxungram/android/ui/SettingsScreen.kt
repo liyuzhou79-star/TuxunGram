@@ -145,16 +145,16 @@ fun openDownloadedFile(context: android.content.Context, path: String) {
 fun SettingsScreen(onBack: () -> Unit, onOpenSessions: () -> Unit = {}) {
     BackHandler { onBack() }
     val settingsContext = LocalContext.current
-    val saved = remember { ProxyStore.load() }
-    var enabled by remember { mutableStateOf(saved?.enabled ?: false) }
-    var type by remember { mutableStateOf(saved?.type ?: "socks5") }
-    var server by remember { mutableStateOf(saved?.server ?: "") }
-    var port by remember { mutableStateOf((saved?.port ?: 1080).toString()) }
-    var username by remember { mutableStateOf(saved?.username ?: "") }
-    var password by remember { mutableStateOf(saved?.password ?: "") }
-    var secret by remember { mutableStateOf(saved?.secret ?: "") }
-    var localError by remember { mutableStateOf<String?>(null) }
-    var savedTip by remember { mutableStateOf(false) }
+    // Proxy list (v0.6.0, E4): entries live in ProxyStore; the
+    // editor dialog below creates or edits one entry.
+    val proxyEntries by ProxyStore.proxies.collectAsState()
+    val activeProxyId by ProxyStore.activeId.collectAsState()
+    var proxyEditor by remember { mutableStateOf<ProxyConfig?>(null) }
+    var proxyEditorOpen by remember { mutableStateOf(false) }
+    var proxyDeleteTarget by remember { mutableStateOf<ProxyConfig?>(null) }
+    var pingResults by remember {
+        mutableStateOf<Map<Long, String>>(emptyMap())
+    }
 
     val settingsScroll = rememberScrollState()
     Column(
@@ -172,111 +172,280 @@ fun SettingsScreen(onBack: () -> Unit, onOpenSessions: () -> Unit = {}) {
         Text("代理", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
         Text(
-            "连不上 Telegram 时用。填你自己的代理服务器，保存后立刻生效，下次打开 App 也会自动用上，不用再靠全局 VPN。",
+            "连不上 Telegram 时用。可以存多个代理，点哪个就用哪个，立刻生效，下次打开 App 也会自动用上次那个，不用再靠全局 VPN。",
             color = Color.Gray, fontSize = 13.sp
         )
-        Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("使用代理", modifier = Modifier.weight(1f))
-            Switch(checked = enabled, onCheckedChange = { enabled = it })
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("类型：")
-            TextButton(
-                onClick = { type = "socks5" },
-                enabled = type != "socks5"
-            ) { Text(if (type == "socks5") "● SOCKS5" else "○ SOCKS5") }
-            TextButton(
-                onClick = { type = "mtproto" },
-                enabled = type != "mtproto"
-            ) { Text(if (type == "mtproto") "● MTProto" else "○ MTProto") }
-        }
-        OutlinedTextField(
-            value = server,
-            onValueChange = { server = it },
-            label = { Text("服务器地址") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = port,
-            onValueChange = { port = it.filter { ch -> ch.isDigit() } },
-            label = { Text("端口") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-        )
-        if (type == "socks5") {
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = username,
-                onValueChange = { username = it },
-                label = { Text("用户名（可空）") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("密码（可空）") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation()
-            )
-        } else {
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = secret,
-                onValueChange = { secret = it },
-                label = { Text("密钥 secret（十六进制）") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-        }
-        if (localError != null) {
+        if (proxyEntries.isEmpty()) {
             Text(
-                localError!!, color = Color(0xFFC62828), fontSize = 14.sp,
-                modifier = Modifier.padding(top = 10.dp)
+                "还没有代理，点下面添加一个。",
+                color = Color.Gray, fontSize = 13.sp
             )
         }
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = {
-                val portNum = port.toIntOrNull()
-                if (enabled && (server.isBlank() || portNum == null || portNum !in 1..65535)) {
-                    localError = "地址或端口不对，检查一下"
-                    savedTip = false
-                } else {
-                    localError = null
-                    val config = ProxyConfig(
-                        enabled = enabled,
-                        type = type,
-                        server = server.trim(),
-                        port = portNum ?: 1080,
-                        username = username.trim(),
-                        password = password,
-                        secret = secret.trim()
+        for (entry in proxyEntries) {
+            val isActive = entry.id == activeProxyId
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        TdRepository.clearError()
+                        ProxyStore.setActive(entry.id)
+                    }
+                    .padding(vertical = 8.dp)
+            ) {
+                Text(if (isActive) "● " else "○ ")
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        entry.name.ifEmpty { entry.server },
+                        fontSize = 15.sp,
+                        fontWeight = if (isActive) {
+                            FontWeight.SemiBold
+                        } else {
+                            FontWeight.Normal
+                        }
                     )
-                    ProxyStore.save(config)
-                    TdRepository.clearError()
-                    ProxyStore.applyNow(config)
-                    savedTip = true
+                    Text(
+                        "${if (entry.type == "mtproto") "MTProto" else "SOCKS5"} · " +
+                            "${entry.server}:${entry.port}" +
+                            (pingResults[entry.id]?.let { " · $it" } ?: ""),
+                        color = Color.Gray, fontSize = 12.sp
+                    )
                 }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("保存")
+                if (isActive) {
+                    Text(
+                        "使用中",
+                        color = Color(0xFF2E7D32), fontSize = 12.sp
+                    )
+                }
+                TextButton(onClick = {
+                    pingResults = pingResults + (entry.id to "测速中…")
+                    ProxyStore.ping(entry) { seconds ->
+                        pingResults = pingResults + (entry.id to
+                            if (seconds == null) {
+                                "连不上"
+                            } else {
+                                "延迟 ${(seconds * 1000).toInt()} ms"
+                            })
+                    }
+                }) { Text("测速", fontSize = 13.sp) }
+                TextButton(onClick = {
+                    proxyEditor = entry
+                    proxyEditorOpen = true
+                }) { Text("编辑", fontSize = 13.sp) }
+                TextButton(onClick = { proxyDeleteTarget = entry }) {
+                    Text("删除", fontSize = 13.sp, color = Color(0xFFC62828))
+                }
+            }
         }
-        if (savedTip) {
-            Text(
-                "已保存。代理对不对，回到对话列表看消息能不能刷出来最准。",
-                color = Color.Gray, fontSize = 13.sp,
-                modifier = Modifier.padding(top = 8.dp)
-            )
+        Row {
+            Button(onClick = {
+                proxyEditor = null
+                proxyEditorOpen = true
+            }) {
+                Text("添加代理")
+            }
+            if (activeProxyId != 0L) {
+                Spacer(Modifier.width(10.dp))
+                TextButton(onClick = { ProxyStore.disableActive() }) {
+                    Text("停用代理（直连）")
+                }
+            }
         }
         ErrorText()
+        if (proxyEditorOpen) {
+            val editing = proxyEditor
+            var name by remember(editing?.id) {
+                mutableStateOf(editing?.name ?: "")
+            }
+            var type by remember(editing?.id) {
+                mutableStateOf(editing?.type ?: "socks5")
+            }
+            var server by remember(editing?.id) {
+                mutableStateOf(editing?.server ?: "")
+            }
+            var port by remember(editing?.id) {
+                mutableStateOf((editing?.port ?: 1080).toString())
+            }
+            var username by remember(editing?.id) {
+                mutableStateOf(editing?.username ?: "")
+            }
+            var password by remember(editing?.id) {
+                mutableStateOf(editing?.password ?: "")
+            }
+            var secret by remember(editing?.id) {
+                mutableStateOf(editing?.secret ?: "")
+            }
+            var editorError by remember(editing?.id) {
+                mutableStateOf<String?>(null)
+            }
+            AlertDialog(
+                onDismissRequest = { proxyEditorOpen = false },
+                title = {
+                    Text(if (editing == null) "添加代理" else "编辑代理")
+                },
+                text = {
+                    Column {
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            label = { Text("名称（可空）") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("类型：")
+                            TextButton(
+                                onClick = { type = "socks5" },
+                                enabled = type != "socks5"
+                            ) {
+                                Text(if (type == "socks5") "● SOCKS5" else "○ SOCKS5")
+                            }
+                            TextButton(
+                                onClick = { type = "mtproto" },
+                                enabled = type != "mtproto"
+                            ) {
+                                Text(if (type == "mtproto") "● MTProto" else "○ MTProto")
+                            }
+                        }
+                        OutlinedTextField(
+                            value = server,
+                            onValueChange = { server = it },
+                            label = { Text("服务器地址") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = port,
+                            onValueChange = {
+                                port = it.filter { ch -> ch.isDigit() }
+                            },
+                            label = { Text("端口") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number
+                            )
+                        )
+                        if (type == "socks5") {
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = username,
+                                onValueChange = { username = it },
+                                label = { Text("用户名（可空）") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = password,
+                                onValueChange = { password = it },
+                                label = { Text("密码（可空）") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                visualTransformation =
+                                    PasswordVisualTransformation()
+                            )
+                        } else {
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = secret,
+                                onValueChange = { secret = it },
+                                label = { Text("密钥 secret（十六进制）") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                        }
+                        if (editorError != null) {
+                            Text(
+                                editorError!!,
+                                color = Color(0xFFC62828),
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val portNum = port.toIntOrNull()
+                        if (server.isBlank() || portNum == null ||
+                            portNum !in 1..65535
+                        ) {
+                            editorError = "地址或端口不对，检查一下"
+                        } else {
+                            TdRepository.clearError()
+                            if (editing == null) {
+                                val created = ProxyStore.add(
+                                    name = name.trim(),
+                                    type = type,
+                                    server = server.trim(),
+                                    port = portNum,
+                                    username = username.trim(),
+                                    password = password,
+                                    secret = secret.trim()
+                                )
+                                // First proxy ever: turn it on
+                                // right away, like the old form.
+                                if (proxyEntries.isEmpty()) {
+                                    ProxyStore.setActive(created.id)
+                                }
+                            } else {
+                                ProxyStore.update(
+                                    editing.copy(
+                                        name = name.trim(),
+                                        type = type,
+                                        server = server.trim(),
+                                        port = portNum,
+                                        username = username.trim(),
+                                        password = password,
+                                        secret = secret.trim()
+                                    )
+                                )
+                            }
+                            proxyEditorOpen = false
+                        }
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { proxyEditorOpen = false }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
+        val deleteTarget = proxyDeleteTarget
+        if (deleteTarget != null) {
+            AlertDialog(
+                onDismissRequest = { proxyDeleteTarget = null },
+                title = { Text("删除这个代理？") },
+                text = {
+                    Text(
+                        deleteTarget.name.ifEmpty { deleteTarget.server } +
+                            "（${deleteTarget.server}:${deleteTarget.port}）" +
+                            if (deleteTarget.id == activeProxyId) {
+                                "。它正在使用中，删掉会同时停用代理。"
+                            } else {
+                                ""
+                            }
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        ProxyStore.remove(deleteTarget.id)
+                        proxyDeleteTarget = null
+                    }) {
+                        Text("删除", color = Color(0xFFC62828))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { proxyDeleteTarget = null }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
         Spacer(Modifier.height(28.dp))
         Text("显示", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
