@@ -137,6 +137,7 @@ fun openDownloadedFile(context: android.content.Context, path: String) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     BackHandler { onBack() }
