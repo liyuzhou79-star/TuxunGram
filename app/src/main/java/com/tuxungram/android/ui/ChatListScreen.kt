@@ -105,7 +105,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun ForwardPickerScreen(
     fromChatId: Long,
-    messageId: Long,
+    messageIds: List<Long>,
     onDone: () -> Unit
 ) {
     val chats by ChatStore.chats.collectAsState()
@@ -146,8 +146,8 @@ fun ForwardPickerScreen(
                     ChatRow(chat, onClick = {
                         busy = true
                         error = null
-                        MessageStore.forwardMessage(
-                            fromChatId, messageId, chat.id
+                        MessageStore.forwardMessages(
+                            fromChatId, messageIds, chat.id
                         ) { failure ->
                             if (failure == null) {
                                 onDone()

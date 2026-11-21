@@ -284,8 +284,9 @@ private fun ReadyHost() {
     var profileChatId by remember { mutableStateOf<Long?>(null) }
     var showCreate by remember { mutableStateOf(false) }
     var storyChatId by remember { mutableStateOf<Long?>(null) }
-    // Forward flow: (fromChatId, messageId) plus where to return to.
-    var forwardReq by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    // Forward flow: (fromChatId, messageIds) plus where to return
+    // to. A list since v0.7.0 — multi-select forwards in one call.
+    var forwardReq by remember { mutableStateOf<Pair<Long, List<Long>>?>(null) }
     var forwardReturnTo by remember { mutableStateOf<Long?>(null) }
     val chatId = openChatId
     val req = forwardReq
@@ -337,7 +338,7 @@ private fun ReadyHost() {
         )
         req != null -> ForwardPickerScreen(
             fromChatId = req.first,
-            messageId = req.second,
+            messageIds = req.second,
             onDone = {
                 forwardReq = null
                 openChatId = forwardReturnTo
@@ -357,9 +358,9 @@ private fun ReadyHost() {
         else -> ChatScreen(
             chatId = chatId,
             onBack = { openChatId = null },
-            onForward = { msg ->
+            onForward = { msgs ->
                 forwardReturnTo = chatId
-                forwardReq = chatId to msg.id
+                forwardReq = chatId to msgs.map { it.id }
                 openChatId = null
             },
             onOpenProfile = { profileChatId = chatId }

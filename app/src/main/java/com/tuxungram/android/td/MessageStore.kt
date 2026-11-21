@@ -491,12 +491,29 @@ object MessageStore {
         messageId: Long,
         toChatId: Long,
         onResult: (String?) -> Unit
+    ) = forwardMessages(fromChatId, listOf(messageId), toChatId, onResult)
+
+    /** Forward several messages in one call — forwardMessages
+     *  takes a whole message_ids vector (verified in td_api.tl);
+     *  the multi-select bar uses this (v0.7.0, F1). Ids are sent
+     *  oldest-first so the target chat reads in order. */
+    fun forwardMessages(
+        fromChatId: Long,
+        messageIds: List<Long>,
+        toChatId: Long,
+        onResult: (String?) -> Unit
     ) {
+        if (messageIds.isEmpty()) {
+            onResult(null)
+            return
+        }
+        val ids = JSONArray()
+        for (id in messageIds.sorted()) ids.put(id)
         val query = TdClient.request("forwardMessages").apply {
             put("chat_id", toChatId)
             put("topic_id", JSONObject.NULL)
             put("from_chat_id", fromChatId)
-            put("message_ids", JSONArray().put(messageId))
+            put("message_ids", ids)
             put("options", JSONObject.NULL)
             put("send_copy", false)
             put("remove_caption", false)
@@ -507,6 +524,38 @@ object MessageStore {
             } else {
                 onResult(null)
             }
+        }
+    }
+
+    /** Delete a multi-select batch (v0.7.0, F1). With
+     *  [revokeAll] (admin with the delete right) everything is
+     *  revoked for everyone in one call; otherwise own messages
+     *  are revoked and other people's are removed locally only —
+     *  the same split as the single-message delete. Bubbles
+     *  disappear via updateDeleteMessages. */
+    fun deleteSelected(items: List<MsgItem>, revokeAll: Boolean) {
+        val chatId = currentChatId
+        if (chatId == 0L || items.isEmpty()) return
+        fun send(ids: List<Long>, revoke: Boolean) {
+            if (ids.isEmpty()) return
+            val arr = JSONArray()
+            for (id in ids) arr.put(id)
+            val query = TdClient.request("deleteMessages").apply {
+                put("chat_id", chatId)
+                put("message_ids", arr)
+                put("revoke", revoke)
+            }
+            TdRepository.sendRaw(query) { response ->
+                if (TdClient.isError(response)) {
+                    _sendError.value = sendErrorText(response)
+                }
+            }
+        }
+        if (revokeAll) {
+            send(items.map { it.id }, revoke = true)
+        } else {
+            send(items.filter { it.outgoing }.map { it.id }, revoke = true)
+            send(items.filter { !it.outgoing }.map { it.id }, revoke = false)
         }
     }
 

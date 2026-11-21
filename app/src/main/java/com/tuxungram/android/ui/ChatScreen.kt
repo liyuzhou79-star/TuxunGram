@@ -92,8 +92,18 @@ import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.SecretChatStore
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -155,7 +165,7 @@ fun dayKey(dateSeconds: Int): Int {
 fun ChatScreen(
     chatId: Long,
     onBack: () -> Unit,
-    onForward: (MsgItem) -> Unit,
+    onForward: (List<MsgItem>) -> Unit,
     onOpenProfile: () -> Unit
 ) {
     val context = LocalContext.current
@@ -170,6 +180,14 @@ fun ChatScreen(
     }
     val messages by MessageStore.messages.collectAsState()
     val sendError by MessageStore.sendError.collectAsState()
+    val clipboard = LocalClipboardManager.current
+    // Multi-select mode (v0.7.0, F1): long-press a message and
+    // choose 多选, then tap messages to add/remove them; the top
+    // bar shows the count and a bottom bar offers the batch
+    // actions. Empty set = not in selection mode.
+    var selectedIds by remember(chatId) { mutableStateOf<Set<Long>>(emptySet()) }
+    val selectionMode = selectedIds.isNotEmpty()
+    var pendingDelete by remember { mutableStateOf<List<MsgItem>?>(null) }
     var input by remember { mutableStateOf("") }
     var pendingPhoto by remember { mutableStateOf<String?>(null) }
     var photoCaption by remember { mutableStateOf("") }
@@ -189,7 +207,11 @@ fun ChatScreen(
             Notifier.foregroundChatId = 0L
         }
     }
-    BackHandler { onBack() }
+    // In selection mode Back first leaves the mode, like in
+    // mature clients; only a second Back leaves the chat.
+    BackHandler {
+        if (selectionMode) selectedIds = emptySet() else onBack()
+    }
 
     // Arriving from a search result: jump to that message once.
     LaunchedEffect(chatId) {
@@ -314,6 +336,24 @@ fun ChatScreen(
             // from ReadyHost's systemBars padding.
             .imePadding()
     ) {
+        if (selectionMode) {
+            // Selection-mode header (v0.7.0, F1): count + exit.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { selectedIds = emptySet() }) {
+                    Icon(Icons.Filled.Close, contentDescription = "退出多选")
+                }
+                Text(
+                    "已选 ${selectedIds.size} 条",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        } else {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -352,6 +392,7 @@ fun ChatScreen(
             IconButton(onClick = { chatSearchOpen = !chatSearchOpen }) {
                 Icon(Icons.Filled.Search, contentDescription = "搜索聊天记录")
             }
+        }
         }
 
         if (chat?.isSecret == true) {
@@ -488,6 +529,44 @@ fun ChatScreen(
 
 
 
+        val toDelete = pendingDelete
+        if (toDelete != null) {
+            // Multi-delete confirm (v0.7.0, F1). Admins with the
+            // delete right revoke everything; otherwise own
+            // messages are revoked and other people's are only
+            // removed locally — the dialog says which.
+            val allOwn = toDelete.all { it.outgoing }
+            val adminRevoke = !allOwn && adminCaps.canDeleteAny
+            AlertDialog(
+                onDismissRequest = { pendingDelete = null },
+                title = { Text("删除选中的 ${toDelete.size} 条消息？") },
+                text = {
+                    Text(
+                        when {
+                            allOwn -> "会同时为所有人删除。"
+                            adminRevoke ->
+                                "你是管理员，所选消息会为所有人删除。"
+                            toDelete.any { it.outgoing } ->
+                                "你发的会为所有人删除，对方发的只在你这边删除。"
+                            else -> "只在你这边删除。"
+                        }
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        MessageStore.deleteSelected(toDelete, adminRevoke)
+                        pendingDelete = null
+                        selectedIds = emptySet()
+                    }) { Text("删除") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDelete = null }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
+
         // Date separators (details pass): the first message of
         // each day gets a centered day chip above it. Computed
         // here — remember() is not allowed inside the lazy
@@ -546,7 +625,19 @@ fun ChatScreen(
                             },
                         onForward = onForward,
                         chatId = chatId,
-                        canDeleteAny = adminCaps.canDeleteAny
+                        canDeleteAny = adminCaps.canDeleteAny,
+                        selectionMode = selectionMode,
+                        selected = msg.id in selectedIds,
+                        onToggleSelect = { m ->
+                            selectedIds = if (m.id in selectedIds) {
+                                selectedIds - m.id
+                            } else {
+                                selectedIds + m.id
+                            }
+                        },
+                        onEnterSelection = { m ->
+                            selectedIds = setOf(m.id)
+                        }
                     )
                 }
             }
@@ -570,7 +661,60 @@ fun ChatScreen(
 
         val canBasic = chat?.canSendBasic ?: true
         val canPhotos = chat?.canSendPhotos ?: true
-        if (!canBasic && !canPhotos) {
+        if (selectionMode) {
+            // Batch action bar (v0.7.0, F1) replaces the input
+            // dock while selecting: forward / copy / delete the
+            // whole selection at once.
+            val selectedItems = messages.filter { it.id in selectedIds }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = {
+                        onForward(selectedItems.sortedBy { it.id })
+                        selectedIds = emptySet()
+                    },
+                    enabled = selectedItems.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                ) { Text("转发") }
+                TextButton(
+                    onClick = {
+                        // Copies in time order; media messages
+                        // contribute their one-line summary.
+                        val text = selectedItems.sortedBy { it.id }
+                            .joinToString("\n") { m ->
+                                m.text.ifEmpty {
+                                    when (m.kind) {
+                                        MsgKind.PHOTO -> "[图片]"
+                                        MsgKind.VIDEO -> "[视频]"
+                                        MsgKind.VOICE -> "[语音]"
+                                        MsgKind.DOCUMENT ->
+                                            "[文件] ${m.fileName}"
+                                        MsgKind.STICKER -> "[贴纸]"
+                                        MsgKind.ANIMATION -> "[动图]"
+                                        MsgKind.POLL -> "[投票]"
+                                        else -> "[消息]"
+                                    }
+                                }
+                            }
+                        if (text.isNotEmpty()) {
+                            clipboard.setText(AnnotatedString(text))
+                        }
+                        selectedIds = emptySet()
+                    },
+                    enabled = selectedItems.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                ) { Text("复制") }
+                TextButton(
+                    onClick = { pendingDelete = selectedItems },
+                    enabled = selectedItems.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                ) { Text("删除", color = Color(0xFFC62828)) }
+            }
+        } else if (!canBasic && !canPhotos) {
             Text(
                 "你不能在这个对话里发言",
                 color = Color.Gray,
@@ -871,21 +1015,111 @@ fun MessageBubble(
     msg: MsgItem,
     isGroup: Boolean,
     allowedReactions: List<String>?,
-    onForward: (MsgItem) -> Unit,
+    onForward: (List<MsgItem>) -> Unit,
     chatId: Long = 0L,
-    canDeleteAny: Boolean = false
+    canDeleteAny: Boolean = false,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelect: (MsgItem) -> Unit = {},
+    onEnterSelection: (MsgItem) -> Unit = {},
+    onOpenPhoto: (MsgItem) -> Unit = {}
 ) {
     val outgoing = msg.outgoing
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
     var menuOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var reactionOpen by remember { mutableStateOf(false) }
+    // Swipe-to-reply (v0.7.0, F1): drag a bubble left; past the
+    // threshold a haptic tick fires and the message becomes the
+    // reply target, then the bubble springs back. The mature
+    // clients all use this gesture; direction and feel follow
+    // theirs.
+    val swipeAnim = remember(msg.id) { Animatable(0f) }
+    val swipeScope = rememberCoroutineScope()
+    var swipeFired by remember(msg.id) { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                } else {
+                    Color.Transparent
+                }
+            )
+    ) {
+        if (!selectionMode && swipeAnim.value < -8f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 10.dp)
+                    .size(34.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("↩", fontSize = 17.sp)
+            }
+        }
+        if (selectionMode) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 1.dp)
+                    .size(22.dp)
+                    .background(
+                        if (selected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            Color.Transparent
+                        },
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                if (selected) {
+                    Text("✓", color = Color.White, fontSize = 13.sp)
+                }
+            }
+        }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp),
+            .padding(vertical = 3.dp)
+            .offset { IntOffset(swipeAnim.value.roundToInt(), 0) }
+            .pointerInput(msg.id, selectionMode) {
+                if (!selectionMode) {
+                    val maxSwipe = 88.dp.toPx()
+                    val threshold = 60.dp.toPx()
+                    detectHorizontalDragGestures(
+                        onDragStart = { swipeFired = false },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            val next = (swipeAnim.value + dragAmount)
+                                .coerceIn(-maxSwipe, 0f)
+                            swipeScope.launch { swipeAnim.snapTo(next) }
+                            if (!swipeFired && next <= -threshold) {
+                                swipeFired = true
+                                haptics.performHapticFeedback(
+                                    HapticFeedbackType.LongPress
+                                )
+                                MessageStore.setReplyTarget(msg)
+                            }
+                        },
+                        onDragEnd = {
+                            swipeScope.launch { swipeAnim.animateTo(0f) }
+                        },
+                        onDragCancel = {
+                            swipeScope.launch { swipeAnim.animateTo(0f) }
+                        }
+                    )
+                }
+            },
         horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
     ) {
         Box {
@@ -903,10 +1137,15 @@ fun MessageBubble(
                     )
                     .combinedClickable(
                         onClick = {
-                            // File-like messages: tap opens the
-                            // downloaded file, or starts the download.
-                            // (Stickers are display-only.)
-                            if (msg.fileId != 0 && msg.kind != MsgKind.STICKER) {
+                            if (selectionMode) {
+                                onToggleSelect(msg)
+                            } else if (msg.kind == MsgKind.PHOTO) {
+                                // Full-screen viewer (v0.7.0, F2).
+                                onOpenPhoto(msg)
+                            } else if (msg.fileId != 0 && msg.kind != MsgKind.STICKER) {
+                                // File-like messages: tap opens the
+                                // downloaded file, or starts the
+                                // download. (Stickers are display-only.)
                                 val path = msg.filePath
                                 if (path != null) {
                                     openFileWithSystem(context, path, msg.fileMime)
@@ -915,7 +1154,32 @@ fun MessageBubble(
                                 }
                             }
                         },
-                        onLongClick = { menuOpen = true }
+                        onDoubleClick = {
+                            // Double-tap reaction (v0.7.0, F1):
+                            // the chat's first available reaction,
+                            // heart preferred — the shortcut every
+                            // mature client has. Toggle semantics
+                            // come from MessageStore.toggleReaction;
+                            // an empty allowed list (secret chats,
+                            // reactions off) makes it a no-op.
+                            if (!selectionMode) {
+                                val emoji = when {
+                                    allowedReactions == null -> "❤️"
+                                    "❤️" in allowedReactions -> "❤️"
+                                    else -> allowedReactions.firstOrNull()
+                                }
+                                if (emoji != null) {
+                                    MessageStore.toggleReaction(msg, emoji)
+                                }
+                            }
+                        },
+                        onLongClick = {
+                            if (selectionMode) {
+                                onToggleSelect(msg)
+                            } else {
+                                menuOpen = true
+                            }
+                        }
                     )
                     .padding(horizontal = 10.dp, vertical = 7.dp)
             ) {
@@ -1085,10 +1349,17 @@ fun MessageBubble(
                     )
                 }
                 DropdownMenuItem(
+                    text = { Text("多选") },
+                    onClick = {
+                        menuOpen = false
+                        onEnterSelection(msg)
+                    }
+                )
+                DropdownMenuItem(
                     text = { Text("转发") },
                     onClick = {
                         menuOpen = false
-                        onForward(msg)
+                        onForward(listOf(msg))
                     }
                 )
                 DropdownMenuItem(
@@ -1100,6 +1371,7 @@ fun MessageBubble(
                 )
             }
         }
+    }
     }
     if (editOpen) {
         var draft by remember(msg.id) { mutableStateOf(msg.text) }
