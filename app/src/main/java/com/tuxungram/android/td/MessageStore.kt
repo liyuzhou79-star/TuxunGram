@@ -1,7 +1,9 @@
 package com.tuxungram.android.td
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
@@ -190,7 +192,11 @@ object MessageStore {
             if (currentChatId != chatId) return@sendRaw
             if (TdClient.isError(response)) return@sendRaw
             val arr = response.optJSONArray("messages") ?: JSONArray()
-            if (arr.length() < 50) allHistoryLoaded = true
+            // A short jump window says nothing about older
+            // history (D1): leave the flag alone and let
+            // loadOlder probe from the window's oldest message;
+            // its no-new-older-messages rule settles the flag.
+            if (arr.length() == 0) allHistoryLoaded = true
             for (i in 0 until arr.length()) {
                 val msg = arr.optJSONObject(i) ?: continue
                 val item = parseMessage(msg)
@@ -216,6 +222,12 @@ object MessageStore {
 
     @Volatile
     private var loadingHistory = false
+
+    /** One delayed retry is allowed when the very first history
+     *  page comes back empty — on a fresh login the local
+     *  database may still be filling in (Phase D, D1). */
+    @Volatile
+    private var firstPageRetried = false
 
     private val byId = ConcurrentHashMap<Long, MsgItem>()
     private val userNames = ConcurrentHashMap<Long, String>()
@@ -243,6 +255,7 @@ object MessageStore {
         searchFromId = 0L
         _locateId.value = 0L
         allHistoryLoaded = false
+        firstPageRetried = false
         lastReadOutbox = 0L
         TdRepository.sendRaw(TdClient.request("openChat").apply {
             put("chat_id", chatId)
@@ -294,13 +307,42 @@ object MessageStore {
             if (currentChatId != chatId) return@sendRaw
             if (TdClient.isError(response)) return@sendRaw
             val arr = response.optJSONArray("messages") ?: JSONArray()
-            if (arr.length() < 50) allHistoryLoaded = true
+            // D1 root-cause fix: td_api.tl states the returned
+            // count "is chosen by TDLib and can be smaller than
+            // the specified limit", so a short page must NOT be
+            // read as end-of-history (the old `length < 50` check
+            // froze paging whenever TDLib felt like returning a
+            // short page — the reported "sometimes there,
+            // sometimes not" missing history). History is over
+            // only when a page adds nothing older than what we
+            // already have (for an older-page request), or when
+            // the first page is empty even after one retry.
+            val previousOldest = byId.keys.minOrNull()
+            var addedOlder = false
             var newestId = 0L
             for (i in 0 until arr.length()) {
                 val msg = arr.optJSONObject(i) ?: continue
                 val item = parseMessage(msg)
                 byId[item.id] = item
+                if (previousOldest == null || item.id < previousOldest) {
+                    addedOlder = true
+                }
                 if (item.id > newestId) newestId = item.id
+            }
+            if (fromMessageId != 0L) {
+                if (!addedOlder) allHistoryLoaded = true
+            } else if (arr.length() == 0) {
+                if (!firstPageRetried) {
+                    firstPageRetried = true
+                    TdRepository.scope.launch {
+                        delay(1500)
+                        if (currentChatId == chatId && byId.isEmpty()) {
+                            loadHistory(fromMessageId = 0L)
+                        }
+                    }
+                } else {
+                    allHistoryLoaded = true
+                }
             }
             publish()
             if (fromMessageId == 0L && newestId != 0L) {
