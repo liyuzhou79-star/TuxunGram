@@ -81,19 +81,61 @@ import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import android.content.Intent
+import android.webkit.MimeTypeMap
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.core.content.FileProvider
 import com.tuxungram.android.td.KeepAliveService
+import com.tuxungram.android.td.StorageStore
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 import com.tuxungram.android.BuildConfig
+
+/** Human-readable byte size for the storage page. */
+fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format("%.1f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return String.format("%.1f MB", mb)
+    return String.format("%.2f GB", mb / 1024.0)
+}
+
+/** Open a downloaded file with a system viewer via FileProvider
+ *  (same sharing path the chat screen uses). */
+fun openDownloadedFile(context: android.content.Context, path: String) {
+    val file = java.io.File(path)
+    if (!file.exists()) return
+    val uri = FileProvider.getUriForFile(
+        context, "com.tuxungram.android.fileprovider", file
+    )
+    val ext = file.extension.lowercase()
+    val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+        ?: "*/*"
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mime)
+        addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_ACTIVITY_NEW_TASK
+        )
+    }
+    try {
+        context.startActivity(
+            Intent.createChooser(intent, "打开文件")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    } catch (t: Throwable) {
+    }
+}
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
@@ -273,6 +315,138 @@ fun SettingsScreen(onBack: () -> Unit) {
             "一句实话：有些手机系统管后台管得严（比如魅族），光在这里打开还不够——请再去系统设置里给 TuxunGram 开「自启动」，电池用量选「不限制」，不然把 App 从最近任务里划掉后，系统可能还是会把它冻住，通知就迟到甚至收不到。这一层是系统说了算，App 里改不了。",
             color = Color.Gray, fontSize = 13.sp
         )
+        Spacer(Modifier.height(28.dp))
+        Text("存储空间", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        var storageTick by remember { mutableIntStateOf(0) }
+        val storageState = produceState<Pair<com.tuxungram.android.td.StorageInfo?, List<com.tuxungram.android.td.DownloadedEntry>>>(
+            initialValue = null to emptyList(),
+            key1 = storageTick
+        ) {
+            value = withContext(Dispatchers.IO) {
+                StorageStore.measure(settingsContext) to
+                    StorageStore.listDownloaded(settingsContext)
+            }
+        }
+        val storageInfo = storageState.value.first
+        val downloaded = storageState.value.second
+        if (storageInfo == null) {
+            Text("正在统计占用…", color = Color.Gray, fontSize = 13.sp)
+        } else {
+            Text(
+                "聊天数据库 ${formatBytes(storageInfo.databaseBytes)}（聊天记录的索引，不会清）",
+                fontSize = 14.sp
+            )
+            Text(
+                "下载的文件 ${formatBytes(storageInfo.filesBytes)}，共 ${storageInfo.fileCount} 个",
+                fontSize = 14.sp
+            )
+        }
+        var confirmClear by remember { mutableStateOf(false) }
+        var clearedTip by remember { mutableStateOf<String?>(null) }
+        Button(
+            onClick = { confirmClear = true },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp)
+        ) {
+            Text("清理下载的文件缓存")
+        }
+        if (clearedTip != null) {
+            Text(
+                clearedTip!!, color = Color.Gray, fontSize = 13.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+        if (confirmClear) {
+            AlertDialog(
+                onDismissRequest = { confirmClear = false },
+                title = { Text("清理文件缓存？") },
+                text = {
+                    Text(
+                        "只删已经下载到手机上的图片、视频、文件这些缓存，不删聊天记录和数据库。" +
+                            "以后再打开这些内容时会自动重新下载（会花一点流量）。"
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmClear = false
+                        clearedTip = "正在清理…"
+                        val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO)
+                        scope.launch {
+                            val freed = StorageStore.clearFileCache(settingsContext)
+                            withContext(Dispatchers.Main) {
+                                clearedTip = "已清理，释放了 ${formatBytes(freed)}。"
+                                storageTick++
+                            }
+                        }
+                    }) { Text("清理") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmClear = false }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
+        if (downloaded.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "最近下载的文件（点按打开，长按删除）",
+                fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                color = Color.Gray
+            )
+            for (entry in downloaded.take(50)) {
+                var askDelete by remember(entry.path) { mutableStateOf(false) }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(
+                            onClick = { openDownloadedFile(settingsContext, entry.path) },
+                            onLongClick = { askDelete = true }
+                        )
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            entry.name, fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        Text(
+                            formatBytes(entry.size),
+                            color = Color.Gray, fontSize = 12.sp
+                        )
+                    }
+                }
+                if (askDelete) {
+                    AlertDialog(
+                        onDismissRequest = { askDelete = false },
+                        title = { Text("删除这个文件？") },
+                        text = { Text(entry.name) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                askDelete = false
+                                StorageStore.deleteOne(entry.path)
+                                storageTick++
+                            }) { Text("删除") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { askDelete = false }) {
+                                Text("取消")
+                            }
+                        }
+                    )
+                }
+            }
+            if (downloaded.size > 50) {
+                Text(
+                    "只列最近 50 个，其余 ${downloaded.size - 50} 个可用上面的清理按钮一并清掉。",
+                    color = Color.Gray, fontSize = 12.sp
+                )
+            }
+        }
         Spacer(Modifier.height(28.dp))
         Text(
             "TuxunGram ${BuildConfig.VERSION_NAME}",

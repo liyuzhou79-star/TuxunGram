@@ -140,11 +140,22 @@ object TdRepository {
         }
     }
 
+    /** The current account's TDLib database directory. Single
+     *  source for the on-disk layout: sendParameters writes it,
+     *  the storage page measures it. (Multi-account slots will
+     *  hang their suffix off these names — see Batch 3, C6.) */
+    fun databaseDir(context: Context): File =
+        File(context.filesDir, "tdlib").apply { mkdirs() }
+
+    /** The current account's downloaded-files directory. */
+    fun downloadDir(context: Context): File =
+        File(context.filesDir, "tdlib-files").apply { mkdirs() }
+
     private fun sendParameters() {
         if (!parametersSent.compareAndSet(false, true)) return
         val ctx = appContext ?: return
-        val dbDir = File(ctx.filesDir, "tdlib").apply { mkdirs() }
-        val filesDir = File(ctx.filesDir, "tdlib-files").apply { mkdirs() }
+        val dbDir = databaseDir(ctx)
+        val filesDir = downloadDir(ctx)
         val params = TdClient.request("setTdlibParameters").apply {
             put("use_test_dc", false)
             put("database_directory", dbDir.absolutePath)
