@@ -20,7 +20,10 @@ data class MsgItem(
     val photoPath: String?,
     val photoWidth: Int,
     val photoHeight: Int,
-    val sendingState: String
+    val sendingState: String,
+    val replyToId: Long = 0L,
+    val replyChatId: Long = 0L,
+    val replySummary: String = ""
 )
 
 /**
@@ -35,6 +38,13 @@ object MessageStore {
 
     private val _sendError = MutableStateFlow<String?>(null)
     val sendError: StateFlow<String?> = _sendError
+
+    /** The message the next send will reply to, if the user picked
+     *  "reply" from the long-press menu. */
+    private val _replyTarget = MutableStateFlow<MsgItem?>(null)
+    val replyTarget: StateFlow<MsgItem?> = _replyTarget
+
+    private val replyFetchPending = ConcurrentHashMap.newKeySet<Long>()
 
     @Volatile
     var currentChatId: Long = 0L
@@ -65,6 +75,7 @@ object MessageStore {
         byId.clear()
         _messages.value = emptyList()
         _sendError.value = null
+        _replyTarget.value = null
         allHistoryLoaded = false
         TdRepository.sendRaw(TdClient.request("openChat").apply {
             put("chat_id", chatId)
@@ -121,11 +132,32 @@ object MessageStore {
         }
     }
 
+    fun setReplyTarget(item: MsgItem?) {
+        _replyTarget.value = item
+    }
+
+    /** sendMessage.reply_to for the current reply target, if any.
+     *  Signature verified in td_api.tl: inputMessageReplyToMessage
+     *  carries message_id plus optional quote fields. */
+    private fun replyToJson(): JSONObject? {
+        val target = _replyTarget.value ?: return null
+        return JSONObject().apply {
+            put("@type", "inputMessageReplyToMessage")
+            put("message_id", target.id)
+            put("quote", JSONObject.NULL)
+            put("checklist_task_id", 0)
+            put("poll_option_id", "")
+        }
+    }
+
     fun sendText(text: String) {
         val chatId = currentChatId
         if (chatId == 0L) return
+        val replyTo = replyToJson()
+        _replyTarget.value = null
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
+            if (replyTo != null) put("reply_to", replyTo)
             put("input_message_content", JSONObject().apply {
                 put("@type", "inputMessageText")
                 put("text", formattedText(text))
@@ -147,8 +179,11 @@ object MessageStore {
     fun sendPhoto(path: String, caption: String) {
         val chatId = currentChatId
         if (chatId == 0L) return
+        val replyTo = replyToJson()
+        _replyTarget.value = null
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
+            if (replyTo != null) put("reply_to", replyTo)
             put("input_message_content", JSONObject().apply {
                 put("@type", "inputMessagePhoto")
                 put("photo", JSONObject().apply {
@@ -182,6 +217,76 @@ object MessageStore {
 
     fun clearSendError() {
         _sendError.value = null
+    }
+
+    /** Edit one of my own text messages (editMessageText, verified
+     *  in td_api.tl). The bubble updates when TDLib pushes
+     *  updateMessageContent back. */
+    fun editText(messageId: Long, newText: String) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("editMessageText").apply {
+            put("chat_id", chatId)
+            put("message_id", messageId)
+            put("reply_markup", JSONObject.NULL)
+            put("input_message_content", JSONObject().apply {
+                put("@type", "inputMessageText")
+                put("text", formattedText(newText))
+                put("link_preview_options", JSONObject.NULL)
+                put("clear_draft", false)
+            })
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            }
+        }
+    }
+
+    /** Delete a message. Own messages are revoked for everyone;
+     *  other people's messages can only be removed locally
+     *  (revoke = false). The bubble disappears when TDLib pushes
+     *  updateDeleteMessages. */
+    fun deleteMessage(item: MsgItem) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("deleteMessages").apply {
+            put("chat_id", chatId)
+            put("message_ids", JSONArray().put(item.id))
+            put("revoke", item.outgoing)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            }
+        }
+    }
+
+    /** Forward one message to another chat (forwardMessages,
+     *  verified in td_api.tl). Independent of which chat is open,
+     *  so the chat-list picker can call it after this store closed. */
+    fun forwardMessage(
+        fromChatId: Long,
+        messageId: Long,
+        toChatId: Long,
+        onResult: (String?) -> Unit
+    ) {
+        val query = TdClient.request("forwardMessages").apply {
+            put("chat_id", toChatId)
+            put("topic_id", JSONObject.NULL)
+            put("from_chat_id", fromChatId)
+            put("message_ids", JSONArray().put(messageId))
+            put("options", JSONObject.NULL)
+            put("send_copy", false)
+            put("remove_caption", false)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                onResult(sendErrorText(response))
+            } else {
+                onResult(null)
+            }
+        }
     }
 
     private fun sendErrorText(error: JSONObject): String {
@@ -330,7 +435,10 @@ object MessageStore {
                 "messageSendingStatePending" -> "pending"
                 "messageSendingStateFailed" -> "failed"
                 else -> ""
-            }
+            },
+            replyToId = replyTargetId(msg),
+            replyChatId = replyTargetChatId(msg),
+            replySummary = replySummaryOf(msg)
         )
         val content = msg.optJSONObject("content") ?: return base
         return parseContent(base, content)
@@ -368,6 +476,81 @@ object MessageStore {
                 )
             }
             else -> base.copy(kind = MsgKind.OTHER, text = "")
+        }
+    }
+
+    private fun replyTargetId(msg: JSONObject): Long {
+        val replyTo = msg.optJSONObject("reply_to") ?: return 0L
+        if (replyTo.optString("@type") != "messageReplyToMessage") return 0L
+        return replyTo.optLong("message_id")
+    }
+
+    private fun replyTargetChatId(msg: JSONObject): Long {
+        val replyTo = msg.optJSONObject("reply_to") ?: return 0L
+        if (replyTo.optString("@type") != "messageReplyToMessage") return 0L
+        return replyTo.optLong("chat_id")
+    }
+
+    /** One-line summary of the replied-to message. TDLib embeds the
+     *  replied content in messageReplyToMessage.content when it is
+     *  loaded; otherwise fetch the message once and patch every
+     *  item that replies to it. */
+    private fun replySummaryOf(msg: JSONObject): String {
+        val replyTo = msg.optJSONObject("reply_to") ?: return ""
+        if (replyTo.optString("@type") != "messageReplyToMessage") return ""
+        val embedded = replyTo.optJSONObject("content")
+        if (embedded != null) return summarizeContent(embedded)
+        val targetId = replyTo.optLong("message_id")
+        val targetChat = replyTo.optLong("chat_id")
+        if (targetId != 0L) fetchReplySummary(targetChat, targetId)
+        return ""
+    }
+
+    private fun fetchReplySummary(chatId: Long, messageId: Long) {
+        if (!replyFetchPending.add(messageId)) return
+        val query = TdClient.request("getMessage").apply {
+            put("chat_id", chatId)
+            put("message_id", messageId)
+        }
+        TdRepository.sendRaw(query) { response ->
+            replyFetchPending.remove(messageId)
+            if (TdClient.isError(response)) return@sendRaw
+            val content = response.optJSONObject("content") ?: return@sendRaw
+            val summary = summarizeContent(content)
+            if (summary.isEmpty()) return@sendRaw
+            var changed = false
+            for ((id, item) in byId) {
+                if (item.replyToId == messageId && item.replySummary.isEmpty()) {
+                    byId[id] = item.copy(replySummary = summary)
+                    changed = true
+                }
+            }
+            if (changed) publish()
+        }
+    }
+
+    /** Short one-liner for a message content object, used for reply
+     *  quotes and (later) other compact renderings. */
+    fun summarizeContent(content: JSONObject): String {
+        return when (content.optString("@type")) {
+            "messageText" ->
+                content.optJSONObject("text")?.optString("text")
+                    ?.replace('\n', ' ')?.take(60) ?: ""
+            "messagePhoto" -> {
+                val caption = content.optJSONObject("caption")
+                    ?.optString("text") ?: ""
+                if (caption.isEmpty()) "[图片]" else "[图片] $caption"
+            }
+            "messageDocument" -> {
+                val name = content.optJSONObject("document")
+                    ?.optString("file_name") ?: ""
+                if (name.isEmpty()) "[文件]" else "[文件] $name"
+            }
+            "messageVideo" -> "[视频]"
+            "messageVoiceNote" -> "[语音]"
+            "messageAnimation" -> "[动图]"
+            "messageSticker" -> "[贴纸]"
+            else -> "[消息]"
         }
     }
 

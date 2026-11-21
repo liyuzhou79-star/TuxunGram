@@ -7,9 +7,11 @@ import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -32,7 +34,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -55,7 +64,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -449,14 +460,91 @@ private fun RegistrationScreen() {
 private fun ReadyHost() {
     var openChatId by remember { mutableStateOf<Long?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    // Forward flow: (fromChatId, messageId) plus where to return to.
+    var forwardReq by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    var forwardReturnTo by remember { mutableStateOf<Long?>(null) }
     val chatId = openChatId
+    val req = forwardReq
     when {
         showSettings -> SettingsScreen(onBack = { showSettings = false })
+        req != null -> ForwardPickerScreen(
+            fromChatId = req.first,
+            messageId = req.second,
+            onDone = {
+                forwardReq = null
+                openChatId = forwardReturnTo
+            }
+        )
         chatId == null -> ChatListScreen(
             onOpenChat = { openChatId = it },
             onOpenSettings = { showSettings = true }
         )
-        else -> ChatScreen(chatId = chatId, onBack = { openChatId = null })
+        else -> ChatScreen(
+            chatId = chatId,
+            onBack = { openChatId = null },
+            onForward = { msg ->
+                forwardReturnTo = chatId
+                forwardReq = chatId to msg.id
+                openChatId = null
+            }
+        )
+    }
+}
+
+/** Chat-list-as-picker for forwarding one message. Stays open until
+ *  TDLib answers, so a failure is shown here instead of vanishing. */
+@Composable
+private fun ForwardPickerScreen(
+    fromChatId: Long,
+    messageId: Long,
+    onDone: () -> Unit
+) {
+    val chats by ChatStore.chats.collectAsState()
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    BackHandler { if (!busy) onDone() }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { if (!busy) onDone() }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
+            Text("转发到…", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        }
+        if (error != null) {
+            Text(
+                error!!, color = Color(0xFFC62828), fontSize = 14.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            )
+        }
+        if (busy) {
+            CenterColumn {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(12.dp))
+                Text("正在转发…", color = Color.Gray)
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(items = chats, key = { it.id }) { chat ->
+                    ChatRow(chat, onClick = {
+                        busy = true
+                        error = null
+                        MessageStore.forwardMessage(
+                            fromChatId, messageId, chat.id
+                        ) { failure ->
+                            if (failure == null) {
+                                onDone()
+                            } else {
+                                busy = false
+                                error = failure
+                            }
+                        }
+                    })
+                }
+            }
+        }
     }
 }
 
@@ -823,7 +911,7 @@ private fun formatMsgTime(dateSeconds: Int): String {
 }
 
 @Composable
-private fun ChatScreen(chatId: Long, onBack: () -> Unit) {
+private fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
     val context = LocalContext.current
     val chats by ChatStore.chats.collectAsState()
     val chat = chats.firstOrNull { it.id == chatId }
@@ -871,10 +959,12 @@ private fun ChatScreen(chatId: Long, onBack: () -> Unit) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 10.dp),
+                .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = onBack) { Text("返回") }
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
             Text(
                 chat?.title ?: "对话",
                 fontSize = 18.sp,
@@ -911,7 +1001,7 @@ private fun ChatScreen(chatId: Long, onBack: () -> Unit) {
                 .padding(horizontal = 12.dp)
         ) {
             items(items = messages.asReversed(), key = { it.id }) { msg ->
-                MessageBubble(msg, isGroup = chat?.isGroup == true)
+                MessageBubble(msg, isGroup = chat?.isGroup == true, onForward = onForward)
             }
         }
 
@@ -934,6 +1024,37 @@ private fun ChatScreen(chatId: Long, onBack: () -> Unit) {
                 modifier = Modifier.padding(16.dp)
             )
         } else {
+            val replyTarget by MessageStore.replyTarget.collectAsState()
+            val target = replyTarget
+            if (target != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFF5F5F5))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "回复 ${target.senderName.ifEmpty { if (target.outgoing) "我" else "" }}",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            target.text.ifEmpty {
+                                if (target.kind == MsgKind.PHOTO) "[图片]" else "原消息"
+                            },
+                            color = Color.Gray,
+                            fontSize = 13.sp,
+                            maxLines = 1
+                        )
+                    }
+                    IconButton(onClick = { MessageStore.setReplyTarget(null) }) {
+                        Icon(Icons.Filled.Close, contentDescription = "取消回复")
+                    }
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -941,8 +1062,12 @@ private fun ChatScreen(chatId: Long, onBack: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (canPhotos) {
-                    TextButton(onClick = { picker.launch("image/*") }) {
-                        Text("图片")
+                    IconButton(onClick = { picker.launch("image/*") }) {
+                        Icon(
+                            Icons.Filled.AttachFile,
+                            contentDescription = "发图片",
+                            tint = Color.Gray
+                        )
                     }
                 }
                 OutlinedTextField(
@@ -953,18 +1078,36 @@ private fun ChatScreen(chatId: Long, onBack: () -> Unit) {
                     maxLines = 4
                 )
                 Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        val text = input.trim()
-                        if (text.isNotEmpty()) {
-                            MessageStore.clearSendError()
-                            MessageStore.sendText(text)
-                            input = ""
-                        }
-                    },
-                    enabled = canBasic && input.isNotBlank()
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(
+                            if (canBasic && input.isNotBlank()) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                Color(0xFFBDBDBD)
+                            },
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text("发送")
+                    IconButton(
+                        onClick = {
+                            val text = input.trim()
+                            if (text.isNotEmpty()) {
+                                MessageStore.clearSendError()
+                                MessageStore.sendText(text)
+                                input = ""
+                            }
+                        },
+                        enabled = canBasic && input.isNotBlank()
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "发送",
+                            tint = Color.White
+                        )
+                    }
                 }
             }
         }
@@ -1038,62 +1181,180 @@ private fun PhotoPreview(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(msg: MsgItem, isGroup: Boolean) {
+private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -> Unit) {
     val outgoing = msg.outgoing
+    val clipboard = LocalClipboardManager.current
+    var menuOpen by remember { mutableStateOf(false) }
+    var editOpen by remember { mutableStateOf(false) }
+    var deleteOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp),
         horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
     ) {
-        Column(
-            modifier = Modifier
-                .background(
-                    if (outgoing) Color(0xFFD8EDCB) else Color(0xFFF1F1F1),
-                    RoundedCornerShape(12.dp)
-                )
-                .padding(horizontal = 10.dp, vertical = 7.dp)
-        ) {
-            if (isGroup && !outgoing && msg.senderName.isNotEmpty()) {
-                Text(
-                    msg.senderName,
-                    color = Color(0xFF5B7C99),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            when (msg.kind) {
-                MsgKind.TEXT -> Text(msg.text, fontSize = 15.sp)
-                MsgKind.PHOTO -> {
-                    PhotoBubbleContent(msg)
-                    if (msg.text.isNotEmpty()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(msg.text, fontSize = 15.sp)
+        Box {
+            Column(
+                modifier = Modifier
+                    .background(
+                        if (outgoing) Color(0xFFD8EDCB) else Color(0xFFF1F1F1),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = { menuOpen = true }
+                    )
+                    .padding(horizontal = 10.dp, vertical = 7.dp)
+            ) {
+                if (isGroup && !outgoing && msg.senderName.isNotEmpty()) {
+                    Text(
+                        msg.senderName,
+                        color = Color(0xFF5B7C99),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                if (msg.replyToId != 0L) {
+                    Row(
+                        modifier = Modifier
+                            .background(Color(0x14000000), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 7.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            "回复：${msg.replySummary.ifEmpty { "原消息" }}",
+                            color = Color(0xFF546E7A),
+                            fontSize = 12.sp,
+                            maxLines = 2
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                }
+                when (msg.kind) {
+                    MsgKind.TEXT -> Text(msg.text, fontSize = 15.sp)
+                    MsgKind.PHOTO -> {
+                        PhotoBubbleContent(msg)
+                        if (msg.text.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(msg.text, fontSize = 15.sp)
+                        }
+                    }
+                    MsgKind.OTHER -> Text(
+                        "[消息]",
+                        color = Color.Gray,
+                        fontSize = 14.sp
+                    )
+                }
+                Row {
+                    Text(formatMsgTime(msg.dateSeconds), color = Color.Gray, fontSize = 11.sp)
+                    when (msg.sendingState) {
+                        "pending" -> Text(
+                            "  发送中…",
+                            color = Color.Gray,
+                            fontSize = 11.sp
+                        )
+                        "failed" -> Text(
+                            "  发送失败",
+                            color = Color(0xFFC62828),
+                            fontSize = 11.sp
+                        )
                     }
                 }
-                MsgKind.OTHER -> Text(
-                    "[消息]",
-                    color = Color.Gray,
-                    fontSize = 14.sp
-                )
             }
-            Row {
-                Text(formatMsgTime(msg.dateSeconds), color = Color.Gray, fontSize = 11.sp)
-                when (msg.sendingState) {
-                    "pending" -> Text(
-                        "  发送中…",
-                        color = Color.Gray,
-                        fontSize = 11.sp
-                    )
-                    "failed" -> Text(
-                        "  发送失败",
-                        color = Color(0xFFC62828),
-                        fontSize = 11.sp
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("回复") },
+                    onClick = {
+                        menuOpen = false
+                        MessageStore.setReplyTarget(msg)
+                    }
+                )
+                if (msg.text.isNotEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text("复制") },
+                        onClick = {
+                            menuOpen = false
+                            clipboard.setText(AnnotatedString(msg.text))
+                        }
                     )
                 }
+                if (outgoing && msg.kind == MsgKind.TEXT && msg.sendingState.isEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text("编辑") },
+                        onClick = {
+                            menuOpen = false
+                            editOpen = true
+                        }
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("转发") },
+                    onClick = {
+                        menuOpen = false
+                        onForward(msg)
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("删除", color = Color(0xFFC62828)) },
+                    onClick = {
+                        menuOpen = false
+                        deleteOpen = true
+                    }
+                )
             }
         }
+    }
+    if (editOpen) {
+        var draft by remember(msg.id) { mutableStateOf(msg.text) }
+        AlertDialog(
+            onDismissRequest = { editOpen = false },
+            title = { Text("编辑消息") },
+            text = {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 5
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val text = draft.trim()
+                        if (text.isNotEmpty() && text != msg.text) {
+                            MessageStore.clearSendError()
+                            MessageStore.editText(msg.id, text)
+                        }
+                        editOpen = false
+                    },
+                    enabled = draft.isNotBlank()
+                ) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editOpen = false }) { Text("取消") }
+            }
+        )
+    }
+    if (deleteOpen) {
+        AlertDialog(
+            onDismissRequest = { deleteOpen = false },
+            title = { Text("删除这条消息？") },
+            text = {
+                Text(
+                    if (msg.outgoing) "会同时为所有人删除。" else "只在你这边删除。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    MessageStore.deleteMessage(msg)
+                    deleteOpen = false
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteOpen = false }) { Text("取消") }
+            }
+        )
     }
 }
 
