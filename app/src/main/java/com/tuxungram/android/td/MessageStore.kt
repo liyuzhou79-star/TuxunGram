@@ -103,6 +103,37 @@ object MessageStore {
     private val _replyTarget = MutableStateFlow<MsgItem?>(null)
     val replyTarget: StateFlow<MsgItem?> = _replyTarget
 
+    // ---- Drafts + peer typing state (v0.7.0, F5) ----
+
+    /** The chat's saved draft text (from the chat object's
+     *  draft_message, which TDLib syncs across devices itself). */
+    private val _draftText = MutableStateFlow("")
+    val draftText: StateFlow<String> = _draftText
+
+    /** True once the open chat's draft has been read; the UI
+     *  must not save (or restore) before this, or opening a chat
+     *  could wipe a cloud draft it has not seen yet. */
+    private val _draftLoaded = MutableStateFlow(false)
+    val draftLoaded: StateFlow<Boolean> = _draftLoaded
+
+    @Volatile
+    private var lastSavedDraft: String? = null
+
+    /** What the other side is doing right now, for the top-bar
+     *  subtitle: "正在输入…" / "正在录音…" (prefixed with the
+     *  sender's name in groups). */
+    private val _peerAction = MutableStateFlow("")
+    val peerAction: StateFlow<String> = _peerAction
+
+    private val peerActions =
+        ConcurrentHashMap<Long, String>()
+
+    @Volatile
+    private var lastActionAt = 0L
+
+    @Volatile
+    private var lastTypingSentAt = 0L
+
     private val replyFetchPending = ConcurrentHashMap.newKeySet<Long>()
 
     // ---- In-chat search + jump-to-message (Batch 2, B4) ----
@@ -257,16 +288,35 @@ object MessageStore {
         allHistoryLoaded = false
         firstPageRetried = false
         lastReadOutbox = 0L
+        _draftText.value = ""
+        _draftLoaded.value = false
+        lastSavedDraft = null
+        peerActions.clear()
+        _peerAction.value = ""
+        lastTypingSentAt = 0L
         TdRepository.sendRaw(TdClient.request("openChat").apply {
             put("chat_id", chatId)
         }) {}
         // Seed the read position for bubble ticks; afterwards
-        // updateChatReadOutbox keeps it current.
+        // updateChatReadOutbox keeps it current. The same response
+        // carries the chat's draft (F5): restore it into the
+        // input box once the UI sees draftLoaded flip.
         TdRepository.sendRaw(TdClient.request("getChat").apply {
             put("chat_id", chatId)
         }) { response ->
             if (!TdClient.isError(response) && currentChatId == chatId) {
                 lastReadOutbox = response.optLong("last_read_outbox_message_id")
+                val draftContent = response.optJSONObject("draft_message")
+                    ?.optJSONObject("content")
+                if (draftContent != null &&
+                    draftContent.optString("@type") == "draftMessageContentText"
+                ) {
+                    val text = draftContent.optJSONObject("text")
+                        ?.optString("text") ?: ""
+                    _draftText.value = text
+                    lastSavedDraft = text
+                }
+                _draftLoaded.value = true
                 publish()
             }
         }
@@ -355,6 +405,84 @@ object MessageStore {
 
     fun setReplyTarget(item: MsgItem?) {
         _replyTarget.value = item
+    }
+
+    /** Persist the input box as the chat's draft
+     *  (setChatDraftMessage, verified in td_api.tl). TDLib
+     *  stores drafts server-side and syncs them to the user's
+     *  other devices on its own; an empty text deletes the
+     *  draft (draft_message = null). No-ops when nothing changed
+     *  since the last save, so the UI can call it on a debounce
+     *  without spamming. */
+    fun saveDraft(text: String) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        if (text == lastSavedDraft) return
+        lastSavedDraft = text
+        val draft: Any = if (text.isEmpty()) {
+            JSONObject.NULL
+        } else {
+            JSONObject().apply {
+                put("@type", "draftMessage")
+                val target = _replyTarget.value
+                if (target != null) {
+                    put("reply_to", JSONObject().apply {
+                        put("@type", "inputMessageReplyToMessage")
+                        put("message_id", target.id)
+                        put("quote", JSONObject.NULL)
+                        put("checklist_task_id", 0)
+                        put("poll_option_id", "")
+                    })
+                } else {
+                    put("reply_to", JSONObject.NULL)
+                }
+                put("date", 0)
+                put("content", JSONObject().apply {
+                    put("@type", "draftMessageContentText")
+                    put("text", formattedText(text))
+                    put("link_preview_options", JSONObject.NULL)
+                })
+                put("effect_id", 0)
+                put("suggested_post_info", JSONObject.NULL)
+            }
+        }
+        val query = TdClient.request("setChatDraftMessage").apply {
+            put("chat_id", chatId)
+            put("topic_id", JSONObject.NULL)
+            put("draft_message", draft)
+        }
+        TdRepository.sendRaw(query) {}
+    }
+
+    /** Tell the other side I am typing (sendChatAction with
+     *  chatActionTyping, verified in td_api.tl), throttled to
+     *  once per 5 seconds — the action itself expires on the
+     *  receiving side after a few seconds. */
+    fun sendTypingAction() {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val now = System.currentTimeMillis()
+        if (now - lastTypingSentAt < 5000) return
+        lastTypingSentAt = now
+        val query = TdClient.request("sendChatAction").apply {
+            put("chat_id", chatId)
+            put("topic_id", JSONObject.NULL)
+            put("business_connection_id", "")
+            put("action", JSONObject().put("@type", "chatActionTyping"))
+        }
+        TdRepository.sendRaw(query) {}
+    }
+
+    /** Safety net for the typing subtitle: senders normally end
+     *  with chatActionCancel, but a lost update must not leave
+     *  "正在输入…" on screen forever. Called by the UI a few
+     *  seconds after the last shown action. */
+    fun expirePeerActions() {
+        if (peerActions.isEmpty()) return
+        if (System.currentTimeMillis() - lastActionAt > 6000) {
+            peerActions.clear()
+            _peerAction.value = ""
+        }
     }
 
     /** sendMessage.reply_to for the current reply target, if any.
@@ -650,6 +778,56 @@ object MessageStore {
                 if (chatId != currentChatId) return
                 lastReadOutbox = update.optLong("last_read_outbox_message_id")
                 publish()
+            }
+            "updateChatAction" -> {
+                // The other side typing / recording / uploading
+                // (verified in td_api.tl: chat_id, topic_id,
+                // sender_id, action). Keyed per sender so a
+                // group can show who it is; cancel removes them.
+                val chatId = update.optLong("chat_id")
+                if (chatId != currentChatId) return
+                val sender = update.optJSONObject("sender_id") ?: return
+                val actionType = update.optJSONObject("action")
+                    ?.optString("@type") ?: return
+                val isUser = sender.optString("@type") == "messageSenderUser"
+                val key = when (sender.optString("@type")) {
+                    "messageSenderUser" -> sender.optLong("user_id")
+                    "messageSenderChat" -> sender.optLong("chat_id")
+                    else -> 0L
+                }
+                if (key == 0L) return
+                if (actionType == "chatActionCancel") {
+                    peerActions.remove(key)
+                } else {
+                    val label = when (actionType) {
+                        "chatActionTyping" -> "正在输入…"
+                        "chatActionRecordingVoiceNote" -> "正在录音…"
+                        "chatActionRecordingVideoNote" -> "正在录视频消息…"
+                        "chatActionUploadingPhoto" -> "正在发送图片…"
+                        "chatActionUploadingVideo" -> "正在发送视频…"
+                        "chatActionUploadingDocument" -> "正在发送文件…"
+                        "chatActionUploadingVoiceNote" -> "正在发送语音…"
+                        "chatActionChoosingSticker" -> "正在选贴纸…"
+                        else -> return
+                    }
+                    val name = if (isUser) {
+                        userNames[key] ?: run {
+                            fetchUser(key)
+                            ""
+                        }
+                    } else {
+                        ""
+                    }
+                    val isGroup = ChatStore.itemOf(chatId)?.isGroup == true
+                    peerActions[key] =
+                        if (isGroup && name.isNotEmpty()) {
+                            "$name $label"
+                        } else {
+                            label
+                        }
+                }
+                lastActionAt = System.currentTimeMillis()
+                _peerAction.value = peerActions.values.firstOrNull() ?: ""
             }
             "updatePoll" -> {
                 // Full poll object pushed on every vote change;

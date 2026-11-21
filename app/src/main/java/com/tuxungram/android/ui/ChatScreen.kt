@@ -59,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -197,6 +198,34 @@ fun ChatScreen(
     var photoCaption by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
+    // Draft restore (v0.7.0, F5): once the saved draft has been
+    // read, put it back into the input box (only if the user has
+    // not already started typing).
+    val draftLoaded by MessageStore.draftLoaded.collectAsState()
+    LaunchedEffect(draftLoaded) {
+        if (draftLoaded && input.isEmpty()) {
+            input = MessageStore.draftText.value
+        }
+    }
+    // Draft saving + own typing action: typing sends
+    // sendChatAction (throttled inside the store); the draft is
+    // saved on a 700 ms debounce. Guarded by draftLoaded so
+    // opening a chat can never wipe an unseen cloud draft.
+    LaunchedEffect(input, draftLoaded) {
+        if (!draftLoaded) return@LaunchedEffect
+        if (input.isNotBlank()) MessageStore.sendTypingAction()
+        delay(700)
+        MessageStore.saveDraft(input)
+    }
+    // Typing subtitle expiry safety net (F5).
+    val peerAction by MessageStore.peerAction.collectAsState()
+    LaunchedEffect(peerAction) {
+        if (peerAction.isNotEmpty()) {
+            delay(6500)
+            MessageStore.expirePeerActions()
+        }
+    }
+    val latestInput by rememberUpdatedState(input)
     DisposableEffect(chatId) {
         MessageStore.open(chatId)
         // Admin capabilities for this chat (Batch 3, C4): drives
@@ -210,6 +239,9 @@ fun ChatScreen(
         // had raised (v0.7.0, F4).
         Notifier.dismissForChat(context, chatId)
         onDispose {
+            // Flush a draft typed just before leaving, before
+            // close() zeroes the current chat (F5).
+            MessageStore.saveDraft(latestInput)
             MessageStore.close()
             Notifier.foregroundChatId = 0L
         }
@@ -384,12 +416,23 @@ fun ChatScreen(
                     AvatarImage(path = chat.photoPath, sizeDp = 36)
                     Spacer(Modifier.width(10.dp))
                 }
-                Text(
-                    chat?.title ?: "对话",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
-                )
+                Column {
+                    Text(
+                        chat?.title ?: "对话",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                    // Peer typing / recording subtitle (F5).
+                    if (peerAction.isNotEmpty()) {
+                        Text(
+                            peerAction,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
+                    }
+                }
             }
             if (chat?.isChannel == true) {
                 Spacer(Modifier.width(6.dp))
