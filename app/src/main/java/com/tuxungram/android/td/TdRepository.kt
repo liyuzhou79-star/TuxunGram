@@ -1,6 +1,9 @@
 package com.tuxungram.android.td
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import com.tuxungram.android.ApiConfig
 import com.tuxungram.android.BuildConfig
@@ -75,6 +78,7 @@ object TdRepository {
     fun start(context: Context) {
         if (client != null) return
         appContext = context.applicationContext
+        AccountStore.init(context)
         ProxyStore.init(context)
         UiSettings.init(context)
         val c = TdClient { update ->
@@ -133,6 +137,21 @@ object TdRepository {
                 }
                 ChatStore.onReady()
                 ContactsStore.loadContacts()
+                StoryStore.onReady()
+                // Remember who this account is, for the account
+                // switcher in settings (Batch 3, C6).
+                sendRaw(TdClient.request("getMe")) { me ->
+                    if (!TdClient.isError(me)) {
+                        val name = listOf(
+                            me.optString("first_name"),
+                            me.optString("last_name")
+                        ).filter { it.isNotEmpty() }.joinToString(" ")
+                        AccountStore.setLabel(
+                            AccountStore.currentSlot(),
+                            name.ifEmpty { me.optString("phone_number") }
+                        )
+                    }
+                }
             }
             "authorizationStateLoggingOut" -> _authState.value = AuthState.LoggingOut
             "authorizationStateClosed" -> _authState.value = AuthState.Closed
@@ -142,14 +161,15 @@ object TdRepository {
 
     /** The current account's TDLib database directory. Single
      *  source for the on-disk layout: sendParameters writes it,
-     *  the storage page measures it. (Multi-account slots will
-     *  hang their suffix off these names — see Batch 3, C6.) */
+     *  the storage page measures it. Names come from
+     *  [AccountStore] — slot 0 keeps the legacy names so an
+     *  existing login survives (Batch 3, C6). */
     fun databaseDir(context: Context): File =
-        File(context.filesDir, "tdlib").apply { mkdirs() }
+        File(context.filesDir, AccountStore.dbDirName()).apply { mkdirs() }
 
     /** The current account's downloaded-files directory. */
     fun downloadDir(context: Context): File =
-        File(context.filesDir, "tdlib-files").apply { mkdirs() }
+        File(context.filesDir, AccountStore.filesDirName()).apply { mkdirs() }
 
     private fun sendParameters() {
         if (!parametersSent.compareAndSet(false, true)) return
@@ -206,6 +226,52 @@ object TdRepository {
 
     fun logOut() {
         send(TdClient.request("logOut"))
+    }
+
+    /** Switch to another account slot (Batch 3, C6). Every store
+     *  in the app is a process-wide singleton built for one
+     *  account, so the only safe switch is a process restart:
+     *  persist the slot, schedule a relaunch, exit. The new
+     *  process reads the slot and opens that account's own
+     *  database directory. */
+    fun switchAccount(slot: Int) {
+        val ctx = appContext ?: return
+        if (slot == AccountStore.currentSlot()) return
+        AccountStore.setCurrent(slot)
+        restartProcess(ctx)
+    }
+
+    /** Add a new account: reserve a fresh slot and restart into
+     *  its (empty) login flow. */
+    fun addAccount() {
+        val ctx = appContext ?: return
+        val slot = AccountStore.addSlot()
+        AccountStore.setCurrent(slot)
+        restartProcess(ctx)
+    }
+
+    private fun restartProcess(context: Context) {
+        try {
+            client?.close()
+        } catch (t: Throwable) {
+        }
+        val intent = context.packageManager
+            .getLaunchIntentForPackage(context.packageName)
+        if (intent != null) {
+            intent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TASK
+            )
+            val pending = PendingIntent.getActivity(
+                context, 0, intent, PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarm = context.getSystemService(AlarmManager::class.java)
+            alarm?.set(
+                AlarmManager.RTC,
+                System.currentTimeMillis() + 400, pending
+            )
+        }
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     /** Drop the current client and start a fresh one (used from the

@@ -111,6 +111,7 @@ import com.tuxungram.android.ui.ProfileScreen
 import com.tuxungram.android.ui.RegistrationScreen
 import com.tuxungram.android.ui.SettingsScreen
 import com.tuxungram.android.ui.SplashScreen
+import com.tuxungram.android.ui.StoryViewerScreen
 import com.tuxungram.android.ui.TransitionScreen
 
 class MainActivity : ComponentActivity() {
@@ -225,6 +226,7 @@ private fun ReadyHost() {
     var showArchive by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }
     var showCreate by remember { mutableStateOf(false) }
+    var storyChatId by remember { mutableStateOf<Long?>(null) }
     // Forward flow: (fromChatId, messageId) plus where to return to.
     var forwardReq by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     var forwardReturnTo by remember { mutableStateOf<Long?>(null) }
@@ -250,6 +252,10 @@ private fun ReadyHost() {
                 openChatId = it
             }
         )
+        storyChatId != null -> StoryViewerScreen(
+            chatId = storyChatId!!,
+            onBack = { storyChatId = null }
+        )
         req != null -> ForwardPickerScreen(
             fromChatId = req.first,
             messageId = req.second,
@@ -266,7 +272,8 @@ private fun ReadyHost() {
                 openChatId = cid
             },
             onOpenArchive = { showArchive = true },
-            onOpenCreate = { showCreate = true }
+            onOpenCreate = { showCreate = true },
+            onOpenStory = { storyChatId = it }
         )
         else -> ChatScreen(
             chatId = chatId,

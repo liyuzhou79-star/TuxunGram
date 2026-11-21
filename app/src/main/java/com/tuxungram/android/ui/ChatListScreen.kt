@@ -85,9 +85,11 @@ import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
+import androidx.compose.foundation.border
 import com.tuxungram.android.td.ContactsStore
 import com.tuxungram.android.td.SearchHit
 import com.tuxungram.android.td.SearchStore
+import com.tuxungram.android.td.StoryStore
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import java.io.File
@@ -185,7 +187,8 @@ fun ChatListScreen(
     onOpenSettings: () -> Unit,
     onOpenChatLocated: (Long, Long) -> Unit,
     onOpenArchive: () -> Unit,
-    onOpenCreate: () -> Unit
+    onOpenCreate: () -> Unit,
+    onOpenStory: (Long) -> Unit
 ) {
     val chats by ChatStore.chats.collectAsState()
     val allLoaded by ChatStore.allLoaded.collectAsState()
@@ -309,6 +312,69 @@ fun ChatListScreen(
                 CircularProgressIndicator(modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("正在同步全部对话…", color = Color.Gray, fontSize = 12.sp)
+            }
+        }
+        // Stories row (Batch 3, C5): one ring per chat with
+        // active stories; colored ring = unread, gray = seen.
+        val storyRings by StoryStore.rings.collectAsState()
+        if (query.isBlank() && selectedFolder == null && storyRings.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                for (ring in storyRings) {
+                    val item = ChatStore.itemOf(ring.chatId)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .padding(end = 14.dp)
+                            .clickable { onOpenStory(ring.chatId) }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .border(
+                                    2.5.dp,
+                                    if (ring.hasUnread) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        Color(0xFFBDBDBD)
+                                    },
+                                    CircleShape
+                                )
+                                .padding(3.dp)
+                        ) {
+                            if (item?.photoPath != null) {
+                                AvatarImage(path = item.photoPath, sizeDp = 52)
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(52.dp)
+                                        .background(
+                                            Color(0xFF90CAF9), CircleShape
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        item?.title?.trim()
+                                            ?.firstOrNull()?.toString()
+                                            ?: "?",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 19.sp
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            item?.title ?: "",
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            modifier = Modifier.width(60.dp)
+                        )
+                    }
+                }
             }
         }
         if (shown.isEmpty() && query.isBlank()) {
