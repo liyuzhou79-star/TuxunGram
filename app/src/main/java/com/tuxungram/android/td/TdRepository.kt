@@ -45,10 +45,29 @@ object TdRepository {
     @Volatile
     private var appContext: Context? = null
 
+    private val updateListeners =
+        java.util.concurrent.CopyOnWriteArrayList<(JSONObject) -> Unit>()
+
+    /** Other stores (chat list, messages) subscribe to the raw
+     *  update stream here. Listeners run on the receiver thread. */
+    fun addUpdateListener(listener: (JSONObject) -> Unit) {
+        updateListeners.add(listener)
+    }
+
+    /** Send with a raw response callback (no error translation);
+     *  used by stores that treat some errors as signals (e.g.
+     *  loadChats answering 404 when the list is exhausted). */
+    fun sendRaw(query: JSONObject, callback: (JSONObject) -> Unit) {
+        client?.send(query, callback)
+    }
+
     fun start(context: Context) {
         if (client != null) return
         appContext = context.applicationContext
-        val c = TdClient { update -> handleUpdate(update) }
+        val c = TdClient { update ->
+            handleUpdate(update)
+            for (listener in updateListeners) listener(update)
+        }
         client = c
         c.start()
     }
@@ -66,7 +85,10 @@ object TdRepository {
             "authorizationStateWaitPassword" -> _authState.value =
                 AuthState.WaitPassword(state.optString("password_hint"))
             "authorizationStateWaitRegistration" -> _authState.value = AuthState.WaitRegistration
-            "authorizationStateReady" -> _authState.value = AuthState.Ready
+            "authorizationStateReady" -> {
+                _authState.value = AuthState.Ready
+                ChatStore.onReady()
+            }
             "authorizationStateLoggingOut" -> _authState.value = AuthState.LoggingOut
             "authorizationStateClosed" -> _authState.value = AuthState.Closed
             else -> _authState.value = AuthState.Other(state.optString("@type"))
