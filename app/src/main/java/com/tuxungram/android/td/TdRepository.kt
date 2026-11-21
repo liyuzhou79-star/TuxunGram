@@ -66,9 +66,16 @@ object TdRepository {
         client?.send(query, callback)
     }
 
+    /** Surface an error from a store that sends its own queries
+     *  (the UI translates it into plain language). */
+    fun reportError(error: Pair<Int, String>) {
+        _lastError.value = error
+    }
+
     fun start(context: Context) {
         if (client != null) return
         appContext = context.applicationContext
+        ProxyStore.init(context)
         val c = TdClient { update ->
             handleUpdate(update)
             for (listener in updateListeners) listener(update)
@@ -112,6 +119,9 @@ object TdRepository {
             "authorizationStateWaitRegistration" -> _authState.value = AuthState.WaitRegistration
             "authorizationStateReady" -> {
                 _authState.value = AuthState.Ready
+                // The saved proxy must be (re-)applied before chats
+                // start loading so the first sync already uses it.
+                ProxyStore.applySavedOnStart()
                 ChatStore.onReady()
             }
             "authorizationStateLoggingOut" -> _authState.value = AuthState.LoggingOut
@@ -183,6 +193,7 @@ object TdRepository {
         client?.close()
         client = null
         parametersSent.set(false)
+        ProxyStore.resetForRestart()
         _authState.value = AuthState.WaitTdlibParameters
         start(context)
     }

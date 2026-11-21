@@ -32,6 +32,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,6 +64,8 @@ import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import com.tuxungram.android.td.ProxyConfig
+import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdRepository
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -440,11 +443,159 @@ private fun RegistrationScreen() {
 @Composable
 private fun ReadyHost() {
     var openChatId by remember { mutableStateOf<Long?>(null) }
+    var showSettings by remember { mutableStateOf(false) }
     val chatId = openChatId
-    if (chatId == null) {
-        ChatListScreen(onOpenChat = { openChatId = it })
-    } else {
-        ChatScreen(chatId = chatId, onBack = { openChatId = null })
+    when {
+        showSettings -> SettingsScreen(onBack = { showSettings = false })
+        chatId == null -> ChatListScreen(
+            onOpenChat = { openChatId = it },
+            onOpenSettings = { showSettings = true }
+        )
+        else -> ChatScreen(chatId = chatId, onBack = { openChatId = null })
+    }
+}
+
+@Composable
+private fun SettingsScreen(onBack: () -> Unit) {
+    BackHandler { onBack() }
+    val saved = remember { ProxyStore.load() }
+    var enabled by remember { mutableStateOf(saved?.enabled ?: false) }
+    var type by remember { mutableStateOf(saved?.type ?: "socks5") }
+    var server by remember { mutableStateOf(saved?.server ?: "") }
+    var port by remember { mutableStateOf((saved?.port ?: 1080).toString()) }
+    var username by remember { mutableStateOf(saved?.username ?: "") }
+    var password by remember { mutableStateOf(saved?.password ?: "") }
+    var secret by remember { mutableStateOf(saved?.secret ?: "") }
+    var localError by remember { mutableStateOf<String?>(null) }
+    var savedTip by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("返回") }
+            Text("设置", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("代理", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "连不上 Telegram 时用。填你自己的代理服务器，保存后立刻生效，下次打开 App 也会自动用上，不用再靠全局 VPN。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("使用代理", modifier = Modifier.weight(1f))
+            Switch(checked = enabled, onCheckedChange = { enabled = it })
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("类型：")
+            TextButton(
+                onClick = { type = "socks5" },
+                enabled = type != "socks5"
+            ) { Text(if (type == "socks5") "● SOCKS5" else "○ SOCKS5") }
+            TextButton(
+                onClick = { type = "mtproto" },
+                enabled = type != "mtproto"
+            ) { Text(if (type == "mtproto") "● MTProto" else "○ MTProto") }
+        }
+        OutlinedTextField(
+            value = server,
+            onValueChange = { server = it },
+            label = { Text("服务器地址") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = port,
+            onValueChange = { port = it.filter { ch -> ch.isDigit() } },
+            label = { Text("端口") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        if (type == "socks5") {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("用户名（可空）") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("密码（可空）") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
+            )
+        } else {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = secret,
+                onValueChange = { secret = it },
+                label = { Text("密钥 secret（十六进制）") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
+        if (localError != null) {
+            Text(
+                localError!!, color = Color(0xFFC62828), fontSize = 14.sp,
+                modifier = Modifier.padding(top = 10.dp)
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = {
+                val portNum = port.toIntOrNull()
+                if (enabled && (server.isBlank() || portNum == null || portNum !in 1..65535)) {
+                    localError = "地址或端口不对，检查一下"
+                    savedTip = false
+                } else {
+                    localError = null
+                    val config = ProxyConfig(
+                        enabled = enabled,
+                        type = type,
+                        server = server.trim(),
+                        port = portNum ?: 1080,
+                        username = username.trim(),
+                        password = password,
+                        secret = secret.trim()
+                    )
+                    ProxyStore.save(config)
+                    TdRepository.clearError()
+                    ProxyStore.applyNow(config)
+                    savedTip = true
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("保存")
+        }
+        if (savedTip) {
+            Text(
+                "已保存。代理对不对，回到对话列表看消息能不能刷出来最准。",
+                color = Color.Gray, fontSize = 13.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+        ErrorText()
+        Spacer(Modifier.height(28.dp))
+        Text(
+            "TuxunGram ${BuildConfig.VERSION_NAME}",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = { TdRepository.logOut() }) {
+            Text("退出登录", color = Color(0xFFC62828))
+        }
     }
 }
 
@@ -475,7 +626,7 @@ private fun formatChatTime(dateSeconds: Int): String {
 }
 
 @Composable
-private fun ChatListScreen(onOpenChat: (Long) -> Unit) {
+private fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
     val chats by ChatStore.chats.collectAsState()
     val allLoaded by ChatStore.allLoaded.collectAsState()
     var query by remember { mutableStateOf("") }
@@ -496,12 +647,19 @@ private fun ChatListScreen(onOpenChat: (Long) -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Text(
-            "TuxunGram",
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "TuxunGram",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onOpenSettings) { Text("设置") }
+        }
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
