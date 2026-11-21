@@ -2,6 +2,7 @@ package com.tuxungram.android.ui
 
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import android.graphics.BitmapFactory
@@ -345,16 +346,122 @@ fun ChatListScreen(
                 Text("正在同步全部对话…", color = Color.Gray, fontSize = 12.sp)
             }
         }
+        // Story publishing (v0.8.0, G5): pick one photo, confirm
+        // (the dialog states the privacy plainly), then
+        // StoryStore runs canPostStory -> postStory. Results
+        // come back as one-line notices, shown as toasts.
+        val storyContext = LocalContext.current
+        var pendingStoryPhoto by remember { mutableStateOf<String?>(null) }
+        val storyPicker = rememberLauncherForActivityResult(
+            ActivityResultContracts.GetContent()
+        ) { uri ->
+            if (uri != null) {
+                try {
+                    val file = File(
+                        storyContext.cacheDir,
+                        "story_${System.currentTimeMillis()}.jpg"
+                    )
+                    storyContext.contentResolver.openInputStream(uri)
+                        ?.use { inputStream ->
+                            file.outputStream().use { output ->
+                                inputStream.copyTo(output)
+                            }
+                        }
+                    pendingStoryPhoto = file.absolutePath
+                } catch (t: Throwable) {
+                    // Picker copy failed: stay silent, nothing posted.
+                }
+            }
+        }
+        val postNotice by StoryStore.postNotice.collectAsState()
+        LaunchedEffect(postNotice) {
+            val notice = postNotice
+            if (notice != null) {
+                Toast.makeText(storyContext, notice, Toast.LENGTH_SHORT)
+                    .show()
+                StoryStore.clearPostNotice()
+            }
+        }
+        if (pendingStoryPhoto != null) {
+            AlertDialog(
+                onDismissRequest = { pendingStoryPhoto = null },
+                title = { Text("发布动态？") },
+                text = {
+                    Text(
+                        "这张照片会发到你的动态，所有人可见，" +
+                            "24 小时后自动归档。"
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val path = pendingStoryPhoto
+                        pendingStoryPhoto = null
+                        if (path != null) {
+                            StoryStore.postPhotoStory(path)
+                        }
+                    }) { Text("发布") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingStoryPhoto = null }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
         // Stories row (Batch 3, C5): one ring per chat with
         // active stories; colored ring = unread, gray = seen.
+        // The first cell is the publish entry (G5) — the row
+        // shows even when nobody has an active story, so the
+        // entry is always reachable.
         val storyRings by StoryStore.rings.collectAsState()
-        if (query.isBlank() && selectedFolder == null && storyRings.isNotEmpty()) {
+        if (query.isBlank() && selectedFolder == null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
+                // Publish entry (G5): a dashed-looking + cell,
+                // always first in the row.
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .padding(end = 14.dp)
+                        .clickable { storyPicker.launch("image/*") }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .border(
+                                2.5.dp,
+                                MaterialTheme.colorScheme.primary,
+                                CircleShape
+                            )
+                            .padding(3.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .background(
+                                    MaterialTheme.colorScheme
+                                        .primaryContainer,
+                                    CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.Add,
+                                contentDescription = "发布动态",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    Text(
+                        "发动态",
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        modifier = Modifier.width(60.dp)
+                    )
+                }
                 for (ring in storyRings) {
                     val item = ChatStore.itemOf(ring.chatId)
                     Column(

@@ -2,6 +2,7 @@ package com.tuxungram.android.td
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
@@ -25,12 +26,12 @@ data class StoryContentUi(
 )
 
 /**
- * Stories, viewing only (Batch 3, C5). The row data comes from
- * updateChatActiveStories after a loadActiveStories kick
- * (storyListMain); single stories are fetched with getStory and
- * marked read with openStory — all verified in td_api.tl.
- * Publishing is deliberately not implemented (its API was not
- * part of the verified set).
+ * Stories (viewing from Batch 3, C5; publishing added in
+ * v0.8.0, G5 after its API was verified in td_api.tl). The row
+ * data comes from updateChatActiveStories after a
+ * loadActiveStories kick (storyListMain); single stories are
+ * fetched with getStory and marked read with openStory.
+ * Publishing: canPostStory gates postStory; both verified.
  */
 object StoryStore {
     private val _rings = MutableStateFlow<List<StoryRing>>(emptyList())
@@ -195,5 +196,98 @@ object StoryStore {
         val local = file?.optJSONObject("local") ?: return null
         if (!local.optBoolean("is_downloading_completed")) return null
         return local.optString("path").ifEmpty { null }
+    }
+
+    // ---- Publishing (v0.8.0, G5) ----
+
+    /** One-line result of a publish attempt, for the UI toast. */
+    private val _postNotice = MutableStateFlow<String?>(null)
+    val postNotice: StateFlow<String?> = _postNotice
+
+    fun clearPostNotice() {
+        _postNotice.value = null
+    }
+
+    /** Post one photo as my own story. The chain is verified in
+     *  td_api.tl end to end: getMe (whose id is the poster chat
+     *  for personal stories) -> canPostStory (the gate; its
+     *  result variants map to plain-language refusals) ->
+     *  postStory with inputStoryContentPhoto, privacy
+     *  storyPrivacySettingsEveryone, active_period 86400 (the
+     *  only period non-Premium accounts may use). */
+    fun postPhotoStory(path: String) {
+        _postNotice.value = "正在发布动态…"
+        TdRepository.sendRaw(TdClient.request("getMe")) { me ->
+            if (TdClient.isError(me)) {
+                _postNotice.value = "发布失败：账号状态还没就绪。"
+                return@sendRaw
+            }
+            val myId = me.optLong("id")
+            val gate = TdClient.request("canPostStory").apply {
+                put("chat_id", myId)
+            }
+            TdRepository.sendRaw(gate) { result ->
+                if (TdClient.isError(result)) {
+                    _postNotice.value = "发布失败，再试一次。"
+                    return@sendRaw
+                }
+                when (result.optString("@type")) {
+                    "canPostStoryResultOk" -> doPostStory(myId, path)
+                    "canPostStoryResultPremiumNeeded" ->
+                        _postNotice.value =
+                            "发动态需要 Premium，当前账号暂时发不了。"
+                    "canPostStoryResultBoostNeeded" ->
+                        _postNotice.value =
+                            "这个账号的助力等级还不够，暂时发不了动态。"
+                    "canPostStoryResultActiveStoryLimitExceeded" ->
+                        _postNotice.value =
+                            "已有一条动态在展示中，等它过期后再发。"
+                    "canPostStoryResultWeeklyLimitExceeded",
+                    "canPostStoryResultMonthlyLimitExceeded" ->
+                        _postNotice.value =
+                            "最近发动态的次数用完了，过一阵再试。"
+                    "canPostStoryResultLiveStoryIsActive" ->
+                        _postNotice.value =
+                            "正在直播动态中，结束后再发。"
+                    else -> _postNotice.value = "现在发不了动态。"
+                }
+            }
+        }
+    }
+
+    private fun doPostStory(myId: Long, path: String) {
+        val query = TdClient.request("postStory").apply {
+            put("chat_id", myId)
+            put("content", JSONObject().apply {
+                put("@type", "inputStoryContentPhoto")
+                put("photo", JSONObject().apply {
+                    put("@type", "inputFileLocal")
+                    put("path", path)
+                })
+                put("added_sticker_file_ids", JSONArray())
+            })
+            put("areas", JSONObject().apply {
+                put("@type", "inputStoryAreas")
+                put("areas", JSONArray())
+            })
+            put("caption", JSONObject.NULL)
+            put("music", JSONObject.NULL)
+            put("privacy_settings", JSONObject().apply {
+                put("@type", "storyPrivacySettingsEveryone")
+                put("except_user_ids", JSONArray())
+            })
+            put("album_ids", JSONArray())
+            put("active_period", 86400)
+            put("from_story_full_id", JSONObject.NULL)
+            put("is_posted_to_chat_page", false)
+            put("protect_content", false)
+        }
+        TdRepository.sendRaw(query) { response ->
+            _postNotice.value = if (TdClient.isError(response)) {
+                "发布失败，再试一次。（错误码 ${response.optInt("code")}）"
+            } else {
+                "动态已发布，所有人可见，24 小时后自动归档。"
+            }
+        }
     }
 }
