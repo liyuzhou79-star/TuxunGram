@@ -56,9 +56,6 @@ object MediaStore {
     @Volatile
     private var attached = false
 
-    @Volatile
-    private var loaded = false
-
     private fun attach() {
         if (attached) return
         attached = true
@@ -74,12 +71,14 @@ object MediaStore {
         }
     }
 
-    /** Load (once per process) all three lists; the picker calls
-     *  this when it opens. */
+    /** Load all three lists; the picker calls this every time
+     *  it opens. Refetching on every open is deliberate (audit
+     *  fix A9): all three are cheap local-database queries, and
+     *  the old once-per-process snapshot went stale — stickers
+     *  used in another client during the session never reached
+     *  the panel until the app restarted. */
     fun load() {
         attach()
-        if (loaded) return
-        loaded = true
         TdRepository.sendRaw(TdClient.request("getRecentStickers").apply {
             put("is_attached", false)
         }) { response ->
