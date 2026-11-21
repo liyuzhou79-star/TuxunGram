@@ -18,13 +18,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tdlib-cache/libtdjson.so
-          key: tdlib-master-arm64-v2
+          key: tdlib-master-arm64-v3
 
       - name: Install host tools
         if: steps.td-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gperf perl make
+          sudo apt-get install -y gperf perl make libssl-dev zlib1g-dev php-cli
 
       - name: Checkout TDLib sources
         if: steps.td-cache.outputs.cache-hit != 'true'
@@ -54,16 +54,18 @@ jobs:
           make install_sw
           ls -la "$GITHUB_WORKSPACE/openssl-install/lib"
 
-      - name: Generate MIME type tables (host step required before cross-compiling)
+      - name: Generate sources on host (required before cross-compiling)
         if: steps.td-cache.outputs.cache-hit != 'true'
         run: |
-          cd td-src/tdutils/generate
-          mkdir -p auto
-          g++ -O2 -std=c++17 -o /tmp/generate_mime_types_gperf generate_mime_types_gperf.cpp
-          /tmp/generate_mime_types_gperf mime_types.txt auto/mime_type_to_extension.gperf auto/extension_to_mime_type.gperf
-          gperf -m100 --output-file=auto/mime_type_to_extension.cpp auto/mime_type_to_extension.gperf
-          gperf -m100 --output-file=auto/extension_to_mime_type.cpp auto/extension_to_mime_type.gperf
-          ls -la auto/
+          # TDLib only wires its code generators into non-cross builds,
+          # but the generated files live in the source tree (*/generate/auto).
+          # Run the generators in a host build first; the Android build
+          # then picks the files up.
+          cd td-src
+          cmake -B build-host -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-host --target tl_generate_tlo tl_generate_common tl_generate_mtproto tl_generate_c tl_generate_json tdmime_auto -j"$(nproc)"
+          ls td/generate/auto/td/telegram/ | head -8
+          ls tdutils/generate/auto/
 
       - name: Build TDLib (tdjson) for Android arm64
         if: steps.td-cache.outputs.cache-hit != 'true'
