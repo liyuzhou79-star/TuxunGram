@@ -115,6 +115,7 @@ import com.tuxungram.android.ui.PasswordScreen
 import com.tuxungram.android.ui.PhoneScreen
 import com.tuxungram.android.ui.ProfileScreen
 import com.tuxungram.android.ui.RegistrationScreen
+import com.tuxungram.android.ui.SessionsScreen
 import com.tuxungram.android.ui.SettingsScreen
 import com.tuxungram.android.ui.SplashScreen
 import com.tuxungram.android.ui.StoryViewerScreen
@@ -278,6 +279,7 @@ private fun ReadyHost() {
         }
     }
     var showSettings by remember { mutableStateOf(false) }
+    var showSessions by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }
     var showCreate by remember { mutableStateOf(false) }
@@ -303,7 +305,14 @@ private fun ReadyHost() {
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
     when {
-        showSettings -> SettingsScreen(onBack = { showSettings = false })
+        showSessions -> SessionsScreen(onBack = { showSessions = false })
+        showSettings -> SettingsScreen(
+            onBack = { showSettings = false },
+            onOpenSessions = {
+                showSettings = false
+                showSessions = true
+            }
+        )
         showArchive -> ArchiveScreen(
             onBack = { showArchive = false },
             onOpenChat = {

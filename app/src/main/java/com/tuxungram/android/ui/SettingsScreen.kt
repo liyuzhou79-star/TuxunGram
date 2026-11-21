@@ -142,7 +142,7 @@ fun openDownloadedFile(context: android.content.Context, path: String) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenSessions: () -> Unit = {}) {
     BackHandler { onBack() }
     val settingsContext = LocalContext.current
     val saved = remember { ProxyStore.load() }
@@ -465,6 +465,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                 modifier = Modifier.padding(top = 6.dp)
             )
         }
+        Spacer(Modifier.height(10.dp))
+        TextButton(onClick = onOpenSessions) {
+            Text("已登录设备（会话管理）")
+        }
+        Text(
+            "看哪些设备登着你的账号，不认识的可以踢下线。",
+            color = Color.Gray, fontSize = 12.sp
+        )
         val dialogMode = pinDialog
         if (dialogMode != null) {
             var currentPin by remember(dialogMode) { mutableStateOf("") }
