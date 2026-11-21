@@ -107,7 +107,12 @@ fun formatMsgTime(dateSeconds: Int): String {
 }
 
 @Composable
-fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
+fun ChatScreen(
+    chatId: Long,
+    onBack: () -> Unit,
+    onForward: (MsgItem) -> Unit,
+    onOpenProfile: () -> Unit
+) {
     val context = LocalContext.current
     val chats by ChatStore.chats.collectAsState()
     val chat = chats.firstOrNull { it.id == chatId }
@@ -246,16 +251,23 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
-            if (chat?.photoPath != null) {
-                AvatarImage(path = chat.photoPath, sizeDp = 36)
-                Spacer(Modifier.width(10.dp))
+            Row(
+                modifier = Modifier
+                    .clickable { onOpenProfile() }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (chat?.photoPath != null) {
+                    AvatarImage(path = chat.photoPath, sizeDp = 36)
+                    Spacer(Modifier.width(10.dp))
+                }
+                Text(
+                    chat?.title ?: "对话",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
             }
-            Text(
-                chat?.title ?: "对话",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1
-            )
             if (chat?.isChannel == true) {
                 Spacer(Modifier.width(6.dp))
                 Text("频道", color = Color.Gray, fontSize = 12.sp)

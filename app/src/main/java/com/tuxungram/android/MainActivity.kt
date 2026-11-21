@@ -97,6 +97,7 @@ import com.tuxungram.android.ui.CodeScreen
 import com.tuxungram.android.ui.ForwardPickerScreen
 import com.tuxungram.android.ui.PasswordScreen
 import com.tuxungram.android.ui.PhoneScreen
+import com.tuxungram.android.ui.ProfileScreen
 import com.tuxungram.android.ui.RegistrationScreen
 import com.tuxungram.android.ui.SettingsScreen
 import com.tuxungram.android.ui.SplashScreen
@@ -157,6 +158,7 @@ private fun ReadyHost() {
     var openChatId by remember { mutableStateOf<Long?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
+    var profileChatId by remember { mutableStateOf<Long?>(null) }
     // Forward flow: (fromChatId, messageId) plus where to return to.
     var forwardReq by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     var forwardReturnTo by remember { mutableStateOf<Long?>(null) }
@@ -170,6 +172,10 @@ private fun ReadyHost() {
                 showArchive = false
                 openChatId = it
             }
+        )
+        profileChatId != null -> ProfileScreen(
+            chatId = profileChatId!!,
+            onBack = { profileChatId = null }
         )
         req != null -> ForwardPickerScreen(
             fromChatId = req.first,
@@ -195,7 +201,8 @@ private fun ReadyHost() {
                 forwardReturnTo = chatId
                 forwardReq = chatId to msg.id
                 openChatId = null
-            }
+            },
+            onOpenProfile = { profileChatId = chatId }
         )
     }
 }
