@@ -1169,9 +1169,28 @@ object MessageStore {
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {
-                _sendError.value = sendErrorText(response)
+                // The picker filters to the chat's allowed list,
+                // but the list can change between opening the chat
+                // and tapping; a 400 here is almost always "this
+                // reaction is not allowed in this chat" — say that
+                // in plain words, never show the raw code.
+                val message = response.optString("message")
+                _sendError.value = if (
+                    response.optInt("code") == 400 ||
+                    message.contains("REACTION", ignoreCase = true)
+                ) {
+                    "这个对话不允许这个回应。"
+                } else {
+                    sendErrorText(response)
+                }
             }
         }
+    }
+
+    /** Shown when the UI blocks a reaction the chat does not
+     *  allow, before it ever reaches the server. */
+    fun reportReactionBlocked() {
+        _sendError.value = "这个对话不允许这个回应。"
     }
 
     private fun replyTargetId(msg: JSONObject): Long {

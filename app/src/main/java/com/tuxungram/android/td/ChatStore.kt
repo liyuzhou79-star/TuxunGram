@@ -23,7 +23,13 @@ data class ChatItem(
     val lastMessageId: Long = 0L,
     val isMarkedAsUnread: Boolean = false,
     val photoFileId: Int = 0,
-    val photoPath: String? = null
+    val photoPath: String? = null,
+    // Reactions this chat allows, from chat.available_reactions
+    // (verified in td_api.tl): null = all reactions allowed
+    // (chatAvailableReactionsAll or unknown), empty = reactions
+    // are off here, otherwise only these emojis may be added.
+    // The server answers 400 for anything outside this list.
+    val allowedReactions: List<String>? = null
 )
 
 /**
@@ -83,31 +89,132 @@ object ChatStore {
         return null
     }
 
+    /** True while the main list has not been fully synced yet
+     *  (drives the home screen's "syncing" banner). */
+    private val _syncing = MutableStateFlow(true)
+    val syncing: StateFlow<Boolean> = _syncing
+
+    @Volatile
+    private var loadingChats = false
+    private var emptyLoadRetries = 0
+
     fun loadMore() {
-        if (_allLoaded.value) return
+        if (_allLoaded.value || loadingChats) return
+        loadingChats = true
         val sizeBefore = cache.size
         val query = TdClient.request("loadChats").apply {
             put("chat_list", JSONObject().put("@type", "chatListMain"))
             put("limit", 100)
         }
         TdRepository.sendRaw(query) { response ->
+            loadingChats = false
             if (TdClient.isError(response) && response.optInt("code") == 404) {
                 // 404 is TDLib's "the list is complete" signal: every
                 // chat, however old, has been pulled in.
                 _allLoaded.value = true
             }
             recompute()
+            _syncing.value = !_allLoaded.value
             // Keep pulling until TDLib says the list is complete, so
             // the chat list is whole even if the user never scrolls.
-            // The chain only continues while the previous call
-            // actually brought new chats in — a stall guard against
-            // spinning while the network is down, not a data cap:
-            // scrolling calls loadMore again, and new chats also
-            // arrive on their own via updateNewChat.
-            if (!_allLoaded.value && cache.size > sizeBefore) {
-                loadMore()
+            // On a FRESH login the cache starts empty and the first
+            // calls may bring nothing in while TDLib is still
+            // fetching from the server — so the chain also retries
+            // a few times without growth before pausing; scrolling
+            // and updateNewChat re-trigger it afterwards. The retry
+            // bound is a spin guard, not a data cap.
+            if (!_allLoaded.value) {
+                if (cache.size > sizeBefore) {
+                    emptyLoadRetries = 0
+                    loadMore()
+                } else if (emptyLoadRetries < 5) {
+                    emptyLoadRetries++
+                    loadMore()
+                }
             }
         }
+    }
+
+    // ---- Archive list (chatListArchive) ----
+
+    private val _archivedChats = MutableStateFlow<List<ChatItem>>(emptyList())
+    val archivedChats: StateFlow<List<ChatItem>> = _archivedChats
+
+    private val _archiveLoaded = MutableStateFlow(false)
+    val archiveLoaded: StateFlow<Boolean> = _archiveLoaded
+
+    @Volatile
+    private var loadingArchive = false
+    private var emptyArchiveRetries = 0
+
+    fun loadArchived() {
+        if (_archiveLoaded.value || loadingArchive) return
+        loadingArchive = true
+        val countBefore = archiveCount()
+        val query = TdClient.request("loadChats").apply {
+            put(
+                "chat_list",
+                JSONObject().put("@type", "chatListArchive")
+            )
+            put("limit", 100)
+        }
+        TdRepository.sendRaw(query) { response ->
+            loadingArchive = false
+            if (TdClient.isError(response) && response.optInt("code") == 404) {
+                _archiveLoaded.value = true
+            }
+            recomputeArchive()
+            if (!_archiveLoaded.value) {
+                if (archiveCount() > countBefore) {
+                    emptyArchiveRetries = 0
+                    loadArchived()
+                } else if (emptyArchiveRetries < 5) {
+                    emptyArchiveRetries++
+                    loadArchived()
+                }
+            }
+        }
+    }
+
+    private fun archivePosition(chat: JSONObject): JSONObject? {
+        val positions = chat.optJSONArray("positions") ?: return null
+        for (i in 0 until positions.length()) {
+            val p = positions.optJSONObject(i) ?: continue
+            if (p.optJSONObject("list")?.optString("@type") == "chatListArchive") {
+                return p
+            }
+        }
+        return null
+    }
+
+    private fun archiveCount(): Int {
+        var n = 0
+        for (chat in cache.values) {
+            val p = archivePosition(chat) ?: continue
+            if (p.optLong("order") != 0L) n++
+        }
+        return n
+    }
+
+    private fun recomputeArchive() {
+        val items = ArrayList<ChatItem>()
+        for (chat in cache.values) {
+            val position = archivePosition(chat) ?: continue
+            val order = position.optLong("order")
+            if (order == 0L) continue
+            items.add(toItem(chat, position, order))
+        }
+        items.sortWith(compareByDescending<ChatItem> { it.order }.thenByDescending { it.id })
+        _archivedChats.value = items
+    }
+
+    /** Move a chat back out of the archive into the main list. */
+    fun unarchive(chat: ChatItem) {
+        val query = TdClient.request("addChatToList").apply {
+            put("chat_id", chat.id)
+            put("chat_list", JSONObject().put("@type", "chatListMain"))
+        }
+        TdRepository.sendRaw(query) { reportIfError(it) }
     }
 
     private fun handleUpdate(update: JSONObject) {
@@ -129,6 +236,13 @@ object ChatStore {
                     val userId = type.optLong("user_id")
                     chatIdByUserId[userId] = chat.optLong("id")
                     fetchUserPhoto(chat.optLong("id"), userId)
+                }
+                // Fresh-login sync: chats arriving on their own
+                // mean TDLib is actively fetching — keep the
+                // loadChats chain going until it answers 404.
+                if (!_allLoaded.value) {
+                    emptyLoadRetries = 0
+                    loadMore()
                 }
             }
             "updateUser" -> {
@@ -191,6 +305,15 @@ object ChatStore {
                     )
                 }
             }
+            "updateChatAvailableReactions" -> {
+                val chat = cache[chatId] ?: return
+                if (update.has("available_reactions")) {
+                    chat.put(
+                        "available_reactions",
+                        update.opt("available_reactions")
+                    )
+                }
+            }
             "updateChatIsMarkedAsUnread" -> {
                 val chat = cache[chatId] ?: return
                 chat.put(
@@ -212,10 +335,14 @@ object ChatStore {
                 if (list.optString("@type") == "chatListMain") {
                     cache.remove(chatId)
                 }
+                // Removal from the archive list is reflected by
+                // recomputeArchive() below; the chat itself stays
+                // cached for the main list.
             }
             else -> return
         }
         recompute()
+        recomputeArchive()
     }
 
     private fun patchPosition(chat: JSONObject, position: JSONObject) {
@@ -295,8 +422,32 @@ object ChatStore {
                     ensurePhotoDownload(id)
                     photoPathByFileId[id]
                 }
-            }
+            },
+            allowedReactions = allowedReactionsOf(chat)
         )
+    }
+
+    /** Parse chat.available_reactions: All (or a missing field)
+     *  means unrestricted -> null; Some carries the explicit
+     *  reactionType list, of which only plain emojis are usable
+     *  in the picker. */
+    private fun allowedReactionsOf(chat: JSONObject): List<String>? {
+        val available = chat.optJSONObject("available_reactions") ?: return null
+        return when (available.optString("@type")) {
+            "chatAvailableReactionsSome" -> {
+                val arr = available.optJSONArray("reactions") ?: JSONArray()
+                val out = ArrayList<String>()
+                for (i in 0 until arr.length()) {
+                    val type = arr.optJSONObject(i) ?: continue
+                    if (type.optString("@type") == "reactionTypeEmoji") {
+                        val emoji = type.optString("emoji")
+                        if (emoji.isNotEmpty()) out.add(emoji)
+                    }
+                }
+                out
+            }
+            else -> null
+        }
     }
 
     /** The chat's own small photo (chatPhotoInfo.small, verified in

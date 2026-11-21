@@ -124,6 +124,7 @@ object TdRepository {
                 // start loading so the first sync already uses it.
                 ProxyStore.applySavedOnStart()
                 ChatStore.onReady()
+                ContactsStore.loadContacts()
             }
             "authorizationStateLoggingOut" -> _authState.value = AuthState.LoggingOut
             "authorizationStateClosed" -> _authState.value = AuthState.Closed

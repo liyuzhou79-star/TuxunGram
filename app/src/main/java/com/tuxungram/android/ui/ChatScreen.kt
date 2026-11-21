@@ -389,7 +389,12 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
                 .padding(horizontal = 12.dp)
         ) {
             items(items = messages.asReversed(), key = { it.id }) { msg ->
-                MessageBubble(msg, isGroup = chat?.isGroup == true, onForward = onForward)
+                MessageBubble(
+                    msg,
+                    isGroup = chat?.isGroup == true,
+                    allowedReactions = chat?.allowedReactions,
+                    onForward = onForward
+                )
             }
         }
 
@@ -671,7 +676,12 @@ fun PhotoPreview(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -> Unit) {
+fun MessageBubble(
+    msg: MsgItem,
+    isGroup: Boolean,
+    allowedReactions: List<String>?,
+    onForward: (MsgItem) -> Unit
+) {
     val outgoing = msg.outgoing
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -797,7 +807,15 @@ fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -> Unit) 
                                         },
                                         RoundedCornerShape(10.dp)
                                     )
-                                    .clickable { MessageStore.toggleReaction(msg, chip.emoji) }
+                                    .clickable {
+                                        if (!chip.chosen && allowedReactions != null &&
+                                            chip.emoji !in allowedReactions
+                                        ) {
+                                            MessageStore.reportReactionBlocked()
+                                        } else {
+                                            MessageStore.toggleReaction(msg, chip.emoji)
+                                        }
+                                    }
                                     .padding(horizontal = 7.dp, vertical = 2.dp)
                             ) {
                                 Text("${chip.emoji} ${chip.count}", fontSize = 12.sp)
@@ -916,17 +934,29 @@ fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -> Unit) 
         )
     }
     if (reactionOpen) {
+        // Only offer what this chat actually allows: chats can
+        // restrict reactions to a list (or none), and the server
+        // answers 400 for anything outside it.
+        val pickerEmojis = MessageStore.COMMON_REACTIONS.filter {
+            allowedReactions == null || it in allowedReactions
+        }
         AlertDialog(
             onDismissRequest = { reactionOpen = false },
             title = { Text("选个回应") },
             text = {
-                Row {
-                    for (emoji in MessageStore.COMMON_REACTIONS) {
-                        TextButton(onClick = {
-                            MessageStore.toggleReaction(msg, emoji)
-                            reactionOpen = false
-                        }) {
-                            Text(emoji, fontSize = 22.sp)
+                if (allowedReactions != null && allowedReactions.isEmpty()) {
+                    Text("这个对话不允许回应。")
+                } else if (pickerEmojis.isEmpty()) {
+                    Text("这个对话只允许它自己的专属回应，本 App 暂时还选不了。")
+                } else {
+                    Row {
+                        for (emoji in pickerEmojis) {
+                            TextButton(onClick = {
+                                MessageStore.toggleReaction(msg, emoji)
+                                reactionOpen = false
+                            }) {
+                                Text(emoji, fontSize = 22.sp)
+                            }
                         }
                     }
                 }

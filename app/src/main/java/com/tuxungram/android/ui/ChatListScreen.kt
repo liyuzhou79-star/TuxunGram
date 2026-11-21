@@ -83,6 +83,7 @@ import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
+import com.tuxungram.android.td.ContactsStore
 import com.tuxungram.android.td.SearchHit
 import com.tuxungram.android.td.SearchStore
 import com.tuxungram.android.td.TdRepository
@@ -180,7 +181,8 @@ fun formatChatTime(dateSeconds: Int): String {
 fun ChatListScreen(
     onOpenChat: (Long) -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenChatLocated: (Long, Long) -> Unit
+    onOpenChatLocated: (Long, Long) -> Unit,
+    onOpenArchive: () -> Unit
 ) {
     val chats by ChatStore.chats.collectAsState()
     val allLoaded by ChatStore.allLoaded.collectAsState()
@@ -196,6 +198,9 @@ fun ChatListScreen(
     val searchHits by SearchStore.results.collectAsState()
     val searching by SearchStore.searching.collectAsState()
     val searchExhausted by SearchStore.exhausted.collectAsState()
+    // Collected so the contacts section refreshes when the
+    // address book finishes loading.
+    val allContacts by ContactsStore.contacts.collectAsState()
     LaunchedEffect(query) {
         if (query.isBlank()) {
             SearchStore.search("")
@@ -227,6 +232,9 @@ fun ChatListScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
             )
             Spacer(Modifier.weight(1f))
+            TextButton(onClick = onOpenArchive) {
+                Text("归档")
+            }
             IconButton(onClick = onOpenSettings) {
                 Icon(Icons.Filled.Settings, contentDescription = "设置")
             }
@@ -241,6 +249,20 @@ fun ChatListScreen(
                 .padding(horizontal = 16.dp)
         )
         Spacer(Modifier.height(8.dp))
+        // First-sync banner: while TDLib is still pulling the
+        // account's chats in, say so plainly — a half-filled list
+        // must not look like chats were lost.
+        val syncing by ChatStore.syncing.collectAsState()
+        if (syncing && shown.isNotEmpty()) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("正在同步全部对话…", color = Color.Gray, fontSize = 12.sp)
+            }
+        }
         if (shown.isEmpty() && query.isBlank()) {
             CenterColumn {
                 if (!allLoaded) {
@@ -266,6 +288,49 @@ fun ChatListScreen(
                     ChatRow(chat, onClick = { onOpenChat(chat.id) })
                 }
                 if (query.isNotBlank()) {
+                    val contactHits = ContactsStore.search(query)
+                    if (contactHits.isNotEmpty()) {
+                        item(key = "contacts_header") {
+                            Text(
+                                "联系人",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(
+                                    horizontal = 16.dp, vertical = 8.dp
+                                )
+                            )
+                        }
+                        items(
+                            items = contactHits,
+                            key = { "contact_${it.userId}" }
+                        ) { contact ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        ContactsStore.openPrivateChat(
+                                            contact.userId
+                                        ) { chatId ->
+                                            if (chatId != null) onOpenChat(chatId)
+                                        }
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    contact.name,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 15.sp
+                                )
+                                if (contact.username.isNotEmpty()) {
+                                    Text(
+                                        "@${contact.username}",
+                                        color = Color.Gray, fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
                     item(key = "hits_header") {
                         Text(
                             "消息",
@@ -488,3 +553,84 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
     }
 }
 
+
+/** The archive list (chatListArchive): chats the user archived
+ *  from the main list live here; tapping opens the chat, and
+ *  each row can move its chat back to the main list. */
+@Composable
+fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
+    BackHandler { onBack() }
+    val archived by ChatStore.archivedChats.collectAsState()
+    val archiveLoaded by ChatStore.archiveLoaded.collectAsState()
+    LaunchedEffect(Unit) { ChatStore.loadArchived() }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
+            Text("归档", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        }
+        if (archived.isEmpty()) {
+            CenterColumn {
+                if (!archiveLoaded) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text("正在加载归档…", color = Color.Gray)
+                } else {
+                    Text("没有归档的对话", color = Color.Gray)
+                }
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(items = archived, key = { it.id }) { chat ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenChat(chat.id) }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (chat.photoPath != null) {
+                            AvatarImage(path = chat.photoPath, sizeDp = 48)
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .background(Color(0xFF90CAF9), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    chat.title.trim().firstOrNull()?.toString() ?: "?",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                chat.title,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp,
+                                maxLines = 1
+                            )
+                            Text(
+                                chat.preview,
+                                color = Color.Gray,
+                                fontSize = 14.sp,
+                                maxLines = 1
+                            )
+                        }
+                        TextButton(onClick = { ChatStore.unarchive(chat) }) {
+                            Text("取消归档")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

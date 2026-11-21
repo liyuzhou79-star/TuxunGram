@@ -89,6 +89,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
+import com.tuxungram.android.ui.ArchiveScreen
 import com.tuxungram.android.ui.ChatListScreen
 import com.tuxungram.android.ui.ChatScreen
 import com.tuxungram.android.ui.ClosedScreen
@@ -155,6 +156,7 @@ private fun AppRoot() {
 private fun ReadyHost() {
     var openChatId by remember { mutableStateOf<Long?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    var showArchive by remember { mutableStateOf(false) }
     // Forward flow: (fromChatId, messageId) plus where to return to.
     var forwardReq by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     var forwardReturnTo by remember { mutableStateOf<Long?>(null) }
@@ -162,6 +164,13 @@ private fun ReadyHost() {
     val req = forwardReq
     when {
         showSettings -> SettingsScreen(onBack = { showSettings = false })
+        showArchive -> ArchiveScreen(
+            onBack = { showArchive = false },
+            onOpenChat = {
+                showArchive = false
+                openChatId = it
+            }
+        )
         req != null -> ForwardPickerScreen(
             fromChatId = req.first,
             messageId = req.second,
@@ -176,7 +185,8 @@ private fun ReadyHost() {
             onOpenChatLocated = { cid, mid ->
                 MessageStore.pendingLocateId = mid
                 openChatId = cid
-            }
+            },
+            onOpenArchive = { showArchive = true }
         )
         else -> ChatScreen(
             chatId = chatId,
