@@ -155,10 +155,12 @@ fun SettingsScreen(onBack: () -> Unit) {
     var localError by remember { mutableStateOf<String?>(null) }
     var savedTip by remember { mutableStateOf(false) }
 
+    val settingsScroll = rememberScrollState()
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .columnScrollbar(settingsScroll)
+            .verticalScroll(settingsScroll)
             .padding(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

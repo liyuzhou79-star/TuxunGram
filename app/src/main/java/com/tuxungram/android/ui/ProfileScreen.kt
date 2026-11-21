@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
@@ -83,7 +84,13 @@ fun ProfileScreen(chatId: Long, onBack: () -> Unit) {
             }
             return@Column
         }
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        val profileListState = rememberLazyListState()
+        LazyColumn(
+            state = profileListState,
+            modifier = Modifier
+                .fillMaxSize()
+                .lazyListScrollbar(profileListState)
+        ) {
             item(key = "head") {
                 Column(
                     modifier = Modifier

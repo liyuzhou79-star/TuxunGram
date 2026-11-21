@@ -64,7 +64,74 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+
+/**
+ * Slim vertical scroll indicator drawn over a lazy list's right
+ * edge (Phase D, D4) — Compose has no built-in scrollbar, and
+ * the user explicitly missed one. The thumb's size/position
+ * come from the visible window's share of the whole list;
+ * [reverse] flips it for reverseLayout lists (chat history),
+ * where the highest index sits at the visual top.
+ */
+fun Modifier.lazyListScrollbar(
+    state: LazyListState,
+    reverse: Boolean = false
+): Modifier = drawWithContent {
+    drawContent()
+    val info = state.layoutInfo
+    val total = info.totalItemsCount
+    val visible = info.visibleItemsInfo
+    if (total == 0 || visible.isEmpty()) return@drawWithContent
+    val firstIndex = visible.first().index
+    val lastIndex = visible.last().index
+    val visibleCount = lastIndex - firstIndex + 1
+    if (visibleCount >= total) return@drawWithContent
+    val thumbHeight = (size.height * visibleCount / total)
+        .coerceAtLeast(24.dp.toPx())
+    // Position within the scrollable index range; for reverse
+    // lists the window at index 0 is the visual bottom.
+    val range = (total - visibleCount).coerceAtLeast(1)
+    val topFraction = if (reverse) {
+        1f - firstIndex.toFloat() / range
+    } else {
+        firstIndex.toFloat() / range
+    }.coerceIn(0f, 1f)
+    val thumbTop = (size.height - thumbHeight) * topFraction
+    val width = 4.dp.toPx()
+    drawRoundRect(
+        color = Color(0x66000000),
+        topLeft = Offset(size.width - width - 2.dp.toPx(), thumbTop),
+        size = Size(width, thumbHeight),
+        cornerRadius = CornerRadius(width / 2, width / 2)
+    )
+}
+
+/** Same indicator for plain scrollable columns (settings). */
+fun Modifier.columnScrollbar(state: ScrollState): Modifier =
+    drawWithContent {
+        drawContent()
+        if (state.maxValue <= 0) return@drawWithContent
+        val viewport = size.height
+        val total = viewport + state.maxValue
+        val thumbHeight = (viewport * viewport / total)
+            .coerceAtLeast(24.dp.toPx())
+        val thumbTop = (viewport - thumbHeight) *
+            (state.value.toFloat() / state.maxValue)
+        val width = 4.dp.toPx()
+        drawRoundRect(
+            color = Color(0x66000000),
+            topLeft = Offset(size.width - width - 2.dp.toPx(), thumbTop),
+            size = Size(width, thumbHeight),
+            cornerRadius = CornerRadius(width / 2, width / 2)
+        )
+    }
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext

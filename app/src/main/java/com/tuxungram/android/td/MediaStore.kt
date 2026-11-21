@@ -5,6 +5,13 @@ import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
+/** One installed sticker set, for the panel's set chips
+ *  (getInstalledStickerSets, verified in td_api.tl). */
+data class StickerSetUi(
+    val id: Long,
+    val title: String
+)
+
 /** One entry of the sticker / GIF picker: a sticker or a saved
  *  animation already known to TDLib, sendable by file id. */
 data class MediaEntry(
@@ -35,6 +42,13 @@ object MediaStore {
 
     private val _savedAnimations = MutableStateFlow<List<MediaEntry>>(emptyList())
     val savedAnimations: StateFlow<List<MediaEntry>> = _savedAnimations
+
+    private val _stickerSets = MutableStateFlow<List<StickerSetUi>>(emptyList())
+    val stickerSets: StateFlow<List<StickerSetUi>> = _stickerSets
+
+    /** Stickers of the set the panel is currently browsing. */
+    private val _setStickers = MutableStateFlow<List<MediaEntry>>(emptyList())
+    val setStickers: StateFlow<List<MediaEntry>> = _setStickers
 
     private val pathByFileId = ConcurrentHashMap<Int, String>()
     private val downloadPending = ConcurrentHashMap.newKeySet<Int>()
@@ -83,12 +97,51 @@ object MediaStore {
                 _savedAnimations.value = parseAnimations(response)
             }
         }
+        TdRepository.sendRaw(TdClient.request("getInstalledStickerSets").apply {
+            put(
+                "sticker_type",
+                JSONObject().put("@type", "stickerTypeRegular")
+            )
+        }) { response ->
+            if (!TdClient.isError(response)) {
+                val arr = response.optJSONArray("sets")
+                val out = ArrayList<StickerSetUi>()
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val set = arr.optJSONObject(i) ?: continue
+                        out.add(
+                            StickerSetUi(
+                                set.optLong("id"),
+                                set.optString("title")
+                            )
+                        )
+                    }
+                }
+                _stickerSets.value = out
+            }
+        }
+    }
+
+    /** Load one installed set's stickers for the panel
+     *  (getStickerSet; its stickers array parses exactly like
+     *  the recent/favorite lists). */
+    fun loadSet(setId: Long) {
+        attach()
+        _setStickers.value = emptyList()
+        TdRepository.sendRaw(TdClient.request("getStickerSet").apply {
+            put("set_id", setId)
+        }) { response ->
+            if (!TdClient.isError(response)) {
+                _setStickers.value = parseStickers(response)
+            }
+        }
     }
 
     private fun republish() {
         _recentStickers.value = withPaths(_recentStickers.value)
         _favoriteStickers.value = withPaths(_favoriteStickers.value)
         _savedAnimations.value = withPaths(_savedAnimations.value)
+        _setStickers.value = withPaths(_setStickers.value)
     }
 
     private fun withPaths(list: List<MediaEntry>): List<MediaEntry> =

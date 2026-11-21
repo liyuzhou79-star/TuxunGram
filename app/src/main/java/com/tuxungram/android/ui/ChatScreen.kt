@@ -91,7 +91,10 @@ import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import java.io.File
@@ -184,7 +187,9 @@ fun ChatScreen(
     }
 
     var attachMenuOpen by remember { mutableStateOf(false) }
-    var mediaPickerOpen by remember { mutableStateOf(false) }
+    // Emoji/sticker/GIF panel docked above the keyboard area
+    // (steer: the input bar must not be a bare text box).
+    var stickerPanelOpen by remember { mutableStateOf(false) }
 
     // Voice recording (MediaRecorder -> OGG/Opus, TDLib's native
     // voice format). The recorder lives outside composition; the
@@ -254,7 +259,15 @@ fun ChatScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            // The bottom dock (input bar + sticker panel) rides
+            // above the keyboard instead of being covered by it
+            // (Phase D, D5); the navigation-bar distance comes
+            // from ReadyHost's systemBars padding.
+            .imePadding()
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -312,11 +325,14 @@ fun ChatScreen(
                 }
             }
             if (chatSearchResults.isNotEmpty()) {
+                val chatSearchListState = rememberLazyListState()
                 LazyColumn(
+                    state = chatSearchListState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(220.dp)
                         .background(Color(0xFFF7F7F7))
+                        .lazyListScrollbar(chatSearchListState)
                 ) {
                     items(
                         items = chatSearchResults,
@@ -401,9 +417,7 @@ fun ChatScreen(
             )
         }
 
-        if (mediaPickerOpen) {
-            MediaPickerDialog(onDismiss = { mediaPickerOpen = false })
-        }
+
 
         LazyColumn(
             state = listState,
@@ -412,6 +426,7 @@ fun ChatScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp)
+                .lazyListScrollbar(listState, reverse = true)
         ) {
             items(items = messages.asReversed(), key = { it.id }) { msg ->
                 MessageBubble(
@@ -425,6 +440,13 @@ fun ChatScreen(
             }
         }
 
+        // Hairline above the bottom dock (Phase D, D5).
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant)
+        )
         if (sendError != null) {
             Text(
                 sendError!!,
@@ -554,11 +576,23 @@ fun ChatScreen(
                                 onClick = {
                                     attachMenuOpen = false
                                     MediaStore.load()
-                                    mediaPickerOpen = true
+                                    stickerPanelOpen = true
                                 }
                             )
                         }
                     }
+                }
+                // Sticker/emoji panel toggle: the input bar's
+                // left-side entry, like in mature clients.
+                IconButton(onClick = {
+                    stickerPanelOpen = !stickerPanelOpen
+                    if (stickerPanelOpen) MediaStore.load()
+                }) {
+                    Text(
+                        if (stickerPanelOpen) "⌨" else "☺",
+                        fontSize = 22.sp,
+                        color = Color.Gray
+                    )
                 }
                 OutlinedTextField(
                     value = input,
@@ -629,6 +663,24 @@ fun ChatScreen(
                         }
                     }
                 }
+            }
+            if (stickerPanelOpen && !recording) {
+                MediaPanel(
+                    onEmoji = { emoji -> input += emoji },
+                    onSendEntry = { entry ->
+                        MessageStore.clearSendError()
+                        if (entry.isAnimation) {
+                            MessageStore.sendAnimationFile(
+                                entry.fileId, entry.durationSec,
+                                entry.width, entry.height
+                            )
+                        } else {
+                            MessageStore.sendStickerFile(
+                                entry.fileId, entry.emoji
+                            )
+                        }
+                    }
+                )
             }
         }
     }
@@ -1452,66 +1504,139 @@ private fun LinkPreviewCard(msg: MsgItem) {
 /** Sticker / GIF picker: three tabs (recent stickers, favorite
  *  stickers, saved GIFs) fed by MediaStore; tapping an entry
  *  sends it immediately. */
+/** Emoji offered by the panel's emoji tab; tapping one appends
+ *  it to the input text, like in mature clients. */
+private val PANEL_EMOJIS = listOf(
+    "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😎",
+    "🤔", "😐", "😑", "🙄", "😴", "😷", "🤤", "😋",
+    "😛", "😜", "🤪", "😇", "🙂", "🙃", "😉", "😌",
+    "😆", "😅", "😭", "😱", "😳", "🥺", "😤", "😡",
+    "👍", "👎", "👏", "🙏", "💪", "🔥", "❤️", "💔",
+    "💯", "🎉", "🎂", "🎁", "🌹", "☀️", "🌙", "⭐",
+    "⚡", "❄️", "☕", "🍺", "🍕", "🍔", "🍎", "🍉",
+    "⚽", "🎮", "🎧", "🚗", "✈️", "🏠", "💰", "📱",
+    "💻", "⏰", "✅", "❌", "❓", "💤", "💢", "👀"
+)
+
+/**
+ * The docked emoji / sticker / GIF panel that opens under the
+ * input bar (keyboard-area position, like mature clients):
+ * emoji tab appends to the text; sticker tab browses recent
+ * stickers first, then favorites and every installed set;
+ * GIF tab shows saved animations. Tapping a sticker or GIF
+ * sends it immediately and the panel stays open.
+ */
 @Composable
-private fun MediaPickerDialog(onDismiss: () -> Unit) {
-    var tab by remember { mutableIntStateOf(0) }
+private fun MediaPanel(
+    onEmoji: (String) -> Unit,
+    onSendEntry: (com.tuxungram.android.td.MediaEntry) -> Unit
+) {
+    var tab by remember { mutableIntStateOf(1) }
+    // null = recent, -1 = favorites, otherwise a set id.
+    var setSel by remember { mutableStateOf<Long?>(null) }
     val recent by MediaStore.recentStickers.collectAsState()
     val favorites by MediaStore.favoriteStickers.collectAsState()
     val animations by MediaStore.savedAnimations.collectAsState()
-    val entries = when (tab) {
-        0 -> recent
-        1 -> favorites
-        else -> animations
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("贴纸 / GIF") },
-        text = {
-            Column {
-                Row {
-                    for ((index, label) in listOf("最近", "收藏", "GIF").withIndex()) {
-                        TextButton(
-                            onClick = { tab = index },
-                            enabled = tab != index
-                        ) {
-                            Text(if (tab == index) "● $label" else label)
+    val sets by MediaStore.stickerSets.collectAsState()
+    val setStickers by MediaStore.setStickers.collectAsState()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(268.dp)
+    ) {
+        Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+            for ((index, label) in listOf("表情", "贴纸", "GIF").withIndex()) {
+                TextButton(
+                    onClick = { tab = index },
+                    enabled = tab != index
+                ) {
+                    Text(if (tab == index) "● $label" else label)
+                }
+            }
+        }
+        when (tab) {
+            0 -> LazyVerticalGrid(
+                columns = GridCells.Fixed(8),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                gridItems(PANEL_EMOJIS) { emoji ->
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clickable { onEmoji(emoji) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(emoji, fontSize = 24.sp)
+                    }
+                }
+            }
+            1 -> Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp)
+                ) {
+                    TextButton(onClick = { setSel = null }) {
+                        Text(if (setSel == null) "● 最近" else "最近")
+                    }
+                    TextButton(onClick = { setSel = -1L }) {
+                        Text(if (setSel == -1L) "● 收藏" else "收藏")
+                    }
+                    for (set in sets) {
+                        TextButton(onClick = {
+                            setSel = set.id
+                            MediaStore.loadSet(set.id)
+                        }) {
+                            Text(
+                                if (setSel == set.id) "● ${set.title}"
+                                else set.title
+                            )
                         }
                     }
                 }
+                val entries = when {
+                    setSel == null -> recent
+                    setSel == -1L -> favorites
+                    else -> setStickers
+                }
                 if (entries.isEmpty()) {
                     Text(
-                        "这里还没有内容。在 Telegram 里用过贴纸、存过 GIF 后，这里就会有。",
+                        "这里还没有内容。在 Telegram 里用过贴纸后，这里就会有。",
                         color = Color.Gray, fontSize = 13.sp,
-                        modifier = Modifier.padding(vertical = 16.dp)
+                        modifier = Modifier.padding(16.dp)
                     )
                 } else {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(4),
-                        modifier = Modifier.height(300.dp)
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         gridItems(entries, key = { it.fileId }) { entry ->
-                            MediaPickerCell(entry) {
-                                MessageStore.clearSendError()
-                                if (entry.isAnimation) {
-                                    MessageStore.sendAnimationFile(
-                                        entry.fileId, entry.durationSec,
-                                        entry.width, entry.height
-                                    )
-                                } else {
-                                    MessageStore.sendStickerFile(entry.fileId, entry.emoji)
-                                }
-                                onDismiss()
-                            }
+                            MediaPickerCell(entry) { onSendEntry(entry) }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            else -> {
+                if (animations.isEmpty()) {
+                    Text(
+                        "还没有保存的 GIF。在 Telegram 里存过 GIF 后会出现在这里。",
+                        color = Color.Gray, fontSize = 13.sp,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        gridItems(animations, key = { it.fileId }) { entry ->
+                            MediaPickerCell(entry) { onSendEntry(entry) }
+                        }
+                    }
+                }
+            }
         }
-    )
+    }
 }
 
 @Composable

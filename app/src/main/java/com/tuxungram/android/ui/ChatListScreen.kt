@@ -109,6 +109,7 @@ fun ForwardPickerScreen(
     val chats by ChatStore.chats.collectAsState()
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val pickerListState = rememberLazyListState()
     BackHandler { if (!busy) onDone() }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -133,7 +134,12 @@ fun ForwardPickerScreen(
                 Text("正在转发…", color = Color.Gray)
             }
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = pickerListState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .lazyListScrollbar(pickerListState)
+            ) {
                 items(items = chats, key = { it.id }) { chat ->
                     ChatRow(chat, onClick = {
                         busy = true
@@ -399,7 +405,9 @@ fun ChatListScreen(
         } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .lazyListScrollbar(listState)
             ) {
                 items(
                     items = shown,
@@ -704,7 +712,13 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                 }
             }
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            val archiveListState = rememberLazyListState()
+            LazyColumn(
+                state = archiveListState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .lazyListScrollbar(archiveListState)
+            ) {
                 items(items = archived, key = { it.id }) { chat ->
                     Row(
                         modifier = Modifier

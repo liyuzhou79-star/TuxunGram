@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import android.graphics.BitmapFactory
@@ -19,7 +20,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -117,6 +121,12 @@ import com.tuxungram.android.ui.TransitionScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Edge-to-edge (Phase D, D2): content draws behind the
+        // system bars; every screen gets its safe distance from
+        // the windowInsetsPadding applied in AppRoot/ReadyHost,
+        // so nothing hides under the status bar or the gesture
+        // bar on any page.
+        enableEdgeToEdge()
         handleOpenChatIntent(intent)
         TdRepository.start(applicationContext)
         setContent {
@@ -165,6 +175,18 @@ private fun AppRoot() {
     var enteredPhone by remember { mutableStateOf("") }
     var forcePhone by remember { mutableStateOf(false) }
 
+    // Ready has its own insets handling in ReadyHost (the story
+    // viewer bleeds full-screen); every other state gets the
+    // standard system-bars safe distance here (Phase D, D2).
+    if (authState is AuthState.Ready) {
+        ReadyHost()
+        return
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.systemBars)
+    ) {
     when (val state = authState) {
         is AuthState.WaitTdlibParameters -> SplashScreen()
         is AuthState.WaitPhone -> PhoneScreen { fullNumber ->
@@ -192,6 +214,7 @@ private fun AppRoot() {
         is AuthState.LoggingOut -> TransitionScreen("正在退出…")
         is AuthState.Closed -> ClosedScreen()
         is AuthState.Other -> TransitionScreen("正在处理…")
+    }
     }
 }
 
@@ -232,6 +255,21 @@ private fun ReadyHost() {
     var forwardReturnTo by remember { mutableStateOf<Long?>(null) }
     val chatId = openChatId
     val req = forwardReq
+    // The story viewer bleeds full-screen behind the bars and
+    // pads its own header (Phase D, D2); everything else gets
+    // the standard system-bars safe distance.
+    if (storyChatId != null) {
+        StoryViewerScreen(
+            chatId = storyChatId!!,
+            onBack = { storyChatId = null }
+        )
+        return
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.systemBars)
+    ) {
     when {
         showSettings -> SettingsScreen(onBack = { showSettings = false })
         showArchive -> ArchiveScreen(
@@ -251,10 +289,6 @@ private fun ReadyHost() {
                 showCreate = false
                 openChatId = it
             }
-        )
-        storyChatId != null -> StoryViewerScreen(
-            chatId = storyChatId!!,
-            onBack = { storyChatId = null }
         )
         req != null -> ForwardPickerScreen(
             fromChatId = req.first,
@@ -285,6 +319,7 @@ private fun ReadyHost() {
             },
             onOpenProfile = { profileChatId = chatId }
         )
+    }
     }
 }
 
