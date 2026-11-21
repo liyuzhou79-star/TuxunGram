@@ -84,45 +84,79 @@ object TdRepository {
         _lastError.value = error
     }
 
+    /** True while a client is being constructed on the init
+     *  thread; start() is a no-op meanwhile. */
+    @Volatile
+    private var starting = false
+
     fun start(context: Context) {
-        if (client != null) return
+        if (client != null || starting) return
+        starting = true
         appContext = context.applicationContext
         AccountStore.init(context)
         ProxyStore.init(context)
         UiSettings.init(context)
         val gen = clientGeneration.get()
-        val c = TdClient { update ->
-            if (gen == clientGeneration.get()) {
-                handleUpdate(update)
-                for (listener in updateListeners) listener(update)
+        // H2-1 (performance): constructing the client loads the
+        // ~32 MB libtdjson.so through TdNative's static init —
+        // the heaviest single blocking item on the cold-start
+        // path, previously done on the main thread inside
+        // onCreate. It runs on this background thread now; the
+        // main thread only does the three small
+        // SharedPreferences reads above before the first frame.
+        // Authorization states arrive asynchronously exactly
+        // as they did when TDLib pushed them, so nothing
+        // downstream can tell the difference.
+        Thread({
+            try {
+                val c = TdClient { update ->
+                    if (gen == clientGeneration.get()) {
+                        handleUpdate(update)
+                        for (listener in updateListeners) listener(update)
+                    }
+                }
+                if (gen != clientGeneration.get()) {
+                    // A restart superseded this start while the
+                    // library was loading: abandon this client
+                    // (never activated, holds nothing) and
+                    // re-run start for the current generation
+                    // instead of stranding the session.
+                    starting = false
+                    appContext?.let { start(it) }
+                    return@Thread
+                }
+                client = c
+                starting = false
+                c.start()
+                // A TDLib client created via td_create_client_id stays INACTIVE
+                // until the first request is sent to it: it never emits the
+                // initial updateAuthorizationState on its own. Waiting for that
+                // update before sending anything deadlocks the app on the
+                // splash screen (shipped in v0.1.0, hung forever at
+                // "connecting"). Probe with getAuthorizationState to activate
+                // the client, and feed its response through the same state
+                // handling as a pushed update.
+                c.send(TdClient.request("getAuthorizationState")) { response ->
+                    if (gen != clientGeneration.get()) {
+                        // Answer from a client a restart already replaced.
+                        return@send
+                    }
+                    if (TdClient.isError(response)) {
+                        _lastError.value =
+                            response.optInt("code") to response.optString("message")
+                    } else {
+                        handleUpdate(
+                            JSONObject()
+                                .put("@type", "updateAuthorizationState")
+                                .put("authorization_state", response)
+                        )
+                    }
+                }
+            } catch (t: Throwable) {
+                starting = false
+                _lastError.value = 0 to "TDLib failed to load"
             }
-        }
-        client = c
-        c.start()
-        // A TDLib client created via td_create_client_id stays INACTIVE
-        // until the first request is sent to it: it never emits the
-        // initial updateAuthorizationState on its own. Waiting for that
-        // update before sending anything deadlocks the app on the
-        // splash screen (shipped in v0.1.0, hung forever at
-        // "connecting"). Probe with getAuthorizationState to activate
-        // the client, and feed its response through the same state
-        // handling as a pushed update.
-        c.send(TdClient.request("getAuthorizationState")) { response ->
-            if (gen != clientGeneration.get()) {
-                // Answer from a client a restart already replaced.
-                return@send
-            }
-            if (TdClient.isError(response)) {
-                _lastError.value =
-                    response.optInt("code") to response.optString("message")
-            } else {
-                handleUpdate(
-                    JSONObject()
-                        .put("@type", "updateAuthorizationState")
-                        .put("authorization_state", response)
-                )
-            }
-        }
+        }, "td-init").start()
     }
 
     private fun handleUpdate(update: JSONObject) {
