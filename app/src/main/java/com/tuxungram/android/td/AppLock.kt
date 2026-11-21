@@ -1,7 +1,6 @@
 package com.tuxungram.android.td
 
 import android.content.Context
-import androidx.biometric.BiometricManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.security.MessageDigest
@@ -202,12 +201,27 @@ object AppLock {
     }
 
     /** Whether this device can actually do fingerprint unlock
-     *  (hardware present + at least one fingerprint enrolled). */
+     *  (hardware present + at least one fingerprint enrolled).
+     *  Framework BiometricManager: since v0.9.0 (H3) the app
+     *  uses the platform biometric APIs (minSdk 29 covers
+     *  them) instead of the androidx.biometric library, whose
+     *  dependency tree cost about 2 MB of package. */
     fun biometricAvailable(context: Context): Boolean {
         return try {
-            BiometricManager.from(context).canAuthenticate(
-                BiometricManager.Authenticators.BIOMETRIC_STRONG
-            ) == BiometricManager.BIOMETRIC_SUCCESS
+            val manager = context.getSystemService(
+                android.hardware.biometrics.BiometricManager::class.java
+            ) ?: return false
+            val result = if (android.os.Build.VERSION.SDK_INT >= 30) {
+                manager.canAuthenticate(
+                    android.hardware.biometrics.BiometricManager
+                        .Authenticators.BIOMETRIC_STRONG
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                manager.canAuthenticate()
+            }
+            result ==
+                android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS
         } catch (t: Throwable) {
             false
         }

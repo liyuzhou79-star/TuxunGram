@@ -5,8 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
-import androidx.fragment.app.FragmentActivity
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import android.graphics.BitmapFactory
@@ -126,11 +126,11 @@ import com.tuxungram.android.ui.StoryViewerScreen
 import com.tuxungram.android.ui.ThreadScreen
 import com.tuxungram.android.ui.TransitionScreen
 
-// FragmentActivity (not plain ComponentActivity) because the
-// app lock's fingerprint prompt (BiometricPrompt) requires
-// one; it is a ComponentActivity subclass, so setContent and
-// the rest work unchanged.
-class MainActivity : FragmentActivity() {
+// Plain ComponentActivity: the app lock's fingerprint prompt
+// uses the framework BiometricPrompt since v0.9.0 (H3), which
+// needs no FragmentActivity — that dropped the androidx
+// fragment dependency tree from the package.
+class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // App lock (v0.6.0, E2): read the persisted state before

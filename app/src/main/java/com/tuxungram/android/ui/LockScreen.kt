@@ -1,6 +1,5 @@
 package com.tuxungram.android.ui
 
-import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,7 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
 import com.tuxungram.android.td.AppLock
 import kotlinx.coroutines.delay
 
@@ -68,13 +66,25 @@ fun LockScreen() {
     val lockoutLeftMs = maxOf(0L, lockoutUntil - nowMs)
 
     fun tryBiometric() {
-        val activity = context as? FragmentActivity ?: return
-        val prompt = BiometricPrompt(
-            activity,
+        // Framework BiometricPrompt (platform API, minSdk 29
+        // covers it): the androidx prompt needed a
+        // FragmentActivity host and pulled the fragment tree
+        // into the package for this one dialog (v0.9.0, H3).
+        val prompt = android.hardware.biometrics.BiometricPrompt
+            .Builder(context)
+            .setTitle("解锁 TuxunGram")
+            .setSubtitle("用指纹解锁")
+            .setNegativeButtonText("用密码")
+            .build()
+        prompt.authenticate(
+            android.os.CancellationSignal(),
             ContextCompat.getMainExecutor(context),
-            object : BiometricPrompt.AuthenticationCallback() {
+            object :
+                android.hardware.biometrics.BiometricPrompt
+                    .AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(
-                    result: BiometricPrompt.AuthenticationResult
+                    result: android.hardware.biometrics.BiometricPrompt
+                        .AuthenticationResult
                 ) {
                     AppLock.unlock()
                 }
@@ -83,20 +93,20 @@ fun LockScreen() {
                     errorCode: Int,
                     errString: CharSequence
                 ) {
-                    if (errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
-                        errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON
+                    val promptClass =
+                        android.hardware.biometrics.BiometricPrompt
+                    if (errorCode != promptClass.ERROR_USER_CANCELED &&
+                        errorCode != promptClass.ERROR_NEGATIVE_BUTTON
                     ) {
                         error = errString.toString()
                     }
                 }
+
+                override fun onAuthenticationFailed() {
+                    error = "指纹没对上，再试一次"
+                }
             }
         )
-        val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("解锁 TuxunGram")
-            .setSubtitle("用指纹解锁")
-            .setNegativeButtonText("用密码")
-            .build()
-        prompt.authenticate(info)
     }
 
     LaunchedEffect(Unit) {
