@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -142,6 +143,31 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
 
     var attachMenuOpen by remember { mutableStateOf(false) }
     var mediaPickerOpen by remember { mutableStateOf(false) }
+
+    // Voice recording (MediaRecorder -> OGG/Opus, TDLib's native
+    // voice format). The recorder lives outside composition; the
+    // UI only mirrors its state.
+    val voiceRecorder = remember { VoiceRecorder() }
+    var recording by remember { mutableStateOf(false) }
+    var recordSeconds by remember { mutableIntStateOf(0) }
+    fun startRecording() {
+        if (voiceRecorder.start(context)) {
+            recording = true
+            recordSeconds = 0
+        }
+    }
+    val micPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startRecording()
+    }
+    LaunchedEffect(recording) {
+        while (recording) {
+            delay(200)
+            voiceRecorder.sample()
+            recordSeconds = voiceRecorder.elapsedSeconds()
+        }
+    }
     // (path, mimeType, displayName) of a picked file awaiting confirm.
     var pendingFile by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     val filePicker = rememberLauncherForActivityResult(
@@ -315,7 +341,45 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
                     }
                 }
             }
-            Row(
+            if (recording) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(Color(0xFFC62828), CircleShape)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "录音中 ${formatDuration(recordSeconds)}",
+                        fontSize = 15.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        voiceRecorder.cancel()
+                        recording = false
+                    }) {
+                        Text("取消")
+                    }
+                    Button(onClick = {
+                        val result = voiceRecorder.stop()
+                        recording = false
+                        if (result != null) {
+                            MessageStore.clearSendError()
+                            MessageStore.sendVoiceNote(
+                                result.first, result.second, result.third
+                            )
+                        }
+                    }) {
+                        Text("发送")
+                    }
+                }
+            }
+            if (!recording) Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp),
@@ -370,35 +434,67 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
                     maxLines = 4
                 )
                 Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .background(
-                            if (canBasic && input.isNotBlank()) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                Color(0xFFBDBDBD)
-                            },
-                            CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    IconButton(
-                        onClick = {
-                            val text = input.trim()
-                            if (text.isNotEmpty()) {
-                                MessageStore.clearSendError()
-                                MessageStore.sendText(text)
-                                input = ""
-                            }
-                        },
-                        enabled = canBasic && input.isNotBlank()
+                if (canBasic && input.isBlank()) {
+                    // Empty input: the round button is the voice
+                    // recorder, like in other Telegram clients.
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(Color(0xFFBDBDBD), CircleShape),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "发送",
-                            tint = Color.White
-                        )
+                        IconButton(onClick = {
+                            val granted = androidx.core.content.ContextCompat
+                                .checkSelfPermission(
+                                    context,
+                                    android.Manifest.permission.RECORD_AUDIO
+                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            if (granted) {
+                                startRecording()
+                            } else {
+                                micPermission.launch(
+                                    android.Manifest.permission.RECORD_AUDIO
+                                )
+                            }
+                        }) {
+                            Icon(
+                                Icons.Filled.Mic,
+                                contentDescription = "录语音",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(
+                                if (canBasic && input.isNotBlank()) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    Color(0xFFBDBDBD)
+                                },
+                                CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        IconButton(
+                            onClick = {
+                                val text = input.trim()
+                                if (text.isNotEmpty()) {
+                                    MessageStore.clearSendError()
+                                    MessageStore.sendText(text)
+                                    input = ""
+                                }
+                            },
+                            enabled = canBasic && input.isNotBlank()
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "发送",
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
             }
@@ -1291,4 +1387,126 @@ private fun MediaPickerCell(entry: MediaEntry, onClick: () -> Unit) {
             }
         }
     }
+}
+
+/** Minimal voice recorder: MediaRecorder into an OGG/Opus file
+ *  (Telegram's native voice-note format), sampling maxAmplitude
+ *  a few times a second for the waveform. All failures are
+ *  swallowed into "no recording" — the chat screen just stays. */
+private class VoiceRecorder {
+    private var recorder: android.media.MediaRecorder? = null
+    private var file: File? = null
+    private val amplitudes = ArrayList<Int>()
+    private var startedAt = 0L
+
+    fun start(context: android.content.Context): Boolean {
+        return try {
+            val f = File(context.cacheDir, "voice_${System.currentTimeMillis()}.ogg")
+            @Suppress("DEPRECATION")
+            val r = android.media.MediaRecorder()
+            r.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+            r.setOutputFormat(android.media.MediaRecorder.OutputFormat.OGG)
+            r.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.OPUS)
+            r.setAudioSamplingRate(48000)
+            r.setAudioEncodingBitRate(32000)
+            r.setOutputFile(f.absolutePath)
+            r.prepare()
+            r.start()
+            recorder = r
+            file = f
+            amplitudes.clear()
+            startedAt = System.currentTimeMillis()
+            true
+        } catch (t: Throwable) {
+            recorder = null
+            false
+        }
+    }
+
+    fun sample() {
+        try {
+            recorder?.maxAmplitude?.let { amplitudes.add(it) }
+        } catch (t: Throwable) {
+            // Recorder died mid-way; stop() will sort it out.
+        }
+    }
+
+    fun elapsedSeconds(): Int =
+        if (startedAt == 0L) 0 else ((System.currentTimeMillis() - startedAt) / 1000).toInt()
+
+    /** Stop and keep the recording: (path, durationSec, waveform
+     *  base64), or null when it was too short / broken. */
+    fun stop(): Triple<String, Int, String>? {
+        val r = recorder ?: return null
+        val seconds = elapsedSeconds()
+        try {
+            r.stop()
+        } catch (t: Throwable) {
+            // Too short to stop cleanly counts as cancelled.
+        }
+        try {
+            r.release()
+        } catch (t: Throwable) {
+        }
+        recorder = null
+        val f = file
+        file = null
+        if (f == null || seconds < 1 || !f.exists() || f.length() == 0L) {
+            f?.delete()
+            return null
+        }
+        return Triple(f.absolutePath, seconds, packWaveform(amplitudes))
+    }
+
+    fun cancel() {
+        val r = recorder
+        recorder = null
+        if (r != null) {
+            try {
+                r.stop()
+            } catch (t: Throwable) {
+            }
+            try {
+                r.release()
+            } catch (t: Throwable) {
+            }
+        }
+        file?.delete()
+        file = null
+    }
+}
+
+/** TDLib's waveform: 100 amplitude values of 5 bits each
+ *  (0..31), packed LSB-first, base64-encoded. Resampled from
+ *  whatever sampling the recorder produced. */
+private fun packWaveform(samples: List<Int>): String {
+    if (samples.isEmpty()) return ""
+    val values = IntArray(100)
+    for (i in 0 until 100) {
+        val from = i * samples.size / 100
+        val to = maxOf(from + 1, (i + 1) * samples.size / 100)
+        var sum = 0L
+        var count = 0
+        for (j in from until minOf(to, samples.size)) {
+            sum += samples[j]
+            count++
+        }
+        val avg = if (count > 0) sum / count else 0L
+        values[i] = (avg * 31 / 32767L).toInt().coerceIn(0, 31)
+    }
+    val bytes = ArrayList<Byte>()
+    var acc = 0
+    var bits = 0
+    for (v in values) {
+        acc = acc or (v shl bits)
+        bits += 5
+        while (bits >= 8) {
+            bytes.add((acc and 0xFF).toByte())
+            acc = acc ushr 8
+            bits -= 8
+        }
+    }
+    if (bits > 0) bytes.add((acc and 0xFF).toByte())
+    val arr = ByteArray(bytes.size) { bytes[it] }
+    return android.util.Base64.encodeToString(arr, android.util.Base64.NO_WRAP)
 }
