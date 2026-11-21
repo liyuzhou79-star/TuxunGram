@@ -550,6 +550,30 @@ object MessageStore {
         }
     }
 
+    /** inputMessagePhoto for a local file (v0.9.1: shared with
+     *  the thread / forum stores so every send surface builds
+     *  the exact same content object). */
+    fun photoContent(path: String, caption: String): JSONObject =
+        JSONObject().apply {
+            put("@type", "inputMessagePhoto")
+            put("photo", JSONObject().apply {
+                put("@type", "inputPhoto")
+                put("photo", JSONObject().apply {
+                    put("@type", "inputFileLocal")
+                    put("path", path)
+                })
+                put("thumbnail", JSONObject.NULL)
+                put("video", JSONObject.NULL)
+                put("added_sticker_file_ids", JSONArray())
+                put("width", 0)
+                put("height", 0)
+            })
+            put("caption", formattedText(caption))
+            put("show_caption_above_media", false)
+            put("self_destruct_type", JSONObject.NULL)
+            put("has_spoiler", false)
+        }
+
     fun sendPhoto(path: String, caption: String) {
         val chatId = currentChatId
         if (chatId == 0L) return
@@ -558,25 +582,7 @@ object MessageStore {
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
             if (replyTo != null) put("reply_to", replyTo)
-            put("input_message_content", JSONObject().apply {
-                put("@type", "inputMessagePhoto")
-                put("photo", JSONObject().apply {
-                    put("@type", "inputPhoto")
-                    put("photo", JSONObject().apply {
-                        put("@type", "inputFileLocal")
-                        put("path", path)
-                    })
-                    put("thumbnail", JSONObject.NULL)
-                    put("video", JSONObject.NULL)
-                    put("added_sticker_file_ids", JSONArray())
-                    put("width", 0)
-                    put("height", 0)
-                })
-                put("caption", formattedText(caption))
-                put("show_caption_above_media", false)
-                put("self_destruct_type", JSONObject.NULL)
-                put("has_spoiler", false)
-            })
+            put("input_message_content", photoContent(path, caption))
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {
@@ -1137,8 +1143,10 @@ object MessageStore {
     }
 
     /** Flatten a poll object (fields verified in td_api.tl: poll,
-     *  pollOption, pollTypeQuiz). */
-    private fun parsePoll(poll: JSONObject): PollUi {
+     *  pollOption, pollTypeQuiz). Shared with the thread / forum
+     *  stores since v0.9.1 so their updatePoll handling renders
+     *  identically. */
+    fun parsePoll(poll: JSONObject): PollUi {
         val type = poll.optJSONObject("type")
         val isQuiz = type?.optString("@type") == "pollTypeQuiz"
         val correctIds = HashSet<Int>()
@@ -1340,20 +1348,18 @@ object MessageStore {
         publish()
     }
 
-    /** Send a picked file: video MIME goes as a video message,
-     *  .ogg/.opus audio as a voice note, everything else as a
-     *  document. Input types verified in td_api.tl (inputDocument /
-     *  inputVideo / inputVoiceNote and their input* wrappers). */
-    fun sendFile(path: String, mimeType: String, fileName: String) {
-        val chatId = currentChatId
-        if (chatId == 0L) return
-        val replyTo = replyToJson()
-        _replyTarget.value = null
+    /** The input content for a picked file (v0.9.1: shared with
+     *  the thread / forum stores): video MIME goes as a video
+     *  message, .ogg/.opus audio as a voice note, everything
+     *  else as a document. Input types verified in td_api.tl
+     *  (inputDocument / inputVideo / inputVoiceNote and their
+     *  input* wrappers). */
+    fun fileContent(path: String, mimeType: String, fileName: String): JSONObject {
         val localFile = JSONObject().apply {
             put("@type", "inputFileLocal")
             put("path", path)
         }
-        val content = when {
+        return when {
             mimeType.startsWith("video/") -> JSONObject().apply {
                 put("@type", "inputMessageVideo")
                 put("video", JSONObject().apply {
@@ -1396,10 +1402,21 @@ object MessageStore {
                 put("caption", formattedText(""))
             }
         }
+    }
+
+    /** Send a picked file into the currently open chat. */
+    fun sendFile(path: String, mimeType: String, fileName: String) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val replyTo = replyToJson()
+        _replyTarget.value = null
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
             if (replyTo != null) put("reply_to", replyTo)
-            put("input_message_content", content)
+            put(
+                "input_message_content",
+                fileContent(path, mimeType, fileName)
+            )
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {

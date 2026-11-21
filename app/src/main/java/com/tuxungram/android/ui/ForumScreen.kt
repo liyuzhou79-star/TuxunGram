@@ -1,5 +1,7 @@
 package com.tuxungram.android.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -18,8 +20,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,11 +45,13 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.ForumStore
 import com.tuxungram.android.td.ForumTopicUi
+import java.io.File
 
 /**
  * Forum screens (v0.8.0, G2): the topic list shown when a
@@ -203,6 +212,75 @@ fun ForumTopicView(
     val replyTarget by ForumStore.replyTarget.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val context = LocalContext.current
+
+    // Attachment pipeline (v0.9.1, J2): the same pickers and
+    // copy-to-cache flow as the main chat screen; the picked
+    // photo goes through the shared PhotoPreview, files through
+    // a confirm dialog, and both send via ForumStore.
+    var pendingPhoto by remember { mutableStateOf<String?>(null) }
+    var photoCaption by remember { mutableStateOf("") }
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val file = File(
+                context.cacheDir, "pick_${System.currentTimeMillis()}.jpg"
+            )
+            try {
+                context.contentResolver.openInputStream(uri)
+                    ?.use { inputStream ->
+                        file.outputStream().use { output ->
+                            inputStream.copyTo(output)
+                        }
+                    }
+                pendingPhoto = file.absolutePath
+                photoCaption = ""
+            } catch (t: Throwable) {
+                // Picker copy failed: stay in the topic silently.
+            }
+        }
+    }
+    var pendingFile by remember {
+        mutableStateOf<Triple<String, String, String>?>(null)
+    }
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                var displayName = "file"
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val name = cursor.getString(0)
+                        if (!name.isNullOrBlank()) displayName = name
+                    }
+                }
+                val mime = context.contentResolver.getType(uri) ?: ""
+                val safeName = displayName.replace(
+                    Regex("[^A-Za-z0-9._-]"), "_"
+                )
+                val file = File(
+                    context.cacheDir,
+                    "pick_${System.currentTimeMillis()}_$safeName"
+                )
+                context.contentResolver.openInputStream(uri)
+                    ?.use { inputStream ->
+                        file.outputStream().use { output ->
+                            inputStream.copyTo(output)
+                        }
+                    }
+                pendingFile = Triple(file.absolutePath, mime, displayName)
+            } catch (t: Throwable) {
+                // Picker copy failed: stay in the topic silently.
+            }
+        }
+    }
+    var attachMenuOpen by remember { mutableStateOf(false) }
 
     DisposableEffect(chatId, topic.topicId) {
         ForumStore.openTopic(chatId, topic.topicId)
@@ -219,6 +297,44 @@ fun ForumTopicView(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        val photoPath = pendingPhoto
+        if (photoPath != null) {
+            PhotoPreview(
+                path = photoPath,
+                caption = photoCaption,
+                onCaptionChange = { photoCaption = it },
+                onSend = {
+                    ForumStore.clearError()
+                    ForumStore.sendPhoto(photoPath, photoCaption.trim())
+                    pendingPhoto = null
+                },
+                onCancel = { pendingPhoto = null }
+            )
+            return@Column
+        }
+        val fileToSend = pendingFile
+        if (fileToSend != null) {
+            AlertDialog(
+                onDismissRequest = { pendingFile = null },
+                title = { Text("发送文件") },
+                text = { Text("要发送「${fileToSend.third}」吗？") },
+                confirmButton = {
+                    Button(onClick = {
+                        ForumStore.clearError()
+                        ForumStore.sendFile(
+                            fileToSend.first, fileToSend.second,
+                            fileToSend.third
+                        )
+                        pendingFile = null
+                    }) { Text("发送") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingFile = null }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -277,6 +393,9 @@ fun ForumTopicView(
                         onDownloadFile = { ForumStore.downloadFileFor(it) },
                         onToggleReaction = { m, emoji ->
                             ForumStore.toggleReaction(m, emoji)
+                        },
+                        onVotePoll = { m, ids ->
+                            ForumStore.setPollAnswer(m, ids)
                         }
                     )
                 }
@@ -317,6 +436,34 @@ fun ForumTopicView(
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Box {
+                    IconButton(onClick = { attachMenuOpen = true }) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = "发送附件",
+                            tint = Color.Gray
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = attachMenuOpen,
+                        onDismissRequest = { attachMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("发图片") },
+                            onClick = {
+                                attachMenuOpen = false
+                                photoPicker.launch("image/*")
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("发文件 / 视频 / 语音") },
+                            onClick = {
+                                attachMenuOpen = false
+                                filePicker.launch("*/*")
+                            }
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },

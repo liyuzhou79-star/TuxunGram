@@ -307,6 +307,31 @@ object ForumStore {
     }
 
     fun sendText(text: String) {
+        sendWithContent(JSONObject().apply {
+            put("@type", "inputMessageText")
+            put("text", JSONObject().apply {
+                put("@type", "formattedText")
+                put("text", text)
+                put("entities", JSONArray())
+            })
+            put("link_preview_options", JSONObject.NULL)
+            put("clear_draft", true)
+        })
+    }
+
+    /** Send a picked photo into the topic (v0.9.1, J2: media
+     *  sends use the main chat's content builders, only the
+     *  topic wiring differs). */
+    fun sendPhoto(path: String, caption: String) {
+        sendWithContent(MessageStore.photoContent(path, caption))
+    }
+
+    /** Send a picked file / video / voice note into the topic. */
+    fun sendFile(path: String, mimeType: String, fileName: String) {
+        sendWithContent(MessageStore.fileContent(path, mimeType, fileName))
+    }
+
+    private fun sendWithContent(content: JSONObject) {
         val chatId = topicChatId
         val topicId = openTopicId
         if (chatId == 0L || topicId == 0) return
@@ -327,16 +352,7 @@ object ForumStore {
                     put("poll_option_id", "")
                 })
             }
-            put("input_message_content", JSONObject().apply {
-                put("@type", "inputMessageText")
-                put("text", JSONObject().apply {
-                    put("@type", "formattedText")
-                    put("text", text)
-                    put("entities", JSONArray())
-                })
-                put("link_preview_options", JSONObject.NULL)
-                put("clear_draft", true)
-            })
+            put("input_message_content", content)
         }
         TdRepository.sendRaw(query) { response ->
             if (topicChatId != chatId) return@sendRaw
@@ -346,6 +362,26 @@ object ForumStore {
                 val item = MessageStore.parseMessage(response)
                 byId[item.id] = item
                 publish()
+            }
+        }
+    }
+
+    /** Vote in a poll posted inside the topic (v0.9.1, J2):
+     *  same setPollAnswer route as the main chat; results come
+     *  back through updatePoll below. */
+    fun setPollAnswer(item: MsgItem, optionIds: List<Int>) {
+        val chatId = topicChatId
+        if (chatId == 0L) return
+        val ids = JSONArray()
+        for (id in optionIds) ids.put(id)
+        val query = TdClient.request("setPollAnswer").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+            put("option_ids", ids)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _error.value = "投票没成功，再试一次。"
             }
         }
     }
@@ -456,6 +492,23 @@ object ForumStore {
                         publish()
                     }
                 }
+            }
+            "updatePoll" -> {
+                // Same handling as the main chat: the full poll
+                // object is pushed on every vote change; match
+                // it to this topic's poll messages by poll id.
+                val pollObj = update.optJSONObject("poll") ?: return
+                val pollId = pollObj.optLong("id")
+                var changed = false
+                for ((id, item) in byId) {
+                    if (item.pollId == pollId && item.pollId != 0L) {
+                        byId[id] = item.copy(
+                            poll = MessageStore.parsePoll(pollObj)
+                        )
+                        changed = true
+                    }
+                }
+                if (changed) publish()
             }
             "updateDeleteMessages" -> {
                 if (update.optLong("chat_id") != chatId) return

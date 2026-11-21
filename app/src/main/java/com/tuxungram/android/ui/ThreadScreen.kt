@@ -1,6 +1,8 @@
 package com.tuxungram.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -57,7 +60,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import com.tuxungram.android.td.PollUi
 import com.tuxungram.android.td.ThreadStore
+import java.io.File
 
 /**
  * A bubble for the thread / forum-topic screens (v0.8.0). The
@@ -65,8 +70,9 @@ import com.tuxungram.android.td.ThreadStore
  * (the one open chat), so these secondary message lists use
  * this simpler bubble: same content renderers, but reply /
  * delete / download / reaction actions go through callbacks
- * into the owning store. Polls render as a read-only summary
- * here (voting stays a main-chat feature for now).
+ * into the owning store. Polls are votable since v0.9.1 (J2)
+ * through [onVotePoll], with the same semantics as the main
+ * chat's poll bubble.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -77,7 +83,8 @@ fun SimpleMessageBubble(
     onReply: (MsgItem) -> Unit,
     onDelete: (MsgItem) -> Unit,
     onDownloadFile: (MsgItem) -> Unit,
-    onToggleReaction: (MsgItem, String) -> Unit
+    onToggleReaction: (MsgItem, String) -> Unit,
+    onVotePoll: (MsgItem, List<Int>) -> Unit
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -172,23 +179,7 @@ fun SimpleMessageBubble(
                     MsgKind.POLL -> {
                         val poll = msg.poll
                         if (poll != null) {
-                            Text(
-                                poll.question,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            for (opt in poll.options) {
-                                Text(
-                                    "· ${opt.text}（${opt.percentage}%）",
-                                    color = Color.Gray,
-                                    fontSize = 13.sp
-                                )
-                            }
-                            Text(
-                                "投票（只读显示，在群里可投票）",
-                                color = Color.Gray,
-                                fontSize = 11.sp
-                            )
+                            SimplePollContent(msg, poll, onVotePoll)
                         } else {
                             Text("[投票]", color = Color.Gray, fontSize = 14.sp)
                         }
@@ -325,11 +316,137 @@ fun SimpleMessageBubble(
     }
 }
 
+/** Votable poll for the thread / forum bubbles (v0.9.1, J2):
+ *  same semantics as the main chat's PollBubbleContent —
+ *  single-answer polls vote on tap (tap again to retract),
+ *  multiple-answer polls collect a local selection and submit
+ *  together — but the vote goes through the owning store's
+ *  callback instead of MessageStore. Results re-render from
+ *  TDLib's poll object (updatePoll in the owning store). */
+@Composable
+fun SimplePollContent(
+    msg: MsgItem,
+    poll: PollUi,
+    onVotePoll: (MsgItem, List<Int>) -> Unit
+) {
+    var selected by remember(msg.id) {
+        mutableStateOf(
+            poll.options.indices.filter { poll.options[it].chosen }.toSet()
+        )
+    }
+    LaunchedEffect(poll) {
+        selected = poll.options.indices.filter { poll.options[it].chosen }.toSet()
+    }
+    val voted = poll.options.any { it.chosen }
+    val showResults = voted || poll.isClosed
+    Column(modifier = Modifier.width(240.dp)) {
+        Text(
+            poll.question,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            when {
+                poll.isClosed -> "投票已结束"
+                poll.isQuiz -> "测验"
+                poll.isAnonymous -> "匿名投票"
+                else -> "公开投票"
+            } + if (poll.allowsMultiple) " · 可多选" else "",
+            color = Color.Gray, fontSize = 12.sp
+        )
+        Spacer(Modifier.height(6.dp))
+        poll.options.forEachIndexed { index, option ->
+            val pct = option.percentage
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp)
+                    .background(Color(0x0D000000), RoundedCornerShape(8.dp))
+                    .clickable(enabled = !poll.isClosed) {
+                        if (poll.allowsMultiple) {
+                            selected = if (index in selected) {
+                                selected - index
+                            } else {
+                                selected + index
+                            }
+                        } else {
+                            onVotePoll(
+                                msg,
+                                if (option.chosen) emptyList()
+                                else listOf(index)
+                            )
+                        }
+                    }
+                    .padding(horizontal = 9.dp, vertical = 7.dp)
+            ) {
+                if (showResults) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(pct / 100f)
+                            .height(30.dp)
+                            .background(
+                                if (option.chosen ||
+                                    (poll.isQuiz && option.isCorrect)
+                                ) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    Color(0x14000000)
+                                },
+                                RoundedCornerShape(8.dp)
+                            )
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        option.text,
+                        fontSize = 14.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (showResults) {
+                        Text(
+                            "$pct%",
+                            color = Color.Gray,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    } else if (index in selected && poll.allowsMultiple) {
+                        Text(
+                            "✓",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+        }
+        if (poll.allowsMultiple && !poll.isClosed) {
+            Spacer(Modifier.height(4.dp))
+            Button(
+                onClick = { onVotePoll(msg, selected.sorted()) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (voted) "更新投票" else "投票")
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "共 ${poll.totalVoters} 人参与",
+            color = Color.Gray, fontSize = 12.sp
+        )
+        if (poll.isQuiz && voted && poll.explanation.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(poll.explanation, color = Color.Gray, fontSize = 12.sp)
+        }
+    }
+}
+
 /**
  * Comment thread of one channel post (v0.8.0, G1): the post's
  * discussion-group thread, paged and live via ThreadStore.
- * Text comments, replies, reactions and deletes work; sending
- * photos/files from here is not wired (use the group itself).
+ * Text comments, replies, reactions and deletes work; photos
+ * and files send from here too since v0.9.1 (J2), through the
+ * main chat's attachment pipeline.
  */
 @Composable
 fun ThreadScreen(
@@ -343,6 +460,75 @@ fun ThreadScreen(
     val replyTarget by ThreadStore.replyTarget.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val context = LocalContext.current
+
+    // Attachment pipeline (v0.9.1, J2): the same pickers and
+    // copy-to-cache flow as the main chat screen; the picked
+    // photo goes through the shared PhotoPreview, files through
+    // a confirm dialog, and both send via ThreadStore.
+    var pendingPhoto by remember { mutableStateOf<String?>(null) }
+    var photoCaption by remember { mutableStateOf("") }
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val file = File(
+                context.cacheDir, "pick_${System.currentTimeMillis()}.jpg"
+            )
+            try {
+                context.contentResolver.openInputStream(uri)
+                    ?.use { inputStream ->
+                        file.outputStream().use { output ->
+                            inputStream.copyTo(output)
+                        }
+                    }
+                pendingPhoto = file.absolutePath
+                photoCaption = ""
+            } catch (t: Throwable) {
+                // Picker copy failed: stay on the thread silently.
+            }
+        }
+    }
+    var pendingFile by remember {
+        mutableStateOf<Triple<String, String, String>?>(null)
+    }
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                var displayName = "file"
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val name = cursor.getString(0)
+                        if (!name.isNullOrBlank()) displayName = name
+                    }
+                }
+                val mime = context.contentResolver.getType(uri) ?: ""
+                val safeName = displayName.replace(
+                    Regex("[^A-Za-z0-9._-]"), "_"
+                )
+                val file = File(
+                    context.cacheDir,
+                    "pick_${System.currentTimeMillis()}_$safeName"
+                )
+                context.contentResolver.openInputStream(uri)
+                    ?.use { inputStream ->
+                        file.outputStream().use { output ->
+                            inputStream.copyTo(output)
+                        }
+                    }
+                pendingFile = Triple(file.absolutePath, mime, displayName)
+            } catch (t: Throwable) {
+                // Picker copy failed: stay on the thread silently.
+            }
+        }
+    }
+    var attachMenuOpen by remember { mutableStateOf(false) }
 
     DisposableEffect(sourceChatId, postId) {
         ThreadStore.open(sourceChatId, postId)
@@ -364,6 +550,44 @@ fun ThreadScreen(
             .fillMaxSize()
             .imePadding()
     ) {
+        val photoPath = pendingPhoto
+        if (photoPath != null) {
+            PhotoPreview(
+                path = photoPath,
+                caption = photoCaption,
+                onCaptionChange = { photoCaption = it },
+                onSend = {
+                    ThreadStore.clearError()
+                    ThreadStore.sendPhoto(photoPath, photoCaption.trim())
+                    pendingPhoto = null
+                },
+                onCancel = { pendingPhoto = null }
+            )
+            return@Column
+        }
+        val fileToSend = pendingFile
+        if (fileToSend != null) {
+            AlertDialog(
+                onDismissRequest = { pendingFile = null },
+                title = { Text("发送文件") },
+                text = { Text("要发送「${fileToSend.third}」吗？") },
+                confirmButton = {
+                    Button(onClick = {
+                        ThreadStore.clearError()
+                        ThreadStore.sendFile(
+                            fileToSend.first, fileToSend.second,
+                            fileToSend.third
+                        )
+                        pendingFile = null
+                    }) { Text("发送") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingFile = null }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -431,6 +655,9 @@ fun ThreadScreen(
                         onDownloadFile = { ThreadStore.downloadFileFor(it) },
                         onToggleReaction = { m, emoji ->
                             ThreadStore.toggleReaction(m, emoji)
+                        },
+                        onVotePoll = { m, ids ->
+                            ThreadStore.setPollAnswer(m, ids)
                         }
                     )
                 }
@@ -471,6 +698,34 @@ fun ThreadScreen(
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Box {
+                    IconButton(onClick = { attachMenuOpen = true }) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = "发送附件",
+                            tint = Color.Gray
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = attachMenuOpen,
+                        onDismissRequest = { attachMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("发图片") },
+                            onClick = {
+                                attachMenuOpen = false
+                                photoPicker.launch("image/*")
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("发文件 / 视频 / 语音") },
+                            onClick = {
+                                attachMenuOpen = false
+                                filePicker.launch("*/*")
+                            }
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
