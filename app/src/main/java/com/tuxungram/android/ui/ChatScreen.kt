@@ -589,12 +589,27 @@ fun ChatScreen(
                 }
             }
         }
+        // Chat wallpaper (v0.7.0, F3): a solid color behind the
+        // message area only; the top bar and the dock keep the
+        // theme surface. 默认 leaves it transparent.
+        val themeMode by UiSettings.themeMode.collectAsState()
+        val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+        val darkNow = when (themeMode) {
+            UiSettings.THEME_LIGHT -> false
+            UiSettings.THEME_DARK -> true
+            else -> systemDark
+        }
+        val chatBgArgb = UiSettings.chatBackgroundArgb(darkNow)
         LazyColumn(
             state = listState,
             reverseLayout = true,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .background(
+                    if (chatBgArgb != null) Color(chatBgArgb)
+                    else Color.Transparent
+                )
                 .padding(horizontal = 12.dp)
                 .lazyListScrollbar(listState, reverse = true)
         ) {
@@ -1140,6 +1155,9 @@ fun MessageBubble(
         horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
     ) {
         Box {
+            // Bubble corner style (v0.7.0, F3): 现代/经典 from
+            // settings, applied live.
+            val bubbleStyle by UiSettings.bubbleStyle.collectAsState()
             Column(
                 modifier = Modifier
                     .background(
@@ -1150,7 +1168,13 @@ fun MessageBubble(
                         } else {
                             Color(0xFFF1F1F1)
                         },
-                        RoundedCornerShape(12.dp)
+                        RoundedCornerShape(
+                            if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
+                                8.dp
+                            } else {
+                                18.dp
+                            }
+                        )
                     )
                     .combinedClickable(
                         onClick = {

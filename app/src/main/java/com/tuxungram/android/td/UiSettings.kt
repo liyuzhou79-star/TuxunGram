@@ -18,6 +18,9 @@ object UiSettings {
     private const val KEY_KEEP_ALIVE = "keep_alive"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_SEED_INDEX = "seed_index"
+    private const val KEY_CHAT_BG = "chat_bg"
+    private const val KEY_BUBBLE_STYLE = "bubble_style"
+    private const val KEY_FONT_SIZE = "font_size"
 
     val UNREAD_CAPS = listOf(99, 999, 9999)
 
@@ -33,6 +36,32 @@ object UiSettings {
     )
     val SEED_NAMES = listOf("电报蓝", "绿", "紫", "橙")
 
+    /** Chat wallpapers (v0.7.0, F3): solid colors in the theme's
+     *  family, each with a light and a dark variant so the choice
+     *  stays sensible in both modes. Index 0 = 默认 (no wallpaper,
+     *  the theme surface shows through). */
+    val CHAT_BG_NAMES = listOf("默认", "薄雾蓝", "米纸", "浅绿", "粉樱", "石墨")
+    val CHAT_BG_COLORS: List<Pair<Long, Long>> = listOf(
+        0L to 0L,
+        0xFFDDEBF5L to 0xFF1B2733L,
+        0xFFF5EFE0L to 0xFF2A251CL,
+        0xFFE3F0DCL to 0xFF1E2B1AL,
+        0xFFF9E4ECL to 0xFF2E1E26L,
+        0xFFE8EAEDL to 0xFF14181DL
+    )
+
+    /** Bubble styles (v0.7.0, F3): 现代 = generous rounding,
+     *  经典 = the tighter rounding older clients used. */
+    const val BUBBLE_MODERN = 0
+    const val BUBBLE_CLASSIC = 1
+    val BUBBLE_NAMES = listOf("现代", "经典")
+
+    /** Font sizes (v0.7.0, F3): applied as a density fontScale
+     *  over the whole UI, so message text AND list text scale
+     *  together, like in mature clients. */
+    val FONT_SCALES = listOf(0.85f, 1.0f, 1.15f, 1.3f)
+    val FONT_NAMES = listOf("小", "标准", "大", "特大")
+
     private val _unreadCap = MutableStateFlow(999)
     val unreadCap: StateFlow<Int> = _unreadCap
 
@@ -44,6 +73,15 @@ object UiSettings {
 
     private val _seedIndex = MutableStateFlow(0)
     val seedIndex: StateFlow<Int> = _seedIndex
+
+    private val _chatBg = MutableStateFlow(0)
+    val chatBg: StateFlow<Int> = _chatBg
+
+    private val _bubbleStyle = MutableStateFlow(BUBBLE_MODERN)
+    val bubbleStyle: StateFlow<Int> = _bubbleStyle
+
+    private val _fontSize = MutableStateFlow(1)
+    val fontSize: StateFlow<Int> = _fontSize
 
     @Volatile
     private var appContext: Context? = null
@@ -59,7 +97,46 @@ object UiSettings {
             if (mode in THEME_SYSTEM..THEME_DARK) mode else THEME_SYSTEM
         val seed = prefs.getInt(KEY_SEED_INDEX, 0)
         _seedIndex.value = if (seed in SEED_COLORS.indices) seed else 0
+        val bg = prefs.getInt(KEY_CHAT_BG, 0)
+        _chatBg.value = if (bg in CHAT_BG_COLORS.indices) bg else 0
+        val bubble = prefs.getInt(KEY_BUBBLE_STYLE, BUBBLE_MODERN)
+        _bubbleStyle.value =
+            if (bubble in BUBBLE_MODERN..BUBBLE_CLASSIC) bubble else BUBBLE_MODERN
+        val font = prefs.getInt(KEY_FONT_SIZE, 1)
+        _fontSize.value = if (font in FONT_SCALES.indices) font else 1
     }
+
+    fun setChatBg(index: Int) {
+        if (index !in CHAT_BG_COLORS.indices) return
+        _chatBg.value = index
+        persist { it.putInt(KEY_CHAT_BG, index) }
+    }
+
+    fun setBubbleStyle(style: Int) {
+        if (style !in BUBBLE_MODERN..BUBBLE_CLASSIC) return
+        _bubbleStyle.value = style
+        persist { it.putInt(KEY_BUBBLE_STYLE, style) }
+    }
+
+    fun setFontSize(index: Int) {
+        if (index !in FONT_SCALES.indices) return
+        _fontSize.value = index
+        persist { it.putInt(KEY_FONT_SIZE, index) }
+    }
+
+    /** ARGB of the chosen chat wallpaper for the current mode;
+     *  null = 默认 (let the theme surface show). */
+    fun chatBackgroundArgb(dark: Boolean): Long? {
+        val index = _chatBg.value
+        if (index == 0) return null
+        val pair = CHAT_BG_COLORS.getOrNull(index) ?: return null
+        return if (dark) pair.second else pair.first
+    }
+
+    /** Corner radius (dp) of message bubbles under the chosen
+     *  style. */
+    fun bubbleCornerDp(): Int =
+        if (_bubbleStyle.value == BUBBLE_CLASSIC) 8 else 18
 
     fun setThemeMode(mode: Int) {
         if (mode !in THEME_SYSTEM..THEME_DARK) return

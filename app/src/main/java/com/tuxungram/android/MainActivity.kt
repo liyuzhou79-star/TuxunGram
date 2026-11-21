@@ -77,8 +77,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -156,9 +159,22 @@ class MainActivity : FragmentActivity() {
             } else {
                 lightColorScheme(primary = seed, secondary = seed)
             }
-            MaterialTheme(colorScheme = scheme) {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    AppRoot()
+            // Font size (v0.7.0, F3): a density fontScale over
+            // the whole UI — message text and list text scale
+            // together, the way mature clients do it.
+            val fontIndex by UiSettings.fontSize.collectAsState()
+            val baseDensity = LocalDensity.current
+            val density = remember(baseDensity, fontIndex) {
+                Density(
+                    baseDensity.density,
+                    UiSettings.FONT_SCALES[fontIndex]
+                )
+            }
+            CompositionLocalProvider(LocalDensity provides density) {
+                MaterialTheme(colorScheme = scheme) {
+                    Surface(modifier = Modifier.fillMaxSize()) {
+                        AppRoot()
+                    }
                 }
             }
         }

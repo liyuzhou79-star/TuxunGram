@@ -84,6 +84,7 @@ import com.tuxungram.android.td.MsgKind
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.core.content.FileProvider
@@ -519,6 +520,90 @@ fun SettingsScreen(onBack: () -> Unit, onOpenSessions: () -> Unit = {}) {
                 }
                 Text(UiSettings.SEED_NAMES[index], fontSize = 12.sp)
                 Spacer(Modifier.width(10.dp))
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("聊天背景", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "只换聊天页的底色，浅色和深色模式各有一套配好的颜色。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val chatBg by UiSettings.chatBg.collectAsState()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .padding(top = 4.dp)
+                .horizontalScroll(rememberScrollState())
+        ) {
+            for ((index, pair) in UiSettings.CHAT_BG_COLORS.withIndex()) {
+                val selected = chatBg == index
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .padding(4.dp)
+                        .background(
+                            if (index == 0) {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            } else {
+                                Color(pair.first)
+                            },
+                            CircleShape
+                        )
+                        .then(
+                            if (selected) {
+                                Modifier.border(
+                                    2.dp,
+                                    MaterialTheme.colorScheme.onSurface,
+                                    CircleShape
+                                )
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .clickable { UiSettings.setChatBg(index) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selected) {
+                        Text("✓", color = Color.DarkGray, fontSize = 15.sp)
+                    }
+                }
+                Text(UiSettings.CHAT_BG_NAMES[index], fontSize = 12.sp)
+                Spacer(Modifier.width(10.dp))
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("气泡样式", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        val bubbleStyle by UiSettings.bubbleStyle.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            for ((style, label) in listOf(
+                UiSettings.BUBBLE_MODERN to "现代（圆润）",
+                UiSettings.BUBBLE_CLASSIC to "经典（方正）"
+            )) {
+                TextButton(
+                    onClick = { UiSettings.setBubbleStyle(style) },
+                    enabled = bubbleStyle != style
+                ) {
+                    Text(if (bubbleStyle == style) "● $label" else "○ $label")
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("字体大小", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "消息文字和列表文字一起缩放，选完立刻生效。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val fontSize by UiSettings.fontSize.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            for ((index, label) in UiSettings.FONT_NAMES.withIndex()) {
+                TextButton(
+                    onClick = { UiSettings.setFontSize(index) },
+                    enabled = fontSize != index
+                ) {
+                    Text(if (fontSize == index) "● $label" else "○ $label")
+                }
             }
         }
         Spacer(Modifier.height(28.dp))
