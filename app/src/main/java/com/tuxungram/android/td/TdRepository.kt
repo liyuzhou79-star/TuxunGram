@@ -17,7 +17,7 @@ sealed interface AuthState {
     data object WaitTdlibParameters : AuthState
     data object WaitPhone : AuthState
     data object WaitCode : AuthState
-    data object WaitPassword : AuthState
+    data class WaitPassword(val hint: String) : AuthState
     data object WaitRegistration : AuthState
     data object Ready : AuthState
     data object LoggingOut : AuthState
@@ -63,7 +63,8 @@ object TdRepository {
             }
             "authorizationStateWaitPhoneNumber" -> _authState.value = AuthState.WaitPhone
             "authorizationStateWaitCode" -> _authState.value = AuthState.WaitCode
-            "authorizationStateWaitPassword" -> _authState.value = AuthState.WaitPassword
+            "authorizationStateWaitPassword" -> _authState.value =
+                AuthState.WaitPassword(state.optString("password_hint"))
             "authorizationStateWaitRegistration" -> _authState.value = AuthState.WaitRegistration
             "authorizationStateReady" -> _authState.value = AuthState.Ready
             "authorizationStateLoggingOut" -> _authState.value = AuthState.LoggingOut
@@ -126,6 +127,15 @@ object TdRepository {
 
     fun logOut() {
         send(TdClient.request("logOut"))
+    }
+
+    /** Drop the current client and start a fresh one (used from the
+     *  Closed screen's reconnect button). */
+    fun restart(context: Context) {
+        client?.close()
+        client = null
+        _authState.value = AuthState.WaitTdlibParameters
+        start(context)
     }
 
     fun clearError() {
