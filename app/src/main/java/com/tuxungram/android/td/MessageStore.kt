@@ -1,9 +1,9 @@
 package com.tuxungram.android.td
 
-import kotlinx.coroutines.delay
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
@@ -334,12 +334,14 @@ object MessageStore {
             } else if (arr.length() == 0) {
                 if (!firstPageRetried) {
                     firstPageRetried = true
-                    TdRepository.scope.launch {
-                        delay(1500)
+                    // The td layer is callback-based (no coroutine
+                    // scope anywhere); a main-looper delay is the
+                    // local idiom for "try again shortly".
+                    Handler(Looper.getMainLooper()).postDelayed({
                         if (currentChatId == chatId && byId.isEmpty()) {
                             loadHistory(fromMessageId = 0L)
                         }
-                    }
+                    }, 1500)
                 } else {
                     allHistoryLoaded = true
                 }
