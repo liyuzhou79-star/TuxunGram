@@ -60,6 +60,16 @@ object ProfileStore {
     private var membersLoading = false
     private val memberList = ArrayList<MemberEntry>()
 
+    /** Guards memberList (audit fix A10): it is mutated from
+     *  TDLib receiver-thread callbacks (addMember / fetchName)
+     *  while load() clears it on the main thread and the
+     *  publish paths copy it — an unguarded copy racing a
+     *  mutation can throw ConcurrentModificationException. */
+    private val membersLock = Any()
+
+    private fun memberSnapshot(): List<MemberEntry> =
+        synchronized(membersLock) { ArrayList(memberList) }
+
     fun load(chatId: Long) {
         currentChatId = chatId
         currentUserId = 0L
@@ -68,7 +78,7 @@ object ProfileStore {
         supergroupId = 0L
         memberOffset = 0
         membersLoading = false
-        memberList.clear()
+        synchronized(membersLock) { memberList.clear() }
         _profile.value = null
         val query = TdClient.request("getChat").apply { put("chat_id", chatId) }
         TdRepository.sendRaw(query) { chat ->
@@ -109,7 +119,7 @@ object ProfileStore {
         if (currentChatId != chatId) return
         _profile.value = ProfileUi(
             chatId, title, kindLabel, description, infoLines,
-            ArrayList(memberList), canGetMembers, membersExhausted,
+            memberSnapshot(), canGetMembers, membersExhausted,
             userId = currentUserId,
             isSecretChat = currentIsSecret,
             autoDeleteSeconds = currentAutoDelete
@@ -179,7 +189,7 @@ object ProfileStore {
             publish(
                 chatId, title, "群组",
                 full.optString("description"),
-                listOf("成员 ${memberList.size} 人"),
+                listOf("成员 ${memberSnapshot().size} 人"),
                 canGetMembers = false, membersExhausted = true
             )
         }
@@ -260,14 +270,15 @@ object ProfileStore {
             val total = response.optInt("total_count")
             publishKeeping(
                 current,
-                membersExhausted = added == 0 || memberList.size >= total
+                membersExhausted = added == 0 ||
+                    memberSnapshot().size >= total
             )
         }
     }
 
     private fun publishKeeping(current: ProfileUi, membersExhausted: Boolean) {
         _profile.value = current.copy(
-            members = ArrayList(memberList),
+            members = memberSnapshot(),
             membersExhausted = membersExhausted
         )
     }
@@ -280,7 +291,6 @@ object ProfileStore {
         val sender = member.optJSONObject("member_id") ?: return false
         if (sender.optString("@type") != "messageSenderUser") return false
         val userId = sender.optLong("user_id")
-        if (memberList.any { it.userId == userId }) return false
         val statusType =
             member.optJSONObject("status")?.optString("@type") ?: ""
         val status = when (statusType) {
@@ -299,9 +309,12 @@ object ProfileStore {
             "chatMemberStatusLeft" -> "left"
             else -> "member"
         }
-        memberList.add(
-            MemberEntry(userId, nameByUser[userId] ?: "", status, kind)
-        )
+        synchronized(membersLock) {
+            if (memberList.any { it.userId == userId }) return false
+            memberList.add(
+                MemberEntry(userId, nameByUser[userId] ?: "", status, kind)
+            )
+        }
         if (!nameByUser.containsKey(userId)) fetchName(userId)
         return true
     }
@@ -317,16 +330,25 @@ object ProfileStore {
             ).filter { it.isNotEmpty() }.joinToString(" ")
             if (name.isEmpty()) return@sendRaw
             nameByUser[userId] = name
-            var changed = false
-            for (i in memberList.indices) {
-                if (memberList[i].userId == userId && memberList[i].name != name) {
-                    memberList[i] = memberList[i].copy(name = name)
-                    changed = true
+            var snapshot: List<MemberEntry>? = null
+            synchronized(membersLock) {
+                var changed = false
+                for (i in memberList.indices) {
+                    if (memberList[i].userId == userId &&
+                        memberList[i].name != name
+                    ) {
+                        memberList[i] = memberList[i].copy(name = name)
+                        changed = true
+                    }
                 }
+                if (changed) snapshot = ArrayList(memberList)
             }
             val current = _profile.value
-            if (changed && current != null && current.chatId == currentChatId) {
-                _profile.value = current.copy(members = ArrayList(memberList))
+            val snap = snapshot
+            if (snap != null && current != null &&
+                current.chatId == currentChatId
+            ) {
+                _profile.value = current.copy(members = snap)
             }
         }
     }
