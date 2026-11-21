@@ -331,6 +331,13 @@ fun ChatScreen(
     // voice format). The recorder lives outside composition; the
     // UI only mirrors its state.
     val voiceRecorder = remember { VoiceRecorder() }
+    // Leaving the screen mid-recording must not leave the
+    // microphone running: cancel the recorder with the screen
+    // (audit fix A2 — it previously kept recording for the
+    // rest of the process lifetime).
+    DisposableEffect(Unit) {
+        onDispose { voiceRecorder.cancel() }
+    }
     var recording by remember { mutableStateOf(false) }
     var recordSeconds by remember { mutableIntStateOf(0) }
     fun startRecording() {
