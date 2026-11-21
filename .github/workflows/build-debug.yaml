@@ -18,6 +18,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Restore cached TDLib
+        uses: actions/cache@v4
+        with:
+          path: tdlib-cache/libtdjson.so
+          key: tdlib-master-arm64-v4
+
+      - name: Place TDLib into jniLibs (when cached)
+        run: |
+          if [ -f tdlib-cache/libtdjson.so ]; then
+            mkdir -p app/src/main/jniLibs/arm64-v8a
+            cp tdlib-cache/libtdjson.so app/src/main/jniLibs/arm64-v8a/
+            ls -la app/src/main/jniLibs/arm64-v8a/
+          else
+            echo "TDLib not cached yet; building the shell without it"
+          fi
+
       - name: Run unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 

@@ -18,7 +18,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tdlib-cache/libtdjson.so
-          key: tdlib-master-arm64-v3
+          key: tdlib-master-arm64-v4
 
       - name: Install host tools
         if: steps.td-cache.outputs.cache-hit != 'true'
@@ -85,6 +85,9 @@ jobs:
           cmake --build build-android --target tdjson -j"$(nproc)"
           mkdir -p ../tdlib-cache
           find build-android -name "libtdjson.so*" -exec cp -v {} ../tdlib-cache/libtdjson.so \;
+          # The raw .so carries full debug info (~490 MB). Strip it with
+          # the NDK's llvm-strip; the result is ~32 MB.
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" ../tdlib-cache/libtdjson.so
           ls -la ../tdlib-cache/
 
       - name: Upload TDLib artifact
