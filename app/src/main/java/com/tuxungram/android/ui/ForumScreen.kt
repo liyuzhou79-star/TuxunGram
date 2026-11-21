@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.ForumStore
 import com.tuxungram.android.td.ForumTopicUi
+import com.tuxungram.android.td.MsgItem
 import java.io.File
 
 /**
@@ -281,6 +282,8 @@ fun ForumTopicView(
         }
     }
     var attachMenuOpen by remember { mutableStateOf(false) }
+    // In-app video player target (v0.9.1, J3).
+    var videoItem by remember { mutableStateOf<MsgItem?>(null) }
 
     DisposableEffect(chatId, topic.topicId) {
         ForumStore.openTopic(chatId, topic.topicId)
@@ -334,6 +337,15 @@ fun ForumTopicView(
                     }
                 }
             )
+        }
+        val vItem = videoItem
+        if (vItem?.filePath != null) {
+            VideoPlayerScreen(
+                path = vItem.filePath!!,
+                title = vItem.fileName,
+                onClose = { videoItem = null }
+            )
+            return@Column
         }
         Row(
             modifier = Modifier
@@ -396,7 +408,8 @@ fun ForumTopicView(
                         },
                         onVotePoll = { m, ids ->
                             ForumStore.setPollAnswer(m, ids)
-                        }
+                        },
+                        onOpenVideo = { m -> videoItem = m }
                     )
                 }
             }

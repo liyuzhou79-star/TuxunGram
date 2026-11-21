@@ -215,6 +215,8 @@ fun ChatScreen(
     // Full-screen photo viewer (v0.7.0, F2): the photo message
     // id the viewer opens at; null = closed.
     var viewerId by remember { mutableStateOf<Long?>(null) }
+    // In-app video player target (v0.9.1, J3).
+    var videoItem by remember { mutableStateOf<MsgItem?>(null) }
     var input by remember { mutableStateOf("") }
     var pendingPhoto by remember { mutableStateOf<String?>(null) }
     var photoCaption by remember { mutableStateOf("") }
@@ -763,6 +765,7 @@ fun ChatScreen(
                             selectedIds = setOf(m.id)
                         },
                         onOpenPhoto = { m -> viewerId = m.id },
+                        onOpenVideo = { m -> videoItem = m },
                         canComment = chat?.isChannel == true &&
                             linkedChatId != 0L && msg.isChannelPost,
                         onOpenThread = { m -> onOpenThread(m.id) }
@@ -1075,6 +1078,14 @@ fun ChatScreen(
                 onClose = { viewerId = null }
             )
         }
+        val vItem = videoItem
+        if (vItem?.filePath != null) {
+            VideoPlayerScreen(
+                path = vItem.filePath!!,
+                title = vItem.fileName,
+                onClose = { videoItem = null }
+            )
+        }
     }
 }
 
@@ -1296,6 +1307,7 @@ fun MessageBubble(
     onToggleSelect: (MsgItem) -> Unit = {},
     onEnterSelection: (MsgItem) -> Unit = {},
     onOpenPhoto: (MsgItem) -> Unit = {},
+    onOpenVideo: (MsgItem) -> Unit = {},
     canComment: Boolean = false,
     onOpenThread: (MsgItem) -> Unit = {}
 ) {
@@ -1426,6 +1438,13 @@ fun MessageBubble(
                             } else if (msg.kind == MsgKind.PHOTO) {
                                 // Full-screen viewer (v0.7.0, F2).
                                 onOpenPhoto(msg)
+                            } else if (msg.kind == MsgKind.VIDEO &&
+                                msg.filePath != null
+                            ) {
+                                // In-app player (v0.9.1, J3); an
+                                // undownloaded video falls through
+                                // to the download branch below.
+                                onOpenVideo(msg)
                             } else if (msg.fileId != 0 && msg.kind != MsgKind.STICKER) {
                                 // File-like messages: tap opens the
                                 // downloaded file, or starts the
@@ -1641,6 +1660,19 @@ fun MessageBubble(
                         onClick = {
                             menuOpen = false
                             reactionOpen = true
+                        }
+                    )
+                }
+                if (msg.kind == MsgKind.VIDEO && msg.filePath != null) {
+                    // The system player stays available here now
+                    // that a tap opens the in-app player (J3).
+                    DropdownMenuItem(
+                        text = { Text("用其他播放器打开") },
+                        onClick = {
+                            menuOpen = false
+                            openFileWithSystem(
+                                context, msg.filePath!!, msg.fileMime
+                            )
                         }
                     )
                 }

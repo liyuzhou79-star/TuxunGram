@@ -64,8 +64,8 @@ import kotlin.math.roundToInt
  * finishes while the viewer is open appears on its own.
  *
  * Videos deliberately do NOT come here: tapping a video bubble
- * hands the downloaded file to the system player (ACTION_VIEW),
- * which is the other half of the F2 requirement.
+ * opens the in-app VideoPlayerScreen (v0.9.1, J3), with the
+ * system player kept as a long-press menu alternative.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

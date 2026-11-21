@@ -84,7 +84,8 @@ fun SimpleMessageBubble(
     onDelete: (MsgItem) -> Unit,
     onDownloadFile: (MsgItem) -> Unit,
     onToggleReaction: (MsgItem, String) -> Unit,
-    onVotePoll: (MsgItem, List<Int>) -> Unit
+    onVotePoll: (MsgItem, List<Int>) -> Unit,
+    onOpenVideo: (MsgItem) -> Unit
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -116,7 +117,12 @@ fun SimpleMessageBubble(
                     )
                     .combinedClickable(
                         onClick = {
-                            if (msg.fileId != 0 &&
+                            if (msg.kind == MsgKind.VIDEO &&
+                                msg.filePath != null
+                            ) {
+                                // In-app player (v0.9.1, J3).
+                                onOpenVideo(msg)
+                            } else if (msg.fileId != 0 &&
                                 msg.kind != MsgKind.STICKER
                             ) {
                                 val path = msg.filePath
@@ -275,6 +281,17 @@ fun SimpleMessageBubble(
                         onClick = {
                             menuOpen = false
                             clipboard.setText(AnnotatedString(msg.text))
+                        }
+                    )
+                }
+                if (msg.kind == MsgKind.VIDEO && msg.filePath != null) {
+                    DropdownMenuItem(
+                        text = { Text("用其他播放器打开") },
+                        onClick = {
+                            menuOpen = false
+                            openFileWithSystem(
+                                context, msg.filePath!!, msg.fileMime
+                            )
                         }
                     )
                 }
@@ -529,6 +546,8 @@ fun ThreadScreen(
         }
     }
     var attachMenuOpen by remember { mutableStateOf(false) }
+    // In-app video player target (v0.9.1, J3).
+    var videoItem by remember { mutableStateOf<MsgItem?>(null) }
 
     DisposableEffect(sourceChatId, postId) {
         ThreadStore.open(sourceChatId, postId)
@@ -587,6 +606,15 @@ fun ThreadScreen(
                     }
                 }
             )
+        }
+        val vItem = videoItem
+        if (vItem?.filePath != null) {
+            VideoPlayerScreen(
+                path = vItem.filePath!!,
+                title = vItem.fileName,
+                onClose = { videoItem = null }
+            )
+            return@Column
         }
         Row(
             modifier = Modifier
@@ -658,7 +686,8 @@ fun ThreadScreen(
                         },
                         onVotePoll = { m, ids ->
                             ThreadStore.setPollAnswer(m, ids)
-                        }
+                        },
+                        onOpenVideo = { m -> videoItem = m }
                     )
                 }
             }
