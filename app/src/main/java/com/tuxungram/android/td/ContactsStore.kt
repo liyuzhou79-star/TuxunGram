@@ -172,6 +172,38 @@ object ContactsStore {
         }
     }
 
+    /** My own user id, once getMe has answered (v0.9.1, J5). */
+    @Volatile
+    private var myId = 0L
+
+    /** Open Saved Messages (v0.9.1, J5). Saved Messages is not
+     *  a special chat type: it is the private chat with
+     *  oneself, so the route is getMe -> createPrivateChat(my
+     *  own id) — the standard TDLib idiom. Sending, reading and
+     *  history then behave exactly like any private chat,
+     *  because it is one. The id is cached after the first
+     *  resolution. */
+    fun openSavedMessages(onResult: (Long?) -> Unit) {
+        val cached = myId
+        if (cached != 0L) {
+            openPrivateChat(cached, onResult)
+            return
+        }
+        TdRepository.sendRaw(TdClient.request("getMe")) { me ->
+            if (TdClient.isError(me)) {
+                onResult(null)
+                return@sendRaw
+            }
+            val id = me.optLong("id")
+            if (id == 0L) {
+                onResult(null)
+                return@sendRaw
+            }
+            myId = id
+            openPrivateChat(id, onResult)
+        }
+    }
+
     /** Open (creating if needed) the private chat with a user;
      *  createPrivateChat is the documented route from a user id
      *  to a chat id. */

@@ -101,6 +101,46 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 
+/** The Saved Messages entry row (v0.9.1, J5): a star badge,
+ *  「收藏」 title and a one-line description. Shared by the
+ *  chat list's pinned entry and the forward picker's top row. */
+@Composable
+fun SavedMessagesRow(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .background(
+                    MaterialTheme.colorScheme.primary, CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("★", color = Color.White, fontSize = 22.sp)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(
+                "收藏",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+                maxLines = 1
+            )
+            Text(
+                "发给自己的消息和文件",
+                color = Color.Gray,
+                fontSize = 13.sp,
+                maxLines = 1
+            )
+        }
+    }
+}
+
 /** Chat-list-as-picker for forwarding one message. Stays open until
  *  TDLib answers, so a failure is shown here instead of vanishing. */
 @Composable
@@ -113,6 +153,26 @@ fun ForwardPickerScreen(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val pickerListState = rememberLazyListState()
+    // Saved Messages pinned at the top (v0.9.1, J5): forwarding
+    // to oneself is the most common forward target.
+    var savedChatId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(Unit) {
+        ContactsStore.openSavedMessages { savedChatId = it }
+    }
+    fun forwardTo(targetId: Long) {
+        busy = true
+        error = null
+        MessageStore.forwardMessages(
+            fromChatId, messageIds, targetId
+        ) { failure ->
+            if (failure == null) {
+                onDone()
+            } else {
+                busy = false
+                error = failure
+            }
+        }
+    }
     BackHandler { if (!busy) onDone() }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -143,21 +203,14 @@ fun ForwardPickerScreen(
                     .fillMaxSize()
                     .lazyListScrollbar(pickerListState)
             ) {
+                val savedId = savedChatId
+                if (savedId != null) {
+                    item(key = "saved_messages") {
+                        SavedMessagesRow(onClick = { forwardTo(savedId) })
+                    }
+                }
                 items(items = chats, key = { it.id }) { chat ->
-                    ChatRow(chat, onClick = {
-                        busy = true
-                        error = null
-                        MessageStore.forwardMessages(
-                            fromChatId, messageIds, chat.id
-                        ) { failure ->
-                            if (failure == null) {
-                                onDone()
-                            } else {
-                                busy = false
-                                error = failure
-                            }
-                        }
-                    })
+                    ChatRow(chat, onClick = { forwardTo(chat.id) })
                 }
             }
         }
@@ -518,6 +571,22 @@ fun ChatListScreen(
                     }
                 }
             }
+        }
+        // Saved Messages pinned entry (v0.9.1, J5): always at
+        // the top of the main list, resolving the self chat on
+        // tap (getMe -> createPrivateChat with one's own id).
+        if (query.isBlank() && selectedFolder == null) {
+            SavedMessagesRow(onClick = {
+                ContactsStore.openSavedMessages { chatId ->
+                    if (chatId != null) onOpenChat(chatId)
+                }
+            })
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+            )
         }
         if (shown.isEmpty() && query.isBlank()) {
             CenterColumn {
