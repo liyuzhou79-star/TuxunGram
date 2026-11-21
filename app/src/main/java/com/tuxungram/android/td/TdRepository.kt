@@ -50,6 +50,15 @@ object TdRepository {
      *  probe below can report WaitTdlibParameters for the same client. */
     private val parametersSent = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** Bumped on every restart: updates and probe responses are
+     *  tagged with the generation of the client that produced
+     *  them, and anything from an older client is dropped. A
+     *  closed client's receiver thread lives for up to ~2 more
+     *  seconds and could otherwise push a stale Ready / error
+     *  into the fresh session (audit fix A6). */
+    private val clientGeneration =
+        java.util.concurrent.atomic.AtomicInteger(0)
+
     @Volatile
     private var appContext: Context? = null
 
@@ -81,9 +90,12 @@ object TdRepository {
         AccountStore.init(context)
         ProxyStore.init(context)
         UiSettings.init(context)
+        val gen = clientGeneration.get()
         val c = TdClient { update ->
-            handleUpdate(update)
-            for (listener in updateListeners) listener(update)
+            if (gen == clientGeneration.get()) {
+                handleUpdate(update)
+                for (listener in updateListeners) listener(update)
+            }
         }
         client = c
         c.start()
@@ -96,6 +108,10 @@ object TdRepository {
         // the client, and feed its response through the same state
         // handling as a pushed update.
         c.send(TdClient.request("getAuthorizationState")) { response ->
+            if (gen != clientGeneration.get()) {
+                // Answer from a client a restart already replaced.
+                return@send
+            }
             if (TdClient.isError(response)) {
                 _lastError.value =
                     response.optInt("code") to response.optString("message")
@@ -281,6 +297,7 @@ object TdRepository {
     /** Drop the current client and start a fresh one (used from the
      *  Closed screen's reconnect button). */
     fun restart(context: Context) {
+        clientGeneration.incrementAndGet()
         client?.close()
         client = null
         parametersSent.set(false)
