@@ -39,7 +39,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -123,6 +123,30 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
         onDispose { MessageStore.close() }
     }
     BackHandler { onBack() }
+
+    // Arriving from a search result: jump to that message once.
+    LaunchedEffect(chatId) {
+        val target = MessageStore.pendingLocateId
+        if (target != 0L) {
+            MessageStore.pendingLocateId = 0L
+            MessageStore.jumpTo(target)
+        }
+    }
+    // Scroll the located message into view when it lands.
+    val locateId by MessageStore.locateId.collectAsState()
+    LaunchedEffect(locateId, messages.size) {
+        if (locateId != 0L && messages.isNotEmpty()) {
+            val ascIndex = messages.indexOfFirst { it.id == locateId }
+            if (ascIndex >= 0) {
+                listState.scrollToItem(messages.size - 1 - ascIndex)
+            }
+        }
+    }
+
+    var chatSearchOpen by remember { mutableStateOf(false) }
+    var chatSearchQuery by remember { mutableStateOf("") }
+    val chatSearchResults by MessageStore.searchResults.collectAsState()
+    val chatSearchExhausted by MessageStore.searchExhausted.collectAsState()
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -235,6 +259,84 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
             if (chat?.isChannel == true) {
                 Spacer(Modifier.width(6.dp))
                 Text("频道", color = Color.Gray, fontSize = 12.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { chatSearchOpen = !chatSearchOpen }) {
+                Icon(Icons.Filled.Search, contentDescription = "搜索聊天记录")
+            }
+        }
+
+        if (chatSearchOpen) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = chatSearchQuery,
+                    onValueChange = { chatSearchQuery = it },
+                    placeholder = { Text("在这个对话里搜索") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = {
+                    MessageStore.searchInChat(chatSearchQuery)
+                }) {
+                    Text("搜索")
+                }
+            }
+            if (chatSearchResults.isNotEmpty()) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .background(Color(0xFFF7F7F7))
+                ) {
+                    items(
+                        items = chatSearchResults,
+                        key = { "csr_${it.id}" }
+                    ) { hit ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    chatSearchOpen = false
+                                    MessageStore.jumpTo(hit.id)
+                                }
+                                .padding(horizontal = 16.dp, vertical = 7.dp)
+                        ) {
+                            Text(
+                                hit.text.ifEmpty {
+                                    when (hit.kind) {
+                                        MsgKind.PHOTO -> "[图片]"
+                                        MsgKind.VIDEO -> "[视频]"
+                                        MsgKind.VOICE -> "[语音]"
+                                        MsgKind.DOCUMENT -> "[文件]"
+                                        MsgKind.STICKER -> "[贴纸]"
+                                        MsgKind.ANIMATION -> "[动图]"
+                                        MsgKind.POLL -> "[投票]"
+                                        else -> "[消息]"
+                                    }
+                                },
+                                fontSize = 14.sp, maxLines = 2
+                            )
+                            Text(
+                                formatMsgTime(hit.dateSeconds),
+                                color = Color.Gray, fontSize = 11.sp
+                            )
+                        }
+                    }
+                    if (!chatSearchExhausted) {
+                        item(key = "csr_more") {
+                            TextButton(onClick = {
+                                MessageStore.searchInChat(chatSearchQuery, append = true)
+                            }) {
+                                Text("加载更多")
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -457,11 +559,9 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
                                 )
                             }
                         }) {
-                            Icon(
-                                Icons.Filled.Mic,
-                                contentDescription = "录语音",
-                                tint = Color.White
-                            )
+                            // Mic is not in material-icons-core;
+                            // an emoji glyph keeps the button clear.
+                            Text("🎤", fontSize = 20.sp)
                         }
                     }
                 } else {

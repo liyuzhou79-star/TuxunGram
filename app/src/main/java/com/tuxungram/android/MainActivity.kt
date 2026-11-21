@@ -172,7 +172,11 @@ private fun ReadyHost() {
         )
         chatId == null -> ChatListScreen(
             onOpenChat = { openChatId = it },
-            onOpenSettings = { showSettings = true }
+            onOpenSettings = { showSettings = true },
+            onOpenChatLocated = { cid, mid ->
+                MessageStore.pendingLocateId = mid
+                openChatId = cid
+            }
         )
         else -> ChatScreen(
             chatId = chatId,

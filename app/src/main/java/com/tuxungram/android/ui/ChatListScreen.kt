@@ -83,6 +83,8 @@ import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
+import com.tuxungram.android.td.SearchHit
+import com.tuxungram.android.td.SearchStore
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import java.io.File
@@ -175,7 +177,11 @@ fun formatChatTime(dateSeconds: Int): String {
 }
 
 @Composable
-fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
+fun ChatListScreen(
+    onOpenChat: (Long) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenChatLocated: (Long, Long) -> Unit
+) {
     val chats by ChatStore.chats.collectAsState()
     val allLoaded by ChatStore.allLoaded.collectAsState()
     var query by remember { mutableStateOf("") }
@@ -183,6 +189,20 @@ fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
 
     val shown = if (query.isBlank()) chats else chats.filter {
         it.title.contains(query.trim(), ignoreCase = true)
+    }
+
+    // Global message search, debounced; the local title filter
+    // above stays instant, server results stream in below it.
+    val searchHits by SearchStore.results.collectAsState()
+    val searching by SearchStore.searching.collectAsState()
+    val searchExhausted by SearchStore.exhausted.collectAsState()
+    LaunchedEffect(query) {
+        if (query.isBlank()) {
+            SearchStore.search("")
+        } else {
+            delay(500)
+            SearchStore.search(query)
+        }
     }
 
     LaunchedEffect(listState, shown.size, allLoaded) {
@@ -221,14 +241,12 @@ fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
                 .padding(horizontal = 16.dp)
         )
         Spacer(Modifier.height(8.dp))
-        if (shown.isEmpty()) {
+        if (shown.isEmpty() && query.isBlank()) {
             CenterColumn {
-                if (!allLoaded && query.isBlank()) {
+                if (!allLoaded) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(12.dp))
                     Text("正在加载对话…", color = Color.Gray)
-                } else if (query.isNotBlank()) {
-                    Text("没有找到", color = Color.Gray)
                 } else {
                     Text(
                         "还没有对话。在 Telegram 里有聊天后，这里会自动出现。",
@@ -247,8 +265,95 @@ fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
                 ) { chat ->
                     ChatRow(chat, onClick = { onOpenChat(chat.id) })
                 }
+                if (query.isNotBlank()) {
+                    item(key = "hits_header") {
+                        Text(
+                            "消息",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(
+                                horizontal = 16.dp, vertical = 8.dp
+                            )
+                        )
+                    }
+                    items(
+                        items = searchHits,
+                        key = { "hit_${it.chatId}_${it.messageId}" }
+                    ) { hit ->
+                        SearchHitRow(hit) {
+                            onOpenChatLocated(hit.chatId, hit.messageId)
+                        }
+                    }
+                    if (searching) {
+                        item(key = "hits_loading") {
+                            Row(
+                                modifier = Modifier.padding(
+                                    horizontal = 16.dp, vertical = 10.dp
+                                ),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("搜索中…", color = Color.Gray, fontSize = 13.sp)
+                            }
+                        }
+                    } else if (!searchExhausted && searchHits.isNotEmpty()) {
+                        item(key = "hits_more") {
+                            TextButton(
+                                onClick = { SearchStore.loadMore() },
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            ) {
+                                Text("加载更多结果")
+                            }
+                        }
+                    } else if (searchHits.isEmpty()) {
+                        item(key = "hits_empty") {
+                            Text(
+                                "没有搜到消息",
+                                color = Color.Gray, fontSize = 13.sp,
+                                modifier = Modifier.padding(
+                                    horizontal = 16.dp, vertical = 10.dp
+                                )
+                            )
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+/** One global-search hit: which chat, a content summary, when.
+ *  Tapping opens the chat located at that message. */
+@Composable
+fun SearchHitRow(hit: SearchHit, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                hit.chatTitle.ifEmpty { "对话" },
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                maxLines = 1,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                formatChatTime(hit.dateSeconds),
+                color = Color.Gray, fontSize = 12.sp
+            )
+        }
+        Text(
+            hit.summary,
+            color = Color.Gray, fontSize = 14.sp, maxLines = 2
+        )
     }
 }
 

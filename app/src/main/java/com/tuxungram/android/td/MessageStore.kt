@@ -103,6 +103,104 @@ object MessageStore {
 
     private val replyFetchPending = ConcurrentHashMap.newKeySet<Long>()
 
+    // ---- In-chat search + jump-to-message (Batch 2, B4) ----
+
+    private val _searchResults = MutableStateFlow<List<MsgItem>>(emptyList())
+    val searchResults: StateFlow<List<MsgItem>> = _searchResults
+
+    private val _searchExhausted = MutableStateFlow(true)
+    val searchExhausted: StateFlow<Boolean> = _searchExhausted
+
+    private var searchQuery = ""
+    private var searchFromId = 0L
+
+    /** Set by navigation (global search / in-chat search) before
+     *  or after opening a chat; the chat screen consumes it and
+     *  jumps to that message. */
+    @Volatile
+    var pendingLocateId: Long = 0L
+
+    private val _locateId = MutableStateFlow(0L)
+    val locateId: StateFlow<Long> = _locateId
+
+    /** searchChatMessages paging: from_message_id cursor plus
+     *  next_from_message_id from the previous page (verified in
+     *  td_api.tl — a different scheme from global search). */
+    fun searchInChat(query: String, append: Boolean = false) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        if (!append) {
+            searchQuery = query.trim()
+            searchFromId = 0L
+            _searchResults.value = emptyList()
+            _searchExhausted.value = searchQuery.isEmpty()
+            if (searchQuery.isEmpty()) return
+        }
+        val q = TdClient.request("searchChatMessages").apply {
+            put("chat_id", chatId)
+            put("topic_id", JSONObject.NULL)
+            put("query", searchQuery)
+            put("sender_id", JSONObject.NULL)
+            put("from_message_id", searchFromId)
+            put("offset", 0)
+            put("limit", 30)
+            put("filter", JSONObject().put("@type", "searchMessagesFilterEmpty"))
+        }
+        TdRepository.sendRaw(q) { response ->
+            if (currentChatId != chatId) return@sendRaw
+            if (TdClient.isError(response)) {
+                _searchExhausted.value = true
+                return@sendRaw
+            }
+            val next = response.optLong("next_from_message_id")
+            searchFromId = next
+            if (next == 0L) _searchExhausted.value = true
+            val arr = response.optJSONArray("messages") ?: JSONArray()
+            if (arr.length() == 0) {
+                _searchExhausted.value = true
+                return@sendRaw
+            }
+            val items = ArrayList<MsgItem>()
+            for (i in 0 until arr.length()) {
+                val msg = arr.optJSONObject(i) ?: continue
+                items.add(parseMessage(msg))
+            }
+            _searchResults.value = _searchResults.value + items
+        }
+    }
+
+    /** Replace the loaded history with the window around
+     *  [messageId] (the message plus neighbours on both sides)
+     *  and flag it for the UI to scroll to. getChatHistory with a
+     *  negative offset reaches back from the anchor. */
+    fun jumpTo(messageId: Long) {
+        val chatId = currentChatId
+        if (chatId == 0L || messageId == 0L) return
+        byId.clear()
+        _messages.value = emptyList()
+        allHistoryLoaded = false
+        val query = TdClient.request("getChatHistory").apply {
+            put("chat_id", chatId)
+            put("from_message_id", messageId)
+            put("offset", -25)
+            put("limit", 50)
+            put("only_local", false)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (currentChatId != chatId) return@sendRaw
+            if (TdClient.isError(response)) return@sendRaw
+            val arr = response.optJSONArray("messages") ?: JSONArray()
+            if (arr.length() < 50) allHistoryLoaded = true
+            for (i in 0 until arr.length()) {
+                val msg = arr.optJSONObject(i) ?: continue
+                val item = parseMessage(msg)
+                byId[item.id] = item
+            }
+            publish()
+            _locateId.value = messageId
+        }
+    }
+
     @Volatile
     var currentChatId: Long = 0L
         private set
@@ -139,6 +237,11 @@ object MessageStore {
         _messages.value = emptyList()
         _sendError.value = null
         _replyTarget.value = null
+        _searchResults.value = emptyList()
+        _searchExhausted.value = true
+        searchQuery = ""
+        searchFromId = 0L
+        _locateId.value = 0L
         allHistoryLoaded = false
         lastReadOutbox = 0L
         TdRepository.sendRaw(TdClient.request("openChat").apply {

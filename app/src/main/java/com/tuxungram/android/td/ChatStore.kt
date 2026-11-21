@@ -66,6 +66,23 @@ object ChatStore {
         loadMore()
     }
 
+    /** Best-known title for a chat id ("" when unknown); used by
+     *  search results, whose messages only carry the chat id. */
+    fun titleOf(chatId: Long): String =
+        cache[chatId]?.optString("title") ?: ""
+
+    /** A flattened item for any cached chat, whatever list it is
+     *  on; used when navigating somewhere from a folder/search. */
+    fun itemOf(chatId: Long): ChatItem? {
+        val chat = cache[chatId] ?: return null
+        val positions = chat.optJSONArray("positions") ?: return null
+        for (i in 0 until positions.length()) {
+            val p = positions.optJSONObject(i) ?: continue
+            if (p.optLong("order") != 0L) return toItem(chat, p, p.optLong("order"))
+        }
+        return null
+    }
+
     fun loadMore() {
         if (_allLoaded.value) return
         val sizeBefore = cache.size
