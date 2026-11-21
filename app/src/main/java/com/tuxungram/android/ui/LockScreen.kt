@@ -97,13 +97,11 @@ fun LockScreen() {
                     errorCode: Int,
                     errString: CharSequence
                 ) {
-                    if (errorCode !=
-                        android.hardware.biometrics.BiometricPrompt
-                            .ERROR_USER_CANCELED &&
-                        errorCode !=
-                        android.hardware.biometrics.BiometricPrompt
-                            .ERROR_NEGATIVE_BUTTON
-                    ) {
+                    // Platform BiometricPrompt error codes
+                    // (documented constants): 10 = user
+                    // canceled, 13 = negative button — both
+                    // are quiet exits, not failures to report.
+                    if (errorCode != 10 && errorCode != 13) {
                         error = errString.toString()
                     }
                 }
