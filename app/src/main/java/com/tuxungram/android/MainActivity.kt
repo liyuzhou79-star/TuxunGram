@@ -1,7 +1,12 @@
 package com.tuxungram.android
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
@@ -80,6 +85,7 @@ import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdRepository
@@ -107,6 +113,7 @@ import com.tuxungram.android.ui.TransitionScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleOpenChatIntent(intent)
         TdRepository.start(applicationContext)
         setContent {
             MaterialTheme {
@@ -114,6 +121,20 @@ class MainActivity : ComponentActivity() {
                     AppRoot()
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOpenChatIntent(intent)
+    }
+
+    /** Notification taps carry the chat to open (Batch 3, C1). */
+    private fun handleOpenChatIntent(intent: Intent?) {
+        val chatId = intent?.getLongExtra("open_chat_id", 0L) ?: 0L
+        if (chatId != 0L) {
+            DeepLink.pendingChat.value = chatId
         }
     }
 }
@@ -157,6 +178,30 @@ private fun AppRoot() {
 @Composable
 private fun ReadyHost() {
     var openChatId by remember { mutableStateOf<Long?>(null) }
+    // Notification taps land here (Batch 3, C1).
+    val pendingChat by DeepLink.pendingChat.collectAsState()
+    LaunchedEffect(pendingChat) {
+        val id = pendingChat
+        if (id != null) {
+            openChatId = id
+            DeepLink.pendingChat.value = null
+        }
+    }
+    // Android 13+ needs a runtime grant before any notification
+    // (keep-alive or new-message) can appear.
+    val hostContext = LocalContext.current
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                hostContext, Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     var showSettings by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }

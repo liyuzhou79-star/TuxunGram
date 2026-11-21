@@ -123,6 +123,14 @@ object TdRepository {
                 // The saved proxy must be (re-)applied before chats
                 // start loading so the first sync already uses it.
                 ProxyStore.applySavedOnStart()
+                // Background reception (Batch 3, C1): foreground
+                // keep-alive service + message notifications.
+                appContext?.let { ctx ->
+                    Notifier.init(ctx)
+                    if (UiSettings.keepAlive.value) {
+                        KeepAliveService.start(ctx)
+                    }
+                }
                 ChatStore.onReady()
                 ContactsStore.loadContacts()
             }

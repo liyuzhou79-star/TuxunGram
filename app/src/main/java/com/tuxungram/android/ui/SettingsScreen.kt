@@ -81,6 +81,9 @@ import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.tuxungram.android.td.KeepAliveService
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdRepository
@@ -95,6 +98,7 @@ import com.tuxungram.android.BuildConfig
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     BackHandler { onBack() }
+    val settingsContext = LocalContext.current
     val saved = remember { ProxyStore.load() }
     var enabled by remember { mutableStateOf(saved?.enabled ?: false) }
     var type by remember { mutableStateOf(saved?.type ?: "socks5") }
@@ -109,6 +113,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -242,6 +247,32 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
         }
+        Spacer(Modifier.height(28.dp))
+        Text("通知", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "打开后，App 切到后台也会留一个服务继续收消息，有新消息就弹通知，点通知直接进对话。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val keepAlive by UiSettings.keepAlive.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("后台接收消息", modifier = Modifier.weight(1f))
+            Switch(
+                checked = keepAlive,
+                onCheckedChange = { on ->
+                    UiSettings.setKeepAlive(on)
+                    if (on) {
+                        KeepAliveService.start(settingsContext)
+                    } else {
+                        KeepAliveService.stop(settingsContext)
+                    }
+                }
+            )
+        }
+        Text(
+            "一句实话：有些手机系统管后台管得严（比如魅族），光在这里打开还不够——请再去系统设置里给 TuxunGram 开「自启动」，电池用量选「不限制」，不然把 App 从最近任务里划掉后，系统可能还是会把它冻住，通知就迟到甚至收不到。这一层是系统说了算，App 里改不了。",
+            color = Color.Gray, fontSize = 13.sp
+        )
         Spacer(Modifier.height(28.dp))
         Text(
             "TuxunGram ${BuildConfig.VERSION_NAME}",

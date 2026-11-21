@@ -84,6 +84,7 @@ import com.tuxungram.android.td.MediaStore
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import com.tuxungram.android.td.Notifier
 import com.tuxungram.android.td.PollUi
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
@@ -125,7 +126,13 @@ fun ChatScreen(
 
     DisposableEffect(chatId) {
         MessageStore.open(chatId)
-        onDispose { MessageStore.close() }
+        // The notifier must not post notifications for the chat
+        // the user is already looking at (Batch 3, C1).
+        Notifier.foregroundChatId = chatId
+        onDispose {
+            MessageStore.close()
+            Notifier.foregroundChatId = 0L
+        }
     }
     BackHandler { onBack() }
 
