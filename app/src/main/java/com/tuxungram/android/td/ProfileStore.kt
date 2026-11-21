@@ -5,11 +5,14 @@ import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-/** One member row of a profile page. */
+/** One member row of a profile page. [statusKind] is the raw
+ *  status family (creator/administrator/member/restricted/
+ *  banned/left) the admin tools branch on. */
 data class MemberEntry(
     val userId: Long,
     val name: String,
-    val statusText: String
+    val statusText: String,
+    val statusKind: String = "member"
 )
 
 /** Everything the profile page renders, flattened from the
@@ -248,9 +251,9 @@ object ProfileStore {
         if (sender.optString("@type") != "messageSenderUser") return false
         val userId = sender.optLong("user_id")
         if (memberList.any { it.userId == userId }) return false
-        val status = when (
-            member.optJSONObject("status")?.optString("@type")
-        ) {
+        val statusType =
+            member.optJSONObject("status")?.optString("@type") ?: ""
+        val status = when (statusType) {
             "chatMemberStatusCreator" -> "群主"
             "chatMemberStatusAdministrator" -> "管理员"
             "chatMemberStatusRestricted" -> "受限"
@@ -258,8 +261,16 @@ object ProfileStore {
             "chatMemberStatusLeft" -> "已离开"
             else -> "成员"
         }
+        val kind = when (statusType) {
+            "chatMemberStatusCreator" -> "creator"
+            "chatMemberStatusAdministrator" -> "administrator"
+            "chatMemberStatusRestricted" -> "restricted"
+            "chatMemberStatusBanned" -> "banned"
+            "chatMemberStatusLeft" -> "left"
+            else -> "member"
+        }
         memberList.add(
-            MemberEntry(userId, nameByUser[userId] ?: "", status)
+            MemberEntry(userId, nameByUser[userId] ?: "", status, kind)
         )
         if (!nameByUser.containsKey(userId)) fetchName(userId)
         return true

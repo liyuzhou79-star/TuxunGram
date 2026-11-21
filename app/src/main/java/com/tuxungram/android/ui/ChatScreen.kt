@@ -76,6 +76,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.AdminStore
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
@@ -116,6 +117,7 @@ fun ChatScreen(
 ) {
     val context = LocalContext.current
     val chats by ChatStore.chats.collectAsState()
+    val adminCaps by AdminStore.caps.collectAsState()
     val chat = chats.firstOrNull { it.id == chatId }
     val messages by MessageStore.messages.collectAsState()
     val sendError by MessageStore.sendError.collectAsState()
@@ -126,6 +128,10 @@ fun ChatScreen(
 
     DisposableEffect(chatId) {
         MessageStore.open(chatId)
+        // Admin capabilities for this chat (Batch 3, C4): drives
+        // the "delete for everyone" entry on other people's
+        // messages.
+        AdminStore.loadCaps(chatId)
         // The notifier must not post notifications for the chat
         // the user is already looking at (Batch 3, C1).
         Notifier.foregroundChatId = chatId
@@ -412,7 +418,9 @@ fun ChatScreen(
                     msg,
                     isGroup = chat?.isGroup == true,
                     allowedReactions = chat?.allowedReactions,
-                    onForward = onForward
+                    onForward = onForward,
+                    chatId = chatId,
+                    canDeleteAny = adminCaps.canDeleteAny
                 )
             }
         }
@@ -699,7 +707,9 @@ fun MessageBubble(
     msg: MsgItem,
     isGroup: Boolean,
     allowedReactions: List<String>?,
-    onForward: (MsgItem) -> Unit
+    onForward: (MsgItem) -> Unit,
+    chatId: Long = 0L,
+    canDeleteAny: Boolean = false
 ) {
     val outgoing = msg.outgoing
     val context = LocalContext.current
@@ -993,17 +1003,28 @@ fun MessageBubble(
         )
     }
     if (deleteOpen) {
+        // Admins with the delete right revoke other people's
+        // messages for everyone too (Batch 3, C4).
+        val adminRevoke = !msg.outgoing && canDeleteAny && chatId != 0L
         AlertDialog(
             onDismissRequest = { deleteOpen = false },
             title = { Text("删除这条消息？") },
             text = {
                 Text(
-                    if (msg.outgoing) "会同时为所有人删除。" else "只在你这边删除。"
+                    when {
+                        msg.outgoing -> "会同时为所有人删除。"
+                        adminRevoke -> "你是管理员，这条会为所有人删除。"
+                        else -> "只在你这边删除。"
+                    }
                 )
             },
             confirmButton = {
                 Button(onClick = {
-                    MessageStore.deleteMessage(msg)
+                    if (adminRevoke) {
+                        AdminStore.deleteForEveryone(chatId, msg.id)
+                    } else {
+                        MessageStore.deleteMessage(msg)
+                    }
                     deleteOpen = false
                 }) { Text("删除") }
             },
