@@ -74,7 +74,11 @@ fun LockScreen() {
             .Builder(context)
             .setTitle("解锁 TuxunGram")
             .setSubtitle("用指纹解锁")
-            .setNegativeButtonText("用密码")
+            .setNegativeButton(
+                "用密码",
+                ContextCompat.getMainExecutor(context),
+                android.content.DialogInterface.OnClickListener { _, _ -> }
+            )
             .build()
         prompt.authenticate(
             android.os.CancellationSignal(),
@@ -93,10 +97,12 @@ fun LockScreen() {
                     errorCode: Int,
                     errString: CharSequence
                 ) {
-                    val promptClass =
+                    if (errorCode !=
                         android.hardware.biometrics.BiometricPrompt
-                    if (errorCode != promptClass.ERROR_USER_CANCELED &&
-                        errorCode != promptClass.ERROR_NEGATIVE_BUTTON
+                            .ERROR_USER_CANCELED &&
+                        errorCode !=
+                        android.hardware.biometrics.BiometricPrompt
+                            .ERROR_NEGATIVE_BUTTON
                     ) {
                         error = errString.toString()
                     }
