@@ -189,6 +189,9 @@ fun ChatScreen(
     var selectedIds by remember(chatId) { mutableStateOf<Set<Long>>(emptySet()) }
     val selectionMode = selectedIds.isNotEmpty()
     var pendingDelete by remember { mutableStateOf<List<MsgItem>?>(null) }
+    // Full-screen photo viewer (v0.7.0, F2): the photo message
+    // id the viewer opens at; null = closed.
+    var viewerId by remember { mutableStateOf<Long?>(null) }
     var input by remember { mutableStateOf("") }
     var pendingPhoto by remember { mutableStateOf<String?>(null) }
     var photoCaption by remember { mutableStateOf("") }
@@ -328,6 +331,10 @@ fun ChatScreen(
         }
     }
 
+    // Root Box so the photo viewer (F2) can overlay the whole
+    // chat screen without unmounting it (unmounting would close
+    // MessageStore and empty the viewer's photo list).
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -638,7 +645,8 @@ fun ChatScreen(
                         },
                         onEnterSelection = { m ->
                             selectedIds = setOf(m.id)
-                        }
+                        },
+                        onOpenPhoto = { m -> viewerId = m.id }
                     )
                 }
             }
@@ -939,6 +947,14 @@ fun ChatScreen(
                     }
                 )
             }
+        }
+    }
+        val vid = viewerId
+        if (vid != null) {
+            MediaViewerScreen(
+                initialId = vid,
+                onClose = { viewerId = null }
+            )
         }
     }
 }
