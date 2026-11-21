@@ -36,7 +36,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -945,6 +945,41 @@ private fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) ->
         }
     }
 
+    var attachMenuOpen by remember { mutableStateOf(false) }
+    // (path, mimeType, displayName) of a picked file awaiting confirm.
+    var pendingFile by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                var displayName = "file"
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val name = cursor.getString(0)
+                        if (!name.isNullOrBlank()) displayName = name
+                    }
+                }
+                val mime = context.contentResolver.getType(uri) ?: ""
+                val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val file = File(
+                    context.cacheDir,
+                    "pick_${System.currentTimeMillis()}_$safeName"
+                )
+                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    file.outputStream().use { output -> inputStream.copyTo(output) }
+                }
+                pendingFile = Triple(file.absolutePath, mime, displayName)
+            } catch (t: Throwable) {
+                // Picker copy failed: stay on the chat screen silently.
+            }
+        }
+    }
+
     LaunchedEffect(listState, messages.size) {
         snapshotFlow {
             listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -990,6 +1025,27 @@ private fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) ->
                 onCancel = { pendingPhoto = null }
             )
             return@Column
+        }
+
+        val fileToSend = pendingFile
+        if (fileToSend != null) {
+            AlertDialog(
+                onDismissRequest = { pendingFile = null },
+                title = { Text("发送文件") },
+                text = { Text("要发送「${fileToSend.third}」吗？") },
+                confirmButton = {
+                    Button(onClick = {
+                        MessageStore.clearSendError()
+                        MessageStore.sendFile(
+                            fileToSend.first, fileToSend.second, fileToSend.third
+                        )
+                        pendingFile = null
+                    }) { Text("发送") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingFile = null }) { Text("取消") }
+                }
+            )
         }
 
         LazyColumn(
@@ -1062,12 +1118,36 @@ private fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) ->
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (canPhotos) {
-                    IconButton(onClick = { picker.launch("image/*") }) {
-                        Icon(
-                            Icons.Filled.AttachFile,
-                            contentDescription = "发图片",
-                            tint = Color.Gray
-                        )
+                    Box {
+                        IconButton(onClick = { attachMenuOpen = true }) {
+                            Icon(
+                                // AttachFile is not in material-icons-core;
+                                // a "+" attach button is the standard
+                                // pattern in several mature clients.
+                                Icons.Filled.Add,
+                                contentDescription = "发送附件",
+                                tint = Color.Gray
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = attachMenuOpen,
+                            onDismissRequest = { attachMenuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("发图片") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    picker.launch("image/*")
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("发文件 / 视频 / 语音") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    filePicker.launch("*/*")
+                                }
+                            )
+                        }
                     }
                 }
                 OutlinedTextField(
@@ -1185,6 +1265,7 @@ private fun PhotoPreview(
 @Composable
 private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -> Unit) {
     val outgoing = msg.outgoing
+    val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var menuOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
@@ -1203,7 +1284,18 @@ private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -
                         RoundedCornerShape(12.dp)
                     )
                     .combinedClickable(
-                        onClick = {},
+                        onClick = {
+                            // File-like messages: tap opens the
+                            // downloaded file, or starts the download.
+                            if (msg.fileId != 0) {
+                                val path = msg.filePath
+                                if (path != null) {
+                                    openFileWithSystem(context, path, msg.fileMime)
+                                } else {
+                                    MessageStore.downloadFileFor(msg)
+                                }
+                            }
+                        },
                         onLongClick = { menuOpen = true }
                     )
                     .padding(horizontal = 10.dp, vertical = 7.dp)
@@ -1235,6 +1327,13 @@ private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -
                     MsgKind.TEXT -> Text(msg.text, fontSize = 15.sp)
                     MsgKind.PHOTO -> {
                         PhotoBubbleContent(msg)
+                        if (msg.text.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(msg.text, fontSize = 15.sp)
+                        }
+                    }
+                    MsgKind.DOCUMENT, MsgKind.VIDEO, MsgKind.VOICE -> {
+                        FileBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             Text(msg.text, fontSize = 15.sp)
@@ -1355,6 +1454,87 @@ private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -
                 TextButton(onClick = { deleteOpen = false }) { Text("取消") }
             }
         )
+    }
+}
+
+private fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0) return ""
+    val units = listOf("B", "KB", "MB", "GB")
+    var value = bytes.toDouble()
+    var unit = 0
+    while (value >= 1024 && unit < units.lastIndex) {
+        value /= 1024
+        unit++
+    }
+    return if (unit == 0) "${bytes}B" else String.format("%.1f%s", value, units[unit])
+}
+
+private fun formatDuration(totalSeconds: Int): String {
+    if (totalSeconds <= 0) return ""
+    val m = totalSeconds / 60
+    val s = totalSeconds % 60
+    return "$m:${s.toString().padStart(2, '0')}"
+}
+
+/** Hand a downloaded file to whatever app can open it, via
+ *  FileProvider (the file lives in TDLib's private directory). */
+private fun openFileWithSystem(context: android.content.Context, path: String, mime: String) {
+    try {
+        val file = File(path)
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, "com.tuxungram.android.fileprovider", file
+        )
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime.ifEmpty { "*/*" })
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    } catch (t: Throwable) {
+        // No viewer installed or provider mismatch: nothing sensible
+        // to do from the bubble; the file stays downloaded.
+    }
+}
+
+@Composable
+private fun FileBubbleContent(msg: MsgItem) {
+    val tag = when (msg.kind) {
+        MsgKind.VIDEO -> "▶"
+        MsgKind.VOICE -> "语音"
+        else -> msg.fileName.substringAfterLast('.', "").uppercase()
+            .take(4).ifEmpty { "文件" }
+    }
+    val meta = buildList {
+        if (msg.durationSec > 0) add(formatDuration(msg.durationSec))
+        val size = formatFileSize(msg.fileSize)
+        if (size.isNotEmpty()) add(size)
+        add(
+            when {
+                msg.filePath != null -> "点击打开"
+                msg.fileDownloading -> "下载中…"
+                else -> "点击下载"
+            }
+        )
+    }.joinToString(" · ")
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .background(Color(0xFF5B7C99), RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(tag, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.width(9.dp))
+        Column {
+            Text(
+                msg.fileName.ifEmpty { "文件" },
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2
+            )
+            Text(meta, color = Color.Gray, fontSize = 12.sp)
+        }
     }
 }
 

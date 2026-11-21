@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-enum class MsgKind { TEXT, PHOTO, OTHER }
+enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, OTHER }
 
 data class MsgItem(
     val id: Long,
@@ -23,7 +23,15 @@ data class MsgItem(
     val sendingState: String,
     val replyToId: Long = 0L,
     val replyChatId: Long = 0L,
-    val replySummary: String = ""
+    val replySummary: String = "",
+    // Generic downloadable file (document / video / voice note).
+    val fileId: Int = 0,
+    val filePath: String? = null,
+    val fileName: String = "",
+    val fileSize: Long = 0L,
+    val fileMime: String = "",
+    val durationSec: Int = 0,
+    val fileDownloading: Boolean = false
 )
 
 /**
@@ -356,14 +364,24 @@ object MessageStore {
             "updateFile" -> {
                 val file = update.optJSONObject("file") ?: return
                 val local = file.optJSONObject("local") ?: return
-                if (!local.optBoolean("is_downloading_completed")) return
                 val fileId = file.optInt("id")
+                val completed = local.optBoolean("is_downloading_completed")
+                val active = local.optBoolean("is_downloading_active")
                 val path = local.optString("path")
                 var changed = false
                 for ((id, item) in byId) {
-                    if (item.photoFileId == fileId && item.photoPath == null) {
+                    if (completed && item.photoFileId == fileId && item.photoPath == null) {
                         byId[id] = item.copy(photoPath = path)
                         changed = true
+                    }
+                    if (item.fileId == fileId && item.fileId != 0) {
+                        if (completed && item.filePath == null) {
+                            byId[id] = item.copy(filePath = path, fileDownloading = false)
+                            changed = true
+                        } else if (!completed && active != item.fileDownloading) {
+                            byId[id] = item.copy(fileDownloading = active)
+                            changed = true
+                        }
                     }
                 }
                 if (changed) publish()
@@ -475,7 +493,151 @@ object MessageStore {
                     photoHeight = size?.optInt("height", 0) ?: 0
                 )
             }
+            "messageDocument" -> {
+                val doc = content.optJSONObject("document")
+                val file = doc?.optJSONObject("document")
+                base.copy(
+                    kind = MsgKind.DOCUMENT,
+                    text = content.optJSONObject("caption")?.optString("text") ?: "",
+                    fileId = file?.optInt("id", 0) ?: 0,
+                    filePath = downloadedPath(file),
+                    fileName = doc?.optString("file_name") ?: "",
+                    fileSize = fileSizeOf(file),
+                    fileMime = doc?.optString("mime_type") ?: ""
+                )
+            }
+            "messageVideo" -> {
+                val video = content.optJSONObject("video")
+                val file = video?.optJSONObject("video")
+                base.copy(
+                    kind = MsgKind.VIDEO,
+                    text = content.optJSONObject("caption")?.optString("text") ?: "",
+                    fileId = file?.optInt("id", 0) ?: 0,
+                    filePath = downloadedPath(file),
+                    fileName = video?.optString("file_name") ?: "",
+                    fileSize = fileSizeOf(file),
+                    fileMime = video?.optString("mime_type") ?: "",
+                    durationSec = video?.optInt("duration", 0) ?: 0
+                )
+            }
+            "messageVoiceNote" -> {
+                val voice = content.optJSONObject("voice_note")
+                val file = voice?.optJSONObject("voice")
+                base.copy(
+                    kind = MsgKind.VOICE,
+                    text = content.optJSONObject("caption")?.optString("text") ?: "",
+                    fileId = file?.optInt("id", 0) ?: 0,
+                    filePath = downloadedPath(file),
+                    fileName = "语音消息",
+                    fileSize = fileSizeOf(file),
+                    fileMime = voice?.optString("mime_type") ?: "",
+                    durationSec = voice?.optInt("duration", 0) ?: 0
+                )
+            }
             else -> base.copy(kind = MsgKind.OTHER, text = "")
+        }
+    }
+
+    private fun downloadedPath(file: JSONObject?): String? {
+        val local = file?.optJSONObject("local") ?: return null
+        return if (local.optBoolean("is_downloading_completed")) {
+            local.optString("path").ifEmpty { null }
+        } else {
+            null
+        }
+    }
+
+    private fun fileSizeOf(file: JSONObject?): Long {
+        if (file == null) return 0L
+        val size = file.optLong("size", 0L)
+        return if (size > 0) size else file.optLong("expected_size", 0L)
+    }
+
+    /** Start (or restart) downloading a document/video/voice file;
+     *  progress and completion arrive through updateFile. */
+    fun downloadFileFor(item: MsgItem) {
+        if (item.fileId == 0 || item.filePath != null) return
+        TdRepository.sendRaw(TdClient.request("downloadFile").apply {
+            put("file_id", item.fileId)
+            put("priority", 16)
+            put("offset", 0L)
+            put("limit", 0L)
+            put("synchronous", false)
+        }) {}
+        val existing = byId[item.id] ?: return
+        byId[item.id] = existing.copy(fileDownloading = true)
+        publish()
+    }
+
+    /** Send a picked file: video MIME goes as a video message,
+     *  .ogg/.opus audio as a voice note, everything else as a
+     *  document. Input types verified in td_api.tl (inputDocument /
+     *  inputVideo / inputVoiceNote and their input* wrappers). */
+    fun sendFile(path: String, mimeType: String, fileName: String) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val replyTo = replyToJson()
+        _replyTarget.value = null
+        val localFile = JSONObject().apply {
+            put("@type", "inputFileLocal")
+            put("path", path)
+        }
+        val content = when {
+            mimeType.startsWith("video/") -> JSONObject().apply {
+                put("@type", "inputMessageVideo")
+                put("video", JSONObject().apply {
+                    put("@type", "inputVideo")
+                    put("video", localFile)
+                    put("thumbnail", JSONObject.NULL)
+                    put("cover", JSONObject.NULL)
+                    put("start_timestamp", 0)
+                    put("added_sticker_file_ids", JSONArray())
+                    put("duration", 0)
+                    put("width", 0)
+                    put("height", 0)
+                    put("supports_streaming", true)
+                })
+                put("caption", formattedText(""))
+                put("show_caption_above_media", false)
+                put("self_destruct_type", JSONObject.NULL)
+                put("has_spoiler", false)
+            }
+            mimeType == "audio/ogg" || fileName.endsWith(".opus", true) ||
+                fileName.endsWith(".ogg", true) -> JSONObject().apply {
+                put("@type", "inputMessageVoiceNote")
+                put("voice_note", JSONObject().apply {
+                    put("@type", "inputVoiceNote")
+                    put("voice_note", localFile)
+                    put("duration", 0)
+                    put("waveform", "")
+                })
+                put("caption", formattedText(""))
+                put("self_destruct_type", JSONObject.NULL)
+            }
+            else -> JSONObject().apply {
+                put("@type", "inputMessageDocument")
+                put("document", JSONObject().apply {
+                    put("@type", "inputDocument")
+                    put("document", localFile)
+                    put("thumbnail", JSONObject.NULL)
+                    put("disable_content_type_detection", false)
+                })
+                put("caption", formattedText(""))
+            }
+        }
+        val query = TdClient.request("sendMessage").apply {
+            put("chat_id", chatId)
+            if (replyTo != null) put("reply_to", replyTo)
+            put("input_message_content", content)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            } else {
+                val item = parseMessage(response)
+                byId[item.id] = item
+                publish()
+            }
         }
     }
 

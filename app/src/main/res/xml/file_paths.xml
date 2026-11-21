@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- TDLib database + downloaded files live under filesDir. -->
+    <files-path name="internal" path="." />
+    <!-- Picked files are copied to cacheDir before sending. -->
+    <cache-path name="cache" path="." />
+</paths>
