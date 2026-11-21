@@ -247,6 +247,40 @@ fun decodeDownsampled(path: String, maxDim: Int = 2048): android.graphics.Bitmap
     }
 }
 
+/** Shared decoded-bitmap cache (H2-2): before this, every
+ *  avatar / photo bubble / sticker decode ran from disk again
+ *  each time its row scrolled back into view. One LRU cache
+ *  keyed by file path, sized by bitmap byte count and capped
+ *  at 24 MB — several screens' worth of bubbles, still polite
+ *  on low-memory devices; LRU eviction handles the rest. */
+private val bitmapCache =
+    object : android.util.LruCache<String, android.graphics.Bitmap>(
+        24 * 1024 * 1024
+    ) {
+        override fun sizeOf(
+            key: String,
+            value: android.graphics.Bitmap
+        ): Int = value.byteCount
+    }
+
+/** Decode [path] through the shared bitmap cache, optionally
+ *  downsampled to [maxDim] px on the long edge first. Call
+ *  from a background dispatcher. */
+fun decodeCached(path: String, maxDim: Int = 0): android.graphics.Bitmap? {
+    bitmapCache.get(path)?.let { return it }
+    val bmp = if (maxDim > 0) {
+        decodeDownsampled(path, maxDim)
+    } else {
+        try {
+            BitmapFactory.decodeFile(path)
+        } catch (t: Throwable) {
+            null
+        }
+    }
+    if (bmp != null) bitmapCache.put(path, bmp)
+    return bmp
+}
+
 /** Round avatar from a downloaded TDLib photo file; the small
  *  renditions are tiny, so a plain decode is fine. */
 @Composable
@@ -254,13 +288,7 @@ fun AvatarImage(path: String, sizeDp: Int) {
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path
     ) {
-        value = withContext(Dispatchers.IO) {
-            try {
-                BitmapFactory.decodeFile(path)
-            } catch (t: Throwable) {
-                null
-            }
-        }
+        value = withContext(Dispatchers.IO) { decodeCached(path) }
     }
     val bmp = bitmap
     if (bmp != null) {

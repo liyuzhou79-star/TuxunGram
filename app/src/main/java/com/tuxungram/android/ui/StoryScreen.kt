@@ -110,7 +110,7 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
                     initialValue = null, current.localPath
                 ) {
                     value = withContext(Dispatchers.IO) {
-                        decodeDownsampled(current.localPath)
+                        decodeCached(current.localPath, 2048)
                     }
                 }
                 val bmp = bitmap

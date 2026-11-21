@@ -1857,13 +1857,7 @@ fun PhotoBubbleContent(msg: MsgItem) {
         value = if (path == null) {
             null
         } else {
-            withContext(Dispatchers.IO) {
-                try {
-                    BitmapFactory.decodeFile(path)
-                } catch (t: Throwable) {
-                    null
-                }
-            }
+            withContext(Dispatchers.IO) { decodeCached(path) }
         }
     }
     val ratio = if (msg.photoWidth > 0 && msg.photoHeight > 0) {
@@ -1904,13 +1898,7 @@ fun StickerBubbleContent(msg: MsgItem) {
         value = if (path == null) {
             null
         } else {
-            withContext(Dispatchers.IO) {
-                try {
-                    BitmapFactory.decodeFile(path)
-                } catch (t: Throwable) {
-                    null
-                }
-            }
+            withContext(Dispatchers.IO) { decodeCached(path) }
         }
     }
     val bmp = bitmap
@@ -2122,7 +2110,7 @@ fun LinkPreviewCard(msg: MsgItem) {
         value = if (photoPath == null) {
             null
         } else {
-            withContext(Dispatchers.IO) { decodeDownsampled(photoPath) }
+            withContext(Dispatchers.IO) { decodeCached(photoPath, 2048) }
         }
     }
     Column(
@@ -2322,13 +2310,7 @@ private fun MediaPickerCell(entry: MediaEntry, onClick: () -> Unit) {
         value = if (path == null) {
             null
         } else {
-            withContext(Dispatchers.IO) {
-                try {
-                    BitmapFactory.decodeFile(path)
-                } catch (t: Throwable) {
-                    null
-                }
-            }
+            withContext(Dispatchers.IO) { decodeCached(path) }
         }
     }
     Box(
