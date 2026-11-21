@@ -40,7 +40,11 @@ data class MsgItem(
     val fileMime: String = "",
     val durationSec: Int = 0,
     val fileDownloading: Boolean = false,
-    val reactions: List<ReactionChip> = emptyList()
+    val reactions: List<ReactionChip> = emptyList(),
+    // Outgoing delivery state derived from the chat's
+    // last_read_outbox_message_id: "" (not applicable / pending),
+    // "sent" (delivered, unread), "read".
+    val readState: String = ""
 )
 
 /**
@@ -66,6 +70,12 @@ object MessageStore {
     @Volatile
     var currentChatId: Long = 0L
         private set
+
+    /** Newest message the other side has read (from the chat's
+     *  last_read_outbox_message_id, kept current by
+     *  updateChatReadOutbox). Drives the sent/read ticks on bubbles. */
+    @Volatile
+    private var lastReadOutbox = 0L
 
     @Volatile
     private var allHistoryLoaded = false
@@ -94,9 +104,20 @@ object MessageStore {
         _sendError.value = null
         _replyTarget.value = null
         allHistoryLoaded = false
+        lastReadOutbox = 0L
         TdRepository.sendRaw(TdClient.request("openChat").apply {
             put("chat_id", chatId)
         }) {}
+        // Seed the read position for bubble ticks; afterwards
+        // updateChatReadOutbox keeps it current.
+        TdRepository.sendRaw(TdClient.request("getChat").apply {
+            put("chat_id", chatId)
+        }) { response ->
+            if (!TdClient.isError(response) && currentChatId == chatId) {
+                lastReadOutbox = response.optLong("last_read_outbox_message_id")
+                publish()
+            }
+        }
         loadHistory(fromMessageId = 0L)
     }
 
@@ -378,6 +399,24 @@ object MessageStore {
                 byId[messageId] = existing.copy(
                     reactions = reactionsOf(update.optJSONObject("interaction_info"))
                 )
+                publish()
+            }
+            "updateDeleteMessages" -> {
+                // Deleted on any device (or by the other side / an
+                // admin): the bubbles must disappear here too.
+                val chatId = update.optLong("chat_id")
+                if (chatId != currentChatId) return
+                val ids = update.optJSONArray("message_ids") ?: return
+                var changed = false
+                for (i in 0 until ids.length()) {
+                    if (byId.remove(ids.optLong(i)) != null) changed = true
+                }
+                if (changed) publish()
+            }
+            "updateChatReadOutbox" -> {
+                val chatId = update.optLong("chat_id")
+                if (chatId != currentChatId) return
+                lastReadOutbox = update.optLong("last_read_outbox_message_id")
                 publish()
             }
             "updateFile" -> {
@@ -819,10 +858,22 @@ object MessageStore {
             } else {
                 null
             }
-            if (name != null && name != item.senderName) {
+            val withName = if (name != null && name != item.senderName) {
                 item.copy(senderName = name)
             } else {
                 item
+            }
+            // Delivery ticks follow the chat's read position, not a
+            // one-off flag set at send time.
+            val readState = when {
+                !withName.outgoing || withName.sendingState.isNotEmpty() -> ""
+                withName.id <= lastReadOutbox -> "read"
+                else -> "sent"
+            }
+            if (readState != withName.readState) {
+                withName.copy(readState = readState)
+            } else {
+                withName
             }
         }
     }

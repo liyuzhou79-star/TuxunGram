@@ -1454,6 +1454,18 @@ private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -
                 }
                 Row {
                     Text(formatMsgTime(msg.dateSeconds), color = Color.Gray, fontSize = 11.sp)
+                    when (msg.readState) {
+                        "read" -> Text(
+                            "  ✓✓",
+                            color = Color(0xFF5B7C99),
+                            fontSize = 11.sp
+                        )
+                        "sent" -> Text(
+                            "  ✓",
+                            color = Color.Gray,
+                            fontSize = 11.sp
+                        )
+                    }
                     when (msg.sendingState) {
                         "pending" -> Text(
                             "  发送中…",

@@ -68,15 +68,28 @@ object ChatStore {
 
     fun loadMore() {
         if (_allLoaded.value) return
+        val sizeBefore = cache.size
         val query = TdClient.request("loadChats").apply {
             put("chat_list", JSONObject().put("@type", "chatListMain"))
-            put("limit", 50)
+            put("limit", 100)
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response) && response.optInt("code") == 404) {
+                // 404 is TDLib's "the list is complete" signal: every
+                // chat, however old, has been pulled in.
                 _allLoaded.value = true
             }
             recompute()
+            // Keep pulling until TDLib says the list is complete, so
+            // the chat list is whole even if the user never scrolls.
+            // The chain only continues while the previous call
+            // actually brought new chats in — a stall guard against
+            // spinning while the network is down, not a data cap:
+            // scrolling calls loadMore again, and new chats also
+            // arrive on their own via updateNewChat.
+            if (!_allLoaded.value && cache.size > sizeBefore) {
+                loadMore()
+            }
         }
     }
 
