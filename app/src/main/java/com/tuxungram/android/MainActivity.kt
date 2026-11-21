@@ -63,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -814,35 +815,45 @@ private fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Uni
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = { menuOpen = true }
+                )
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
         val hue = (chat.id % 8 + 8) % 8
         val colors = listOf(
             Color(0xFFEF9A9A), Color(0xFFF48FB1), Color(0xFFCE93D8), Color(0xFF90CAF9),
             Color(0xFF80CBC4), Color(0xFFA5D6A7), Color(0xFFFFCC80), Color(0xFFBCAAA4)
         )
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .background(
-                    colors[hue.toInt()],
-                    CircleShape
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                chat.title.trim().firstOrNull()?.toString() ?: "?",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp
-            )
+        if (chat.photoPath != null) {
+            AvatarImage(path = chat.photoPath, sizeDp = 48)
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(
+                        colors[hue.toInt()],
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    chat.title.trim().firstOrNull()?.toString() ?: "?",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            }
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -873,7 +884,7 @@ private fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 if (chat.isPinned) {
                     Text("置顶", color = Color.Gray, fontSize = 11.sp)
                 }
-                if (chat.unreadCount > 0) {
+                if (chat.unreadCount > 0 || chat.isMarkedAsUnread) {
                     Spacer(Modifier.width(6.dp))
                     Box(
                         modifier = Modifier
@@ -887,10 +898,10 @@ private fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     ) {
                         val unreadCap by UiSettings.unreadCap.collectAsState()
                         Text(
-                            if (chat.unreadCount > unreadCap) {
-                                "$unreadCap+"
-                            } else {
-                                chat.unreadCount.toString()
+                            when {
+                                chat.unreadCount == 0 -> "•"
+                                chat.unreadCount > unreadCap -> "$unreadCap+"
+                                else -> chat.unreadCount.toString()
                             },
                             color = Color.White,
                             fontSize = 11.sp
@@ -899,6 +910,74 @@ private fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 }
             }
         }
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text(if (chat.isPinned) "取消置顶" else "置顶") },
+                onClick = {
+                    menuOpen = false
+                    ChatStore.togglePin(chat)
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(if (chat.isMuted) "取消静音" else "静音") },
+                onClick = {
+                    menuOpen = false
+                    ChatStore.toggleMute(chat)
+                }
+            )
+            if (chat.unreadCount > 0 || chat.isMarkedAsUnread) {
+                DropdownMenuItem(
+                    text = { Text("标为已读") },
+                    onClick = {
+                        menuOpen = false
+                        ChatStore.markRead(chat)
+                    }
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("归档") },
+                onClick = {
+                    menuOpen = false
+                    ChatStore.archive(chat)
+                }
+            )
+        }
+    }
+}
+
+/** Round avatar from a downloaded TDLib photo file; the small
+ *  renditions are tiny, so a plain decode is fine. */
+@Composable
+private fun AvatarImage(path: String, sizeDp: Int) {
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = withContext(Dispatchers.IO) {
+            try {
+                BitmapFactory.decodeFile(path)
+            } catch (t: Throwable) {
+                null
+            }
+        }
+    }
+    val bmp = bitmap
+    if (bmp != null) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(sizeDp.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFE0E0E0))
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .size(sizeDp.dp)
+                .background(Color(0xFFE0E0E0), CircleShape)
+        )
     }
 }
 
@@ -999,6 +1078,10 @@ private fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) ->
         ) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
+            if (chat?.photoPath != null) {
+                AvatarImage(path = chat.photoPath, sizeDp = 36)
+                Spacer(Modifier.width(10.dp))
             }
             Text(
                 chat?.title ?: "对话",
@@ -1270,6 +1353,7 @@ private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -
     var menuOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
+    var reactionOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1345,6 +1429,29 @@ private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -
                         fontSize = 14.sp
                     )
                 }
+                if (msg.reactions.isNotEmpty()) {
+                    Spacer(Modifier.height(5.dp))
+                    Row {
+                        for (chip in msg.reactions) {
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        if (chip.chosen) {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        } else {
+                                            Color(0x14000000)
+                                        },
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { MessageStore.toggleReaction(msg, chip.emoji) }
+                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                            ) {
+                                Text("${chip.emoji} ${chip.count}", fontSize = 12.sp)
+                            }
+                            Spacer(Modifier.width(5.dp))
+                        }
+                    }
+                }
                 Row {
                     Text(formatMsgTime(msg.dateSeconds), color = Color.Gray, fontSize = 11.sp)
                     when (msg.sendingState) {
@@ -1387,6 +1494,13 @@ private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -
                         }
                     )
                 }
+                DropdownMenuItem(
+                    text = { Text("添加回应") },
+                    onClick = {
+                        menuOpen = false
+                        reactionOpen = true
+                    }
+                )
                 DropdownMenuItem(
                     text = { Text("转发") },
                     onClick = {
@@ -1432,6 +1546,28 @@ private fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -
             },
             dismissButton = {
                 TextButton(onClick = { editOpen = false }) { Text("取消") }
+            }
+        )
+    }
+    if (reactionOpen) {
+        AlertDialog(
+            onDismissRequest = { reactionOpen = false },
+            title = { Text("选个回应") },
+            text = {
+                Row {
+                    for (emoji in MessageStore.COMMON_REACTIONS) {
+                        TextButton(onClick = {
+                            MessageStore.toggleReaction(msg, emoji)
+                            reactionOpen = false
+                        }) {
+                            Text(emoji, fontSize = 22.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { reactionOpen = false }) { Text("取消") }
             }
         )
     }

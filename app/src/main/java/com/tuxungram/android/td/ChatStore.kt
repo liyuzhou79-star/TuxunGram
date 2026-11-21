@@ -19,7 +19,11 @@ data class ChatItem(
     val isMuted: Boolean,
     val canSendBasic: Boolean,
     val canSendPhotos: Boolean,
-    val order: Long
+    val order: Long,
+    val lastMessageId: Long = 0L,
+    val isMarkedAsUnread: Boolean = false,
+    val photoFileId: Int = 0,
+    val photoPath: String? = null
 )
 
 /**
@@ -38,6 +42,15 @@ object ChatStore {
     val allLoaded: StateFlow<Boolean> = _allLoaded
 
     private val cache = ConcurrentHashMap<Long, JSONObject>()
+
+    /** Avatar bookkeeping: downloaded small photos by TDLib file id,
+     *  downloads already requested, and — for private chats, whose
+     *  avatar is the other user's profile photo — chat id -> the
+     *  file id of that user's small profile photo. */
+    private val photoPathByFileId = ConcurrentHashMap<Int, String>()
+    private val photoDownloadPending = ConcurrentHashMap.newKeySet<Int>()
+    private val userPhotoFileByChat = ConcurrentHashMap<Long, Int>()
+    private val chatIdByUserId = ConcurrentHashMap<Long, Long>()
 
     @Volatile
     private var attached = false
@@ -70,9 +83,41 @@ object ChatStore {
     private fun handleUpdate(update: JSONObject) {
         val chatId = update.optLong("chat_id", 0L)
         when (update.optString("@type")) {
+            "updateFile" -> {
+                val file = update.optJSONObject("file") ?: return
+                val local = file.optJSONObject("local") ?: return
+                if (!local.optBoolean("is_downloading_completed")) return
+                val fileId = file.optInt("id")
+                photoDownloadPending.remove(fileId)
+                photoPathByFileId[fileId] = local.optString("path")
+            }
             "updateNewChat" -> {
                 val chat = update.optJSONObject("chat") ?: return
                 cache[chat.optLong("id")] = chat
+                val type = chat.optJSONObject("type")
+                if (type?.optString("@type") == "chatTypePrivate") {
+                    val userId = type.optLong("user_id")
+                    chatIdByUserId[userId] = chat.optLong("id")
+                    fetchUserPhoto(chat.optLong("id"), userId)
+                }
+            }
+            "updateUser" -> {
+                val user = update.optJSONObject("user") ?: return
+                val chatIdForUser = chatIdByUserId[user.optLong("id")] ?: return
+                val smallId = user.optJSONObject("profile_photo")
+                    ?.optJSONObject("small")?.optInt("id", 0) ?: 0
+                if (smallId != 0) {
+                    userPhotoFileByChat[chatIdForUser] = smallId
+                    ensurePhotoDownload(smallId)
+                }
+            }
+            "updateChatPhoto" -> {
+                val chat = cache[chatId] ?: return
+                if (update.has("photo") && !update.isNull("photo")) {
+                    chat.put("photo", update.opt("photo"))
+                } else {
+                    chat.remove("photo")
+                }
             }
             "updateChatLastMessage" -> {
                 val chat = cache[chatId] ?: return
@@ -98,6 +143,29 @@ object ChatStore {
                 chat.put(
                     "last_read_inbox_message_id",
                     update.optLong("last_read_inbox_message_id")
+                )
+            }
+            "updateChatReadOutbox" -> {
+                val chat = cache[chatId] ?: return
+                chat.put(
+                    "last_read_outbox_message_id",
+                    update.optLong("last_read_outbox_message_id")
+                )
+            }
+            "updateChatNotificationSettings" -> {
+                val chat = cache[chatId] ?: return
+                if (update.has("notification_settings")) {
+                    chat.put(
+                        "notification_settings",
+                        update.opt("notification_settings")
+                    )
+                }
+            }
+            "updateChatIsMarkedAsUnread" -> {
+                val chat = cache[chatId] ?: return
+                chat.put(
+                    "is_marked_as_unread",
+                    update.optBoolean("is_marked_as_unread")
                 )
             }
             "updateChatDraftMessage" -> {
@@ -186,8 +254,130 @@ object ChatStore {
             isMuted = muteFor > 0,
             canSendBasic = permissions?.optBoolean("can_send_basic_messages", true) ?: true,
             canSendPhotos = permissions?.optBoolean("can_send_photos", true) ?: true,
-            order = order
+            order = order,
+            lastMessageId = last?.optLong("id", 0L) ?: 0L,
+            isMarkedAsUnread = chat.optBoolean("is_marked_as_unread"),
+            photoFileId = avatarFileId(chat),
+            photoPath = avatarFileId(chat).let { id ->
+                if (id == 0) {
+                    null
+                } else {
+                    ensurePhotoDownload(id)
+                    photoPathByFileId[id]
+                }
+            }
         )
+    }
+
+    /** The chat's own small photo (chatPhotoInfo.small, verified in
+     *  td_api.tl); private chats fall back to the other user's
+     *  profile photo fetched via getUser. */
+    private fun avatarFileId(chat: JSONObject): Int {
+        val own = chat.optJSONObject("photo")
+            ?.optJSONObject("small")?.optInt("id", 0) ?: 0
+        if (own != 0) return own
+        return userPhotoFileByChat[chat.optLong("id")] ?: 0
+    }
+
+    private fun fetchUserPhoto(chatId: Long, userId: Long) {
+        if (userPhotoFileByChat.containsKey(chatId)) return
+        val query = TdClient.request("getUser").apply { put("user_id", userId) }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) return@sendRaw
+            val smallId = response.optJSONObject("profile_photo")
+                ?.optJSONObject("small")?.optInt("id", 0) ?: 0
+            if (smallId != 0) {
+                userPhotoFileByChat[chatId] = smallId
+                ensurePhotoDownload(smallId)
+                recompute()
+            }
+        }
+    }
+
+    private fun ensurePhotoDownload(fileId: Int) {
+        if (fileId == 0) return
+        if (photoPathByFileId.containsKey(fileId)) return
+        if (!photoDownloadPending.add(fileId)) return
+        TdRepository.sendRaw(TdClient.request("downloadFile").apply {
+            put("file_id", fileId)
+            put("priority", 1)
+            put("offset", 0L)
+            put("limit", 0L)
+            put("synchronous", false)
+        }) {}
+    }
+
+    // ---- Chat-list long-press actions (all verified in td_api.tl) ----
+
+    private fun reportIfError(response: JSONObject) {
+        if (TdClient.isError(response)) {
+            TdRepository.reportError(
+                response.optInt("code") to response.optString("message")
+            )
+        }
+    }
+
+    fun togglePin(chat: ChatItem) {
+        val query = TdClient.request("toggleChatIsPinned").apply {
+            put("chat_list", JSONObject().put("@type", "chatListMain"))
+            put("chat_id", chat.id)
+            put("is_pinned", !chat.isPinned)
+        }
+        TdRepository.sendRaw(query) { reportIfError(it) }
+    }
+
+    /** Mute "forever" is a far-future mute_for; unmuting sets it to
+     *  0. Every other setting stays on its default (use_default_*
+     *  flags), per the chatNotificationSettings field list. */
+    fun toggleMute(chat: ChatItem) {
+        val settings = JSONObject().apply {
+            put("@type", "chatNotificationSettings")
+            put("use_default_mute_for", false)
+            put("mute_for", if (chat.isMuted) 0 else Int.MAX_VALUE)
+            put("use_default_sound", true)
+            put("sound_id", 0L)
+            put("use_default_show_preview", true)
+            put("show_preview", false)
+            put("use_default_mute_stories", true)
+            put("mute_stories", false)
+            put("use_default_story_sound", true)
+            put("story_sound_id", 0L)
+            put("use_default_show_story_poster", true)
+            put("show_story_poster", false)
+            put("use_default_disable_pinned_message_notifications", true)
+            put("disable_pinned_message_notifications", false)
+            put("use_default_disable_mention_notifications", true)
+            put("disable_mention_notifications", false)
+        }
+        val query = TdClient.request("setChatNotificationSettings").apply {
+            put("chat_id", chat.id)
+            put("notification_settings", settings)
+        }
+        TdRepository.sendRaw(query) { reportIfError(it) }
+    }
+
+    /** Mark a chat read from the list: view its newest message with
+     *  the chat-list source; unread counts then sync from TDLib. */
+    fun markRead(chat: ChatItem) {
+        if (chat.lastMessageId == 0L) return
+        val query = TdClient.request("viewMessages").apply {
+            put("chat_id", chat.id)
+            put("message_ids", JSONArray().put(chat.lastMessageId))
+            put("source", JSONObject().put("@type", "messageSourceChatList"))
+            put("force_read", true)
+        }
+        TdRepository.sendRaw(query) { reportIfError(it) }
+    }
+
+    /** Archive: move the chat to the archive list (addChatToList
+     *  with chatListArchive). TDLib then drops it from the main
+     *  list positions and this store stops showing it. */
+    fun archive(chat: ChatItem) {
+        val query = TdClient.request("addChatToList").apply {
+            put("chat_id", chat.id)
+            put("chat_list", JSONObject().put("@type", "chatListArchive"))
+        }
+        TdRepository.sendRaw(query) { reportIfError(it) }
     }
 
     private fun previewOf(message: JSONObject?): String {
