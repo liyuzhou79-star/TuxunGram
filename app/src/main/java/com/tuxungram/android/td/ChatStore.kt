@@ -11,11 +11,14 @@ data class ChatItem(
     val id: Long,
     val title: String,
     val isChannel: Boolean,
+    val isGroup: Boolean,
     val preview: String,
     val dateSeconds: Int,
     val unreadCount: Int,
     val isPinned: Boolean,
     val isMuted: Boolean,
+    val canSendBasic: Boolean,
+    val canSendPhotos: Boolean,
     val order: Long
 )
 
@@ -158,8 +161,11 @@ object ChatStore {
 
     private fun toItem(chat: JSONObject, position: JSONObject, order: Long): ChatItem {
         val type = chat.optJSONObject("type")
-        val isChannel = type?.optString("@type") == "chatTypeSupergroup" &&
+        val typeName = type?.optString("@type")
+        val isChannel = typeName == "chatTypeSupergroup" &&
             type.optBoolean("is_channel")
+        val isGroup = typeName == "chatTypeBasicGroup" ||
+            (typeName == "chatTypeSupergroup" && !isChannel)
         val last = if (chat.has("last_message") && !chat.isNull("last_message")) {
             chat.optJSONObject("last_message")
         } else {
@@ -167,15 +173,19 @@ object ChatStore {
         }
         val muteFor = chat.optJSONObject("notification_settings")
             ?.optInt("mute_for", 0) ?: 0
+        val permissions = chat.optJSONObject("permissions")
         return ChatItem(
             id = chat.optLong("id"),
             title = chat.optString("title"),
             isChannel = isChannel,
+            isGroup = isGroup,
             preview = previewOf(last),
             dateSeconds = last?.optInt("date", 0) ?: 0,
             unreadCount = chat.optInt("unread_count"),
             isPinned = position.optBoolean("is_pinned"),
             isMuted = muteFor > 0,
+            canSendBasic = permissions?.optBoolean("can_send_basic_messages", true) ?: true,
+            canSendPhotos = permissions?.optBoolean("can_send_photos", true) ?: true,
             order = order
         )
     }

@@ -3,7 +3,13 @@ package com.tuxungram.android
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import android.graphics.BitmapFactory
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -29,6 +35,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,6 +48,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -50,7 +60,13 @@ import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
+import com.tuxungram.android.td.MessageStore
+import com.tuxungram.android.td.MsgItem
+import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.TdRepository
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -130,7 +146,7 @@ private fun AppRoot() {
         }
         is AuthState.WaitPassword -> PasswordScreen(hint = state.hint)
         is AuthState.WaitRegistration -> RegistrationScreen()
-        is AuthState.Ready -> ReadyScreen()
+        is AuthState.Ready -> ReadyHost()
         is AuthState.LoggingOut -> TransitionScreen("正在退出…")
         is AuthState.Closed -> ClosedScreen()
         is AuthState.Other -> TransitionScreen("正在处理…")
@@ -419,8 +435,14 @@ private fun RegistrationScreen() {
 }
 
 @Composable
-private fun ReadyScreen() {
-    ChatListScreen()
+private fun ReadyHost() {
+    var openChatId by remember { mutableStateOf<Long?>(null) }
+    val chatId = openChatId
+    if (chatId == null) {
+        ChatListScreen(onOpenChat = { openChatId = it })
+    } else {
+        ChatScreen(chatId = chatId, onBack = { openChatId = null })
+    }
 }
 
 private fun formatChatTime(dateSeconds: Int): String {
@@ -450,7 +472,7 @@ private fun formatChatTime(dateSeconds: Int): String {
 }
 
 @Composable
-private fun ChatListScreen() {
+private fun ChatListScreen(onOpenChat: (Long) -> Unit) {
     val chats by ChatStore.chats.collectAsState()
     val allLoaded by ChatStore.allLoaded.collectAsState()
     var query by remember { mutableStateOf("") }
@@ -511,7 +533,7 @@ private fun ChatListScreen() {
                     items = shown,
                     key = { it.id }
                 ) { chat ->
-                    ChatRow(chat)
+                    ChatRow(chat, onClick = { onOpenChat(chat.id) })
                 }
             }
         }
@@ -519,10 +541,11 @@ private fun ChatListScreen() {
 }
 
 @Composable
-private fun ChatRow(chat: ChatItem) {
+private fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -596,6 +619,333 @@ private fun ChatRow(chat: ChatItem) {
                     }
                 }
             }
+        }
+    }
+}
+
+private fun formatMsgTime(dateSeconds: Int): String {
+    if (dateSeconds <= 0) return ""
+    val cal = java.util.Calendar.getInstance().apply {
+        timeInMillis = dateSeconds * 1000L
+    }
+    return java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(cal.time)
+}
+
+@Composable
+private fun ChatScreen(chatId: Long, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val chats by ChatStore.chats.collectAsState()
+    val chat = chats.firstOrNull { it.id == chatId }
+    val messages by MessageStore.messages.collectAsState()
+    val sendError by MessageStore.sendError.collectAsState()
+    var input by remember { mutableStateOf("") }
+    var pendingPhoto by remember { mutableStateOf<String?>(null) }
+    var photoCaption by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+
+    DisposableEffect(chatId) {
+        MessageStore.open(chatId)
+        onDispose { MessageStore.close() }
+    }
+    BackHandler { onBack() }
+
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val file = File(context.cacheDir, "pick_${System.currentTimeMillis()}.jpg")
+            try {
+                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    file.outputStream().use { output -> inputStream.copyTo(output) }
+                }
+                pendingPhoto = file.absolutePath
+                photoCaption = ""
+            } catch (t: Throwable) {
+                // Picker copy failed: stay on the chat screen silently.
+            }
+        }
+    }
+
+    LaunchedEffect(listState, messages.size) {
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        }.collect { lastVisible ->
+            if (messages.isNotEmpty() && lastVisible >= messages.size - 3) {
+                MessageStore.loadOlder()
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) { Text("返回") }
+            Text(
+                chat?.title ?: "对话",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+            if (chat?.isChannel == true) {
+                Spacer(Modifier.width(6.dp))
+                Text("频道", color = Color.Gray, fontSize = 12.sp)
+            }
+        }
+
+        val photoPath = pendingPhoto
+        if (photoPath != null) {
+            PhotoPreview(
+                path = photoPath,
+                caption = photoCaption,
+                onCaptionChange = { photoCaption = it },
+                onSend = {
+                    MessageStore.sendPhoto(photoPath, photoCaption.trim())
+                    pendingPhoto = null
+                },
+                onCancel = { pendingPhoto = null }
+            )
+            return@Column
+        }
+
+        LazyColumn(
+            state = listState,
+            reverseLayout = true,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp)
+        ) {
+            items(items = messages.asReversed(), key = { it.id }) { msg ->
+                MessageBubble(msg, isGroup = chat?.isGroup == true)
+            }
+        }
+
+        if (sendError != null) {
+            Text(
+                sendError!!,
+                color = Color(0xFFC62828),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+
+        val canBasic = chat?.canSendBasic ?: true
+        val canPhotos = chat?.canSendPhotos ?: true
+        if (!canBasic && !canPhotos) {
+            Text(
+                "你不能在这个对话里发言",
+                color = Color.Gray,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(16.dp)
+            )
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (canPhotos) {
+                    TextButton(onClick = { picker.launch("image/*") }) {
+                        Text("图片")
+                    }
+                }
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    placeholder = { Text("消息") },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 4
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val text = input.trim()
+                        if (text.isNotEmpty()) {
+                            MessageStore.clearSendError()
+                            MessageStore.sendText(text)
+                            input = ""
+                        }
+                    },
+                    enabled = canBasic && input.isNotBlank()
+                ) {
+                    Text("发送")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhotoPreview(
+    path: String,
+    caption: String,
+    onCaptionChange: (String) -> Unit,
+    onSend: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = withContext(Dispatchers.IO) {
+            try {
+                BitmapFactory.decodeFile(path)
+            } catch (t: Throwable) {
+                null
+            }
+        }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text("发送图片", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(16.dp))
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(Color(0xFFEEEEEE)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("图片读不出来", color = Color.Gray)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = caption,
+            onValueChange = onCaptionChange,
+            label = { Text("说明（可空）") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                Text("取消")
+            }
+            Button(onClick = onSend, modifier = Modifier.weight(1f)) {
+                Text("发送")
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageBubble(msg: MsgItem, isGroup: Boolean) {
+    val outgoing = msg.outgoing
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
+    ) {
+        Column(
+            modifier = Modifier
+                .background(
+                    if (outgoing) Color(0xFFD8EDCB) else Color(0xFFF1F1F1),
+                    RoundedCornerShape(12.dp)
+                )
+                .padding(horizontal = 10.dp, vertical = 7.dp)
+        ) {
+            if (isGroup && !outgoing && msg.senderName.isNotEmpty()) {
+                Text(
+                    msg.senderName,
+                    color = Color(0xFF5B7C99),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            when (msg.kind) {
+                MsgKind.TEXT -> Text(msg.text, fontSize = 15.sp)
+                MsgKind.PHOTO -> {
+                    PhotoBubbleContent(msg)
+                    if (msg.text.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(msg.text, fontSize = 15.sp)
+                    }
+                }
+                MsgKind.OTHER -> Text(
+                    "[消息]",
+                    color = Color.Gray,
+                    fontSize = 14.sp
+                )
+            }
+            Row {
+                Text(formatMsgTime(msg.dateSeconds), color = Color.Gray, fontSize = 11.sp)
+                when (msg.sendingState) {
+                    "pending" -> Text(
+                        "  发送中…",
+                        color = Color.Gray,
+                        fontSize = 11.sp
+                    )
+                    "failed" -> Text(
+                        "  发送失败",
+                        color = Color(0xFFC62828),
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhotoBubbleContent(msg: MsgItem) {
+    val path = msg.photoPath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                try {
+                    BitmapFactory.decodeFile(path)
+                } catch (t: Throwable) {
+                    null
+                }
+            }
+        }
+    }
+    val ratio = if (msg.photoWidth > 0 && msg.photoHeight > 0) {
+        msg.photoHeight.toFloat() / msg.photoWidth.toFloat()
+    } else {
+        0.75f
+    }
+    val heightDp = (220f * ratio).coerceIn(110f, 300f)
+    val bmp = bitmap
+    if (bmp != null) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(width = 220.dp, height = heightDp.dp)
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .size(width = 220.dp, height = heightDp.dp)
+                .background(Color(0xFFE0E0E0)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("图片加载中…", color = Color.Gray, fontSize = 13.sp)
         }
     }
 }
