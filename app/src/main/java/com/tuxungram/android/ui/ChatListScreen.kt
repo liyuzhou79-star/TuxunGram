@@ -197,7 +197,8 @@ fun ChatListScreen(
     onOpenChatLocated: (Long, Long) -> Unit,
     onOpenArchive: () -> Unit,
     onOpenCreate: () -> Unit,
-    onOpenStory: (Long) -> Unit
+    onOpenStory: (Long) -> Unit,
+    onOpenContacts: () -> Unit
 ) {
     val chats by ChatStore.chats.collectAsState()
     val allLoaded by ChatStore.allLoaded.collectAsState()
@@ -266,6 +267,9 @@ fun ChatListScreen(
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onOpenCreate) {
                 Icon(Icons.Filled.Add, contentDescription = "新建群组或频道")
+            }
+            TextButton(onClick = onOpenContacts) {
+                Text("通讯录")
             }
             TextButton(onClick = onOpenArchive) {
                 Text("归档")

@@ -5,18 +5,26 @@ import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-/** One address-book contact, flattened from getUser. */
+/** One address-book contact, flattened from getUser.
+ *  [statusText] is the presence line (userStatus* in
+ *  td_api.tl, flattened by [ContactsStore.statusOf]);
+ *  [isOnline] drives its accent color. */
 data class ContactEntry(
     val userId: Long,
     val name: String,
-    val username: String
+    val username: String,
+    val statusText: String = "",
+    val isOnline: Boolean = false
 )
 
 /**
  * The Telegram address book: getContacts once per process after
  * login (verified in td_api.tl), then a getUser per contact id
  * for display data. Powers the contacts section of global
- * search; a standalone contacts page can reuse this later.
+ * search and, since v0.9.1 (J4), the standalone contacts page
+ * (letter groups, search, presence). Presence stays current
+ * through updateUser: TDLib pushes the full user object when a
+ * status flips, and known contacts are re-flattened from it.
  */
 object ContactsStore {
     private val _contacts = MutableStateFlow<List<ContactEntry>>(emptyList())
@@ -27,7 +35,28 @@ object ContactsStore {
     @Volatile
     private var loaded = false
 
+    @Volatile
+    private var attached = false
+
+    private fun attach() {
+        if (attached) return
+        attached = true
+        TdRepository.addUpdateListener { update ->
+            if (update.optString("@type") != "updateUser") {
+                return@addUpdateListener
+            }
+            val user = update.optJSONObject("user")
+                ?: return@addUpdateListener
+            val userId = user.optLong("id")
+            if (!byId.containsKey(userId)) return@addUpdateListener
+            val entry = entryFromUser(user) ?: return@addUpdateListener
+            byId[userId] = entry
+            publish()
+        }
+    }
+
     fun loadContacts() {
+        attach()
         if (loaded) return
         loaded = true
         TdRepository.sendRaw(TdClient.request("getContacts")) { response ->
@@ -46,16 +75,85 @@ object ContactsStore {
         val query = TdClient.request("getUser").apply { put("user_id", userId) }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) return@sendRaw
-            val first = response.optString("first_name")
-            val last = response.optString("last_name")
-            val name = listOf(first, last).filter { it.isNotEmpty() }
-                .joinToString(" ")
-            val usernames = response.optJSONObject("usernames")
-            val username = usernames?.optJSONArray("active_usernames")
-                ?.optString(0) ?: ""
-            if (name.isEmpty() && username.isEmpty()) return@sendRaw
-            byId[userId] = ContactEntry(userId, name, username)
+            val entry = entryFromUser(response) ?: return@sendRaw
+            byId[userId] = entry
             publish()
+        }
+    }
+
+    /** Flatten a full user object (from getUser or updateUser)
+     *  into a contact row; null when it carries neither a name
+     *  nor a username worth listing. */
+    private fun entryFromUser(user: JSONObject): ContactEntry? {
+        val userId = user.optLong("id")
+        val first = user.optString("first_name")
+        val last = user.optString("last_name")
+        val name = listOf(first, last).filter { it.isNotEmpty() }
+            .joinToString(" ")
+        val usernames = user.optJSONObject("usernames")
+        val username = usernames?.optJSONArray("active_usernames")
+            ?.optString(0) ?: ""
+        if (name.isEmpty() && username.isEmpty()) return null
+        val (statusText, online) = statusOf(user.optJSONObject("status"))
+        return ContactEntry(userId, name, username, statusText, online)
+    }
+
+    /** Presence line from a userStatus object (types verified
+     *  in td_api.tl: userStatusOnline{expires}, userStatus
+     *  Offline{was_online}, userStatusRecently / LastWeek /
+     *  LastMonth, userStatusEmpty). The exact last-seen time is
+     *  only exposed in the Offline case; the rest are the
+     *  coarse buckets the user's own privacy settings allow. */
+    private fun statusOf(status: JSONObject?): Pair<String, Boolean> {
+        if (status == null) return "" to false
+        return when (status.optString("@type")) {
+            "userStatusOnline" -> "在线" to true
+            "userStatusOffline" -> {
+                val wasOnline = status.optInt("was_online", 0)
+                val text = if (wasOnline > 0) {
+                    "上次在线 ${lastSeenText(wasOnline)}"
+                } else {
+                    "上次在线很久以前"
+                }
+                text to false
+            }
+            "userStatusRecently" -> "最近来过" to false
+            "userStatusLastWeek" -> "一周内来过" to false
+            "userStatusLastMonth" -> "一个月内来过" to false
+            else -> "" to false
+        }
+    }
+
+    private fun lastSeenText(wasOnlineSeconds: Int): String {
+        val then = java.util.Calendar.getInstance().apply {
+            timeInMillis = wasOnlineSeconds * 1000L
+        }
+        val now = java.util.Calendar.getInstance()
+        val time = java.text.SimpleDateFormat(
+            "HH:mm", java.util.Locale.getDefault()
+        ).format(then.time)
+        val sameDay = now.get(java.util.Calendar.YEAR) ==
+            then.get(java.util.Calendar.YEAR) &&
+            now.get(java.util.Calendar.DAY_OF_YEAR) ==
+            then.get(java.util.Calendar.DAY_OF_YEAR)
+        val yesterday = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.DAY_OF_YEAR, -1)
+        }
+        val isYesterday = yesterday.get(java.util.Calendar.YEAR) ==
+            then.get(java.util.Calendar.YEAR) &&
+            yesterday.get(java.util.Calendar.DAY_OF_YEAR) ==
+            then.get(java.util.Calendar.DAY_OF_YEAR)
+        return when {
+            sameDay -> time
+            isYesterday -> "昨天 $time"
+            now.get(java.util.Calendar.YEAR) ==
+                then.get(java.util.Calendar.YEAR) ->
+                java.text.SimpleDateFormat(
+                    "M月d日", java.util.Locale.getDefault()
+                ).format(then.time)
+            else -> java.text.SimpleDateFormat(
+                "yyyy年M月d日", java.util.Locale.getDefault()
+            ).format(then.time)
         }
     }
 

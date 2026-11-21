@@ -108,6 +108,7 @@ import kotlinx.coroutines.delay
 
 import com.tuxungram.android.ui.ArchiveScreen
 import com.tuxungram.android.ui.ChatListScreen
+import com.tuxungram.android.ui.ContactsScreen
 import com.tuxungram.android.ui.LockScreen
 import com.tuxungram.android.ui.ChatScreen
 import com.tuxungram.android.ui.ClosedScreen
@@ -300,6 +301,7 @@ private fun ReadyHost() {
     var showSessions by remember { mutableStateOf(false) }
     var showStickerSets by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
+    var showContacts by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }
     var showCreate by remember { mutableStateOf(false) }
     var storyChatId by remember { mutableStateOf<Long?>(null) }
@@ -355,6 +357,13 @@ private fun ReadyHost() {
                 openChatId = it
             }
         )
+        showContacts -> ContactsScreen(
+            onBack = { showContacts = false },
+            onOpenChat = {
+                showContacts = false
+                openChatId = it
+            }
+        )
         profileChatId != null -> ProfileScreen(
             chatId = profileChatId!!,
             onBack = { profileChatId = null },
@@ -387,7 +396,8 @@ private fun ReadyHost() {
             },
             onOpenArchive = { showArchive = true },
             onOpenCreate = { showCreate = true },
-            onOpenStory = { storyChatId = it }
+            onOpenStory = { storyChatId = it },
+            onOpenContacts = { showContacts = true }
         )
         else -> ChatScreen(
             chatId = chatId,
