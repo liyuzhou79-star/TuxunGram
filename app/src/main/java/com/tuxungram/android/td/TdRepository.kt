@@ -184,7 +184,11 @@ object TdRepository {
             put("use_file_database", true)
             put("use_chat_info_database", true)
             put("use_message_database", true)
-            put("use_secret_chats", false)
+            // Secret chats are a shipped feature since v0.6.0
+            // (createNewSecretChat / getSecretChat in td_api.tl);
+            // with this off TDLib would not even accept incoming
+            // secret-chat requests.
+            put("use_secret_chats", true)
             put("api_id", ApiConfig.apiId)
             put("api_hash", ApiConfig.apiHash)
             put("system_language_code", Locale.getDefault().toLanguageTag())

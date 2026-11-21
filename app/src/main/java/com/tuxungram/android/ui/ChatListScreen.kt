@@ -618,6 +618,10 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (chat.isSecret) {
+                    Text("🔒", fontSize = 13.sp)
+                    Spacer(Modifier.width(4.dp))
+                }
                 Text(
                     chat.title,
                     fontWeight = FontWeight.SemiBold,

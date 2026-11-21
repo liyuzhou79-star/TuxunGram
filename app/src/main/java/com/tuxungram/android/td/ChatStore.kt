@@ -24,6 +24,9 @@ data class ChatItem(
     val isMarkedAsUnread: Boolean = false,
     val photoFileId: Int = 0,
     val photoPath: String? = null,
+    // End-to-end encrypted secret chat (chatTypeSecret); the
+    // list row and the chat screen mark it with a lock.
+    val isSecret: Boolean = false,
     // Reactions this chat allows, from chat.available_reactions
     // (verified in td_api.tl): null = all reactions allowed
     // (chatAvailableReactionsAll or unknown), empty = reactions
@@ -329,7 +332,8 @@ object ChatStore {
                 val chat = update.optJSONObject("chat") ?: return
                 cache[chat.optLong("id")] = chat
                 val type = chat.optJSONObject("type")
-                if (type?.optString("@type") == "chatTypePrivate") {
+                val typeName = type?.optString("@type")
+                if (typeName == "chatTypePrivate" || typeName == "chatTypeSecret") {
                     val userId = type.optLong("user_id")
                     chatIdByUserId[userId] = chat.optLong("id")
                     fetchUserPhoto(chat.optLong("id"), userId)
@@ -528,6 +532,7 @@ object ChatStore {
             canSendPhotos = permissions?.optBoolean("can_send_photos", true) ?: true,
             order = order,
             lastMessageId = last?.optLong("id", 0L) ?: 0L,
+            isSecret = typeName == "chatTypeSecret",
             isMarkedAsUnread = chat.optBoolean("is_marked_as_unread"),
             photoFileId = avatarFileId(chat),
             photoPath = avatarFileId(chat).let { id ->

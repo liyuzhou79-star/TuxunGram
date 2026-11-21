@@ -25,7 +25,15 @@ data class ProfileUi(
     val infoLines: List<String>,
     val members: List<MemberEntry>,
     val canGetMembers: Boolean,
-    val membersExhausted: Boolean
+    val membersExhausted: Boolean,
+    /** The other user's id for private and secret chats
+     *  (0 otherwise); drives the "start secret chat" entry. */
+    val userId: Long = 0L,
+    /** True when this profile belongs to a secret chat. */
+    val isSecretChat: Boolean = false,
+    /** chat.message_auto_delete_time — in a secret chat this
+     *  is the self-destruct timer (v0.6.0, E1). */
+    val autoDeleteSeconds: Int = 0
 )
 
 /**
@@ -44,6 +52,9 @@ object ProfileStore {
     private val nameFetchPending = ConcurrentHashMap.newKeySet<Long>()
 
     private var currentChatId = 0L
+    private var currentUserId = 0L
+    private var currentIsSecret = false
+    private var currentAutoDelete = 0
     private var supergroupId = 0L
     private var memberOffset = 0
     private var membersLoading = false
@@ -51,6 +62,9 @@ object ProfileStore {
 
     fun load(chatId: Long) {
         currentChatId = chatId
+        currentUserId = 0L
+        currentIsSecret = false
+        currentAutoDelete = 0
         supergroupId = 0L
         memberOffset = 0
         membersLoading = false
@@ -60,9 +74,14 @@ object ProfileStore {
         TdRepository.sendRaw(query) { chat ->
             if (TdClient.isError(chat) || currentChatId != chatId) return@sendRaw
             val title = chat.optString("title")
+            currentAutoDelete = chat.optInt("message_auto_delete_time")
             val type = chat.optJSONObject("type") ?: return@sendRaw
             when (type.optString("@type")) {
                 "chatTypePrivate" -> loadUserProfile(chatId, title, type.optLong("user_id"))
+                "chatTypeSecret" -> loadUserProfile(
+                    chatId, title, type.optLong("user_id"),
+                    kindLabel = "秘密聊天", isSecret = true
+                )
                 "chatTypeBasicGroup" ->
                     loadBasicGroupProfile(chatId, title, type.optLong("basic_group_id"))
                 "chatTypeSupergroup" -> loadSupergroupProfile(
@@ -90,11 +109,22 @@ object ProfileStore {
         if (currentChatId != chatId) return
         _profile.value = ProfileUi(
             chatId, title, kindLabel, description, infoLines,
-            ArrayList(memberList), canGetMembers, membersExhausted
+            ArrayList(memberList), canGetMembers, membersExhausted,
+            userId = currentUserId,
+            isSecretChat = currentIsSecret,
+            autoDeleteSeconds = currentAutoDelete
         )
     }
 
-    private fun loadUserProfile(chatId: Long, title: String, userId: Long) {
+    private fun loadUserProfile(
+        chatId: Long,
+        title: String,
+        userId: Long,
+        kindLabel: String = "私聊",
+        isSecret: Boolean = false
+    ) {
+        currentUserId = userId
+        currentIsSecret = isSecret
         var username = ""
         var bio = ""
         var commonGroups = 0
@@ -106,7 +136,7 @@ object ProfileStore {
             if (username.isNotEmpty()) lines.add("@$username")
             if (commonGroups > 0) lines.add("共同群组 $commonGroups 个")
             publish(
-                chatId, title, "私聊", bio, lines,
+                chatId, title, kindLabel, bio, lines,
                 canGetMembers = false, membersExhausted = true
             )
         }

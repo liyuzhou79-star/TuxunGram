@@ -89,6 +89,7 @@ import com.tuxungram.android.td.Notifier
 import com.tuxungram.android.td.PollUi
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
+import com.tuxungram.android.td.SecretChatStore
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import androidx.compose.foundation.horizontalScroll
@@ -161,6 +162,12 @@ fun ChatScreen(
     val chats by ChatStore.chats.collectAsState()
     val adminCaps by AdminStore.caps.collectAsState()
     val chat = chats.firstOrNull { it.id == chatId }
+    // Secret-chat state (v0.6.0, E1): drives the encryption
+    // banner under the top bar.
+    val secretInfo by SecretChatStore.info.collectAsState()
+    LaunchedEffect(chatId, chat?.isSecret) {
+        if (chat?.isSecret == true) SecretChatStore.loadForChat(chatId)
+    }
     val messages by MessageStore.messages.collectAsState()
     val sendError by MessageStore.sendError.collectAsState()
     var input by remember { mutableStateOf("") }
@@ -337,10 +344,33 @@ fun ChatScreen(
                 Spacer(Modifier.width(6.dp))
                 Text("频道", color = Color.Gray, fontSize = 12.sp)
             }
+            if (chat?.isSecret == true) {
+                Spacer(Modifier.width(6.dp))
+                Text("🔒 秘密聊天", color = Color.Gray, fontSize = 12.sp)
+            }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { chatSearchOpen = !chatSearchOpen }) {
                 Icon(Icons.Filled.Search, contentDescription = "搜索聊天记录")
             }
+        }
+
+        if (chat?.isSecret == true) {
+            val info = if (secretInfo?.chatId == chatId) secretInfo else null
+            Text(
+                when (info?.state) {
+                    "pending" ->
+                        "🔒 端到端加密 · 正在等对方上线完成密钥交换，对方上线前消息可能发不出去"
+                    "closed" -> "🔒 这个秘密聊天已关闭，不能再发消息"
+                    else ->
+                        "🔒 端到端加密 · 消息只保存在这台设备上，不同步到云端"
+                },
+                color = Color.Gray,
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 16.dp, vertical = 5.dp)
+            )
         }
 
         if (chatSearchOpen) {
@@ -506,7 +536,14 @@ fun ChatScreen(
                     MessageBubble(
                         msg,
                         isGroup = chat?.isGroup == true,
-                        allowedReactions = chat?.allowedReactions,
+                        // Secret chats have no reactions; an
+                        // empty list hides the picker entry.
+                        allowedReactions =
+                            if (chat?.isSecret == true) {
+                                emptyList()
+                            } else {
+                                chat?.allowedReactions
+                            },
                         onForward = onForward,
                         chatId = chatId,
                         canDeleteAny = adminCaps.canDeleteAny

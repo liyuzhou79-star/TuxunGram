@@ -44,12 +44,17 @@ import com.tuxungram.android.td.AdminStore
 import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MemberEntry
 import com.tuxungram.android.td.ProfileStore
+import com.tuxungram.android.td.SecretChatStore
 
 /** Profile page (B5): user / group / channel info plus the
  *  member list where the chat allows reading it. Opened by
  *  tapping the chat screen's top bar. */
 @Composable
-fun ProfileScreen(chatId: Long, onBack: () -> Unit) {
+fun ProfileScreen(
+    chatId: Long,
+    onBack: () -> Unit,
+    onOpenSecretChat: (Long) -> Unit = {}
+) {
     BackHandler { onBack() }
     val profile by ProfileStore.profile.collectAsState()
     val chatItem = ChatStore.itemOf(chatId)
@@ -60,9 +65,17 @@ fun ProfileScreen(chatId: Long, onBack: () -> Unit) {
     var titleEditOpen by remember { mutableStateOf(false) }
     var descEditOpen by remember { mutableStateOf(false) }
     var memberAction by remember { mutableStateOf<MemberEntry?>(null) }
+    // Secret chats (v0.6.0, E1): encryption state + fingerprint.
+    val secretInfo by SecretChatStore.info.collectAsState()
+    val secretNotice by SecretChatStore.notice.collectAsState()
+    var closeSecretConfirm by remember { mutableStateOf(false) }
     LaunchedEffect(chatId) {
         ProfileStore.load(chatId)
         AdminStore.loadCaps(chatId)
+    }
+    val isSecretProfile = profile?.chatId == chatId && profile?.isSecretChat == true
+    LaunchedEffect(isSecretProfile, chatId) {
+        if (isSecretProfile) SecretChatStore.loadForChat(chatId)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -138,6 +151,123 @@ fun ProfileScreen(chatId: Long, onBack: () -> Unit) {
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(p.description, fontSize = 15.sp)
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
+            if (p.userId != 0L && !p.isSecretChat) {
+                item(key = "secret_start") {
+                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                        Button(
+                            onClick = {
+                                SecretChatStore.create(p.userId) { newChatId ->
+                                    onOpenSecretChat(newChatId)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("🔒 发起秘密聊天")
+                        }
+                        Text(
+                            "端到端加密，只有你们两台设备能看到内容。",
+                            fontSize = 12.sp, color = Color.Gray,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
+            if (p.isSecretChat) {
+                item(key = "encryption") {
+                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                        Text(
+                            "加密",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.Gray
+                        )
+                        val info =
+                            if (secretInfo?.chatId == chatId) secretInfo else null
+                        Text(
+                            "🔒 端到端加密",
+                            fontSize = 15.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Text(
+                            when (info?.state) {
+                                "ready" -> "状态：已建立，可以正常收发"
+                                "pending" -> "状态：等待对方上线完成密钥交换"
+                                "closed" -> "状态：已关闭"
+                                else -> "状态：读取中…"
+                            },
+                            fontSize = 13.sp, color = Color.Gray
+                        )
+                        if (info != null && info.keyHashHex.isNotEmpty()) {
+                            Text(
+                                "密钥指纹（和对方 App 里显示的对一下，一致才说明没有中间人）：",
+                                fontSize = 12.sp, color = Color.Gray,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            Text(
+                                info.keyHashHex.chunked(4)
+                                    .joinToString(" "),
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                        if (info != null && info.layer > 0) {
+                            Text(
+                                "协议层：layer ${info.layer}",
+                                fontSize = 12.sp, color = Color.Gray,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "阅后即焚：${SecretChatStore.ttlLabel(p.autoDeleteSeconds)}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row {
+                            for (option in SecretChatStore.TTL_OPTIONS) {
+                                TextButton(
+                                    onClick = {
+                                        SecretChatStore.setSelfDestruct(
+                                            chatId, option
+                                        )
+                                    },
+                                    enabled = p.autoDeleteSeconds != option
+                                ) {
+                                    Text(
+                                        (if (p.autoDeleteSeconds == option) "● " else "○ ") +
+                                            SecretChatStore.ttlLabel(option),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                        if (secretNotice != null) {
+                            Text(
+                                secretNotice!!,
+                                fontSize = 13.sp, color = Color.Gray
+                            )
+                        }
+                        Text(
+                            "一句实话：秘密聊天的消息只存在于你们两台设备上，" +
+                                "不同步到云端、不会出现在你的其他设备上，" +
+                                "换手机或卸载后也找不回来。这是秘密聊天协议" +
+                                "本身的设计，不是 App 的毛病。",
+                            fontSize = 12.sp, color = Color.Gray,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                        if (info?.state != "closed") {
+                            TextButton(onClick = { closeSecretConfirm = true }) {
+                                Text(
+                                    "关闭秘密聊天",
+                                    color = Color(0xFFC62828)
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(16.dp))
                     }
                 }
@@ -366,6 +496,31 @@ fun ProfileScreen(chatId: Long, onBack: () -> Unit) {
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { memberAction = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+    if (closeSecretConfirm) {
+        AlertDialog(
+            onDismissRequest = { closeSecretConfirm = false },
+            title = { Text("关闭秘密聊天？") },
+            text = {
+                Text("关闭后这个秘密聊天就结束了，双方都不能再往里面发消息。聊天记录只留在这台设备上。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    closeSecretConfirm = false
+                    val info = secretInfo
+                    if (info != null && info.chatId == chatId) {
+                        SecretChatStore.close(chatId, info.secretChatId)
+                    }
+                }) {
+                    Text("关闭", color = Color(0xFFC62828))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { closeSecretConfirm = false }) {
                     Text("取消")
                 }
             }

@@ -281,7 +281,11 @@ private fun ReadyHost() {
         )
         profileChatId != null -> ProfileScreen(
             chatId = profileChatId!!,
-            onBack = { profileChatId = null }
+            onBack = { profileChatId = null },
+            onOpenSecretChat = { newChatId ->
+                profileChatId = null
+                openChatId = newChatId
+            }
         )
         showCreate -> CreateChatScreen(
             onBack = { showCreate = false },
