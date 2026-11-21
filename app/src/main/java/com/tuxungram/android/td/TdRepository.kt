@@ -42,6 +42,11 @@ object TdRepository {
     @Volatile
     private var client: TdClient? = null
 
+    /** setTdlibParameters may only be sent once per client instance:
+     *  both the pushed updateAuthorizationState and the activation
+     *  probe below can report WaitTdlibParameters for the same client. */
+    private val parametersSent = java.util.concurrent.atomic.AtomicBoolean(false)
+
     @Volatile
     private var appContext: Context? = null
 
@@ -70,6 +75,26 @@ object TdRepository {
         }
         client = c
         c.start()
+        // A TDLib client created via td_create_client_id stays INACTIVE
+        // until the first request is sent to it: it never emits the
+        // initial updateAuthorizationState on its own. Waiting for that
+        // update before sending anything deadlocks the app on the
+        // splash screen (shipped in v0.1.0, hung forever at
+        // "connecting"). Probe with getAuthorizationState to activate
+        // the client, and feed its response through the same state
+        // handling as a pushed update.
+        c.send(TdClient.request("getAuthorizationState")) { response ->
+            if (TdClient.isError(response)) {
+                _lastError.value =
+                    response.optInt("code") to response.optString("message")
+            } else {
+                handleUpdate(
+                    JSONObject()
+                        .put("@type", "updateAuthorizationState")
+                        .put("authorization_state", response)
+                )
+            }
+        }
     }
 
     private fun handleUpdate(update: JSONObject) {
@@ -96,6 +121,7 @@ object TdRepository {
     }
 
     private fun sendParameters() {
+        if (!parametersSent.compareAndSet(false, true)) return
         val ctx = appContext ?: return
         val dbDir = File(ctx.filesDir, "tdlib").apply { mkdirs() }
         val filesDir = File(ctx.filesDir, "tdlib-files").apply { mkdirs() }
@@ -156,6 +182,7 @@ object TdRepository {
     fun restart(context: Context) {
         client?.close()
         client = null
+        parametersSent.set(false)
         _authState.value = AuthState.WaitTdlibParameters
         start(context)
     }

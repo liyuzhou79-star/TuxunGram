@@ -166,6 +166,9 @@ private fun SplashScreen() {
         CircularProgressIndicator()
         Spacer(Modifier.height(12.dp))
         Text("正在连接…", color = Color.Gray)
+        // The splash must surface errors too: in v0.1.0 a rejected
+        // setTdlibParameters would have hung here silently forever.
+        ErrorText()
         if (slow) {
             Spacer(Modifier.height(8.dp))
             Text(
