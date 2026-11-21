@@ -97,6 +97,7 @@ import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.SecretChatStore
 import com.tuxungram.android.td.TdRepository
+import com.tuxungram.android.td.ThreadStore
 import com.tuxungram.android.td.UiSettings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -172,7 +173,8 @@ fun ChatScreen(
     chatId: Long,
     onBack: () -> Unit,
     onForward: (List<MsgItem>) -> Unit,
-    onOpenProfile: () -> Unit
+    onOpenProfile: () -> Unit,
+    onOpenThread: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
     val chats by ChatStore.chats.collectAsState()
@@ -183,6 +185,13 @@ fun ChatScreen(
     val secretInfo by SecretChatStore.info.collectAsState()
     LaunchedEffect(chatId, chat?.isSecret) {
         if (chat?.isSecret == true) SecretChatStore.loadForChat(chatId)
+    }
+    // Comment threads (v0.8.0, G1): a channel's posts get a
+    // 评论 entry only when the channel has a linked discussion
+    // group; ThreadStore resolves it once per channel.
+    val linkedChatId by ThreadStore.linkedChatId.collectAsState()
+    LaunchedEffect(chatId, chat?.isChannel) {
+        if (chat?.isChannel == true) ThreadStore.loadLinkedChat(chatId)
     }
     val messages by MessageStore.messages.collectAsState()
     val sendError by MessageStore.sendError.collectAsState()
@@ -711,7 +720,10 @@ fun ChatScreen(
                         onEnterSelection = { m ->
                             selectedIds = setOf(m.id)
                         },
-                        onOpenPhoto = { m -> viewerId = m.id }
+                        onOpenPhoto = { m -> viewerId = m.id },
+                        canComment = chat?.isChannel == true &&
+                            linkedChatId != 0L && msg.isChannelPost,
+                        onOpenThread = { m -> onOpenThread(m.id) }
                     )
                 }
             }
@@ -1232,6 +1244,7 @@ fun InlineButtonGrid(msg: MsgItem, chatId: Long) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubble(
     msg: MsgItem,
@@ -1244,7 +1257,9 @@ fun MessageBubble(
     selected: Boolean = false,
     onToggleSelect: (MsgItem) -> Unit = {},
     onEnterSelection: (MsgItem) -> Unit = {},
-    onOpenPhoto: (MsgItem) -> Unit = {}
+    onOpenPhoto: (MsgItem) -> Unit = {},
+    canComment: Boolean = false,
+    onOpenThread: (MsgItem) -> Unit = {}
 ) {
     val outgoing = msg.outgoing
     val context = LocalContext.current
@@ -1551,6 +1566,15 @@ fun MessageBubble(
                         MessageStore.setReplyTarget(msg)
                     }
                 )
+                if (canComment) {
+                    DropdownMenuItem(
+                        text = { Text("评论") },
+                        onClick = {
+                            menuOpen = false
+                            onOpenThread(msg)
+                        }
+                    )
+                }
                 if (msg.text.isNotEmpty()) {
                     DropdownMenuItem(
                         text = { Text("复制") },
@@ -1834,7 +1858,7 @@ fun PhotoBubbleContent(msg: MsgItem) {
 /** Sticker image (webp decoded straight from the TDLib file);
  *  shown at a fixed chat-friendly size, no bubble chrome. */
 @Composable
-private fun StickerBubbleContent(msg: MsgItem) {
+fun StickerBubbleContent(msg: MsgItem) {
     val path = msg.filePath
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path
@@ -1876,7 +1900,7 @@ private fun StickerBubbleContent(msg: MsgItem) {
  *  mp4 via MediaMetadataRetriever, with a GIF tag; tapping the
  *  bubble (handled by the generic file tap) opens the player. */
 @Composable
-private fun AnimationBubbleContent(msg: MsgItem) {
+fun AnimationBubbleContent(msg: MsgItem) {
     val path = msg.filePath
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path
@@ -2051,7 +2075,7 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
  *  link_preview object TDLib ships with the message. Tapping
  *  opens the link in the browser. */
 @Composable
-private fun LinkPreviewCard(msg: MsgItem) {
+fun LinkPreviewCard(msg: MsgItem) {
     val context = LocalContext.current
     val photoPath = msg.lpPhotoPath
     val bitmap by produceState<android.graphics.Bitmap?>(

@@ -122,6 +122,7 @@ import com.tuxungram.android.ui.SessionsScreen
 import com.tuxungram.android.ui.SettingsScreen
 import com.tuxungram.android.ui.SplashScreen
 import com.tuxungram.android.ui.StoryViewerScreen
+import com.tuxungram.android.ui.ThreadScreen
 import com.tuxungram.android.ui.TransitionScreen
 
 // FragmentActivity (not plain ComponentActivity) because the
@@ -304,8 +305,11 @@ private fun ReadyHost() {
     // to. A list since v0.7.0 — multi-select forwards in one call.
     var forwardReq by remember { mutableStateOf<Pair<Long, List<Long>>?>(null) }
     var forwardReturnTo by remember { mutableStateOf<Long?>(null) }
+    // Comment thread (v0.8.0, G1): (channel chat id, post id).
+    var threadReq by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     val chatId = openChatId
     val req = forwardReq
+    val thread = threadReq
     // The story viewer bleeds full-screen behind the bars and
     // pads its own header (Phase D, D2); everything else gets
     // the standard system-bars safe distance.
@@ -322,6 +326,11 @@ private fun ReadyHost() {
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
     when {
+        thread != null -> ThreadScreen(
+            sourceChatId = thread.first,
+            postId = thread.second,
+            onBack = { threadReq = null }
+        )
         showSessions -> SessionsScreen(onBack = { showSessions = false })
         showSettings -> SettingsScreen(
             onBack = { showSettings = false },
@@ -379,7 +388,8 @@ private fun ReadyHost() {
                 forwardReq = chatId to msgs.map { it.id }
                 openChatId = null
             },
-            onOpenProfile = { profileChatId = chatId }
+            onOpenProfile = { profileChatId = chatId },
+            onOpenThread = { postId -> threadReq = chatId to postId }
         )
     }
     }
