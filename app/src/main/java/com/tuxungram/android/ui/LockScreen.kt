@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.tuxungram.android.td.AppLock
+import kotlinx.coroutines.delay
 
 /**
  * Lock screen (v0.6.0, E2): numeric PIN pad with dot
@@ -52,6 +53,19 @@ fun LockScreen() {
     var entered by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     val pinLen = remember { AppLock.pinLength() }
+    // Wrong-PIN lockout (audit fix A3): while AppLock says
+    // entry is throttled, the pad ignores presses and the
+    // remaining wait is shown, ticking down.
+    val lockoutUntil by AppLock.lockoutUntilMs.collectAsState()
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(lockoutUntil) {
+        while (AppLock.lockoutRemainingMs() > 0L) {
+            nowMs = System.currentTimeMillis()
+            delay(500)
+        }
+        nowMs = System.currentTimeMillis()
+    }
+    val lockoutLeftMs = maxOf(0L, lockoutUntil - nowMs)
 
     fun tryBiometric() {
         val activity = context as? FragmentActivity ?: return
@@ -90,6 +104,7 @@ fun LockScreen() {
     }
 
     fun press(digit: String) {
+        if (lockoutLeftMs > 0L) return
         if (entered.length >= 6) return
         entered += digit
         error = null
@@ -97,7 +112,11 @@ fun LockScreen() {
             if (AppLock.verifyPin(entered)) {
                 AppLock.unlock()
             } else {
-                error = "密码不对，再试一次"
+                error = if (AppLock.lockoutRemainingMs() > 0L) {
+                    "试错太多，先等一会儿再试"
+                } else {
+                    "密码不对，再试一次"
+                }
                 entered = ""
             }
         }
@@ -137,9 +156,14 @@ fun LockScreen() {
             }
         }
         Box(modifier = Modifier.height(28.dp)) {
-            if (error != null) {
+            val shownError = if (lockoutLeftMs > 0L) {
+                "试错太多，请等 ${(lockoutLeftMs + 999) / 1000} 秒再试"
+            } else {
+                error
+            }
+            if (shownError != null) {
                 Text(
-                    error!!,
+                    shownError,
                     color = Color(0xFFC62828),
                     fontSize = 13.sp,
                     modifier = Modifier.padding(top = 6.dp)

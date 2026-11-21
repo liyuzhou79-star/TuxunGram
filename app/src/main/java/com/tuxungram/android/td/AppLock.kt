@@ -25,6 +25,15 @@ object AppLock {
     private const val KEY_LEN = "pin_len"
     private const val KEY_BIOMETRIC = "biometric"
     private const val KEY_AUTO_LOCK = "auto_lock_minutes"
+    private const val KEY_FAIL_COUNT = "fail_count"
+    private const val KEY_LOCKOUT_UNTIL = "lockout_until"
+
+    /** Wrong-PIN throttle (audit fix A3): this many consecutive
+     *  failures are free; past that, each failure locks entry
+     *  for 30 s, doubling per further failure, capped at
+     *  5 minutes. Without it a 4-digit PIN is only 10,000 fast
+     *  taps away from anyone holding the phone. */
+    private const val FREE_ATTEMPTS = 5
 
     /** Auto-lock choices in minutes; -1 = never re-lock while
      *  the process lives (a cold start still locks). */
@@ -50,6 +59,11 @@ object AppLock {
     private val _locked = MutableStateFlow(false)
     val locked: StateFlow<Boolean> = _locked
 
+    /** Epoch ms until which PIN entry is throttled after too
+     *  many wrong attempts (0 = not throttled). */
+    private val _lockoutUntilMs = MutableStateFlow(0L)
+    val lockoutUntilMs: StateFlow<Long> = _lockoutUntilMs
+
     @Volatile
     private var appContext: Context? = null
 
@@ -64,6 +78,9 @@ object AppLock {
         val saved = prefs.getInt(KEY_AUTO_LOCK, 1)
         _autoLockMinutes.value =
             if (saved in AUTO_LOCK_OPTIONS) saved else 1
+        val until = prefs.getLong(KEY_LOCKOUT_UNTIL, 0L)
+        _lockoutUntilMs.value =
+            if (until > System.currentTimeMillis()) until else 0L
         // Cold start: a set PIN means the app starts locked.
         _locked.value = _pinSet.value
     }
@@ -80,15 +97,54 @@ object AppLock {
             .putString(KEY_SALT, saltHex)
             .putString(KEY_HASH, hash(saltHex, pin))
             .putInt(KEY_LEN, pin.length)
+            .putInt(KEY_FAIL_COUNT, 0)
+            .putLong(KEY_LOCKOUT_UNTIL, 0L)
             .apply()
+        _lockoutUntilMs.value = 0L
         _pinSet.value = true
+    }
+
+    /** Milliseconds left in the wrong-PIN lockout (0 = entry
+     *  allowed). While a lockout runs, verifyPin refuses even
+     *  the correct PIN — the wait is the point. */
+    fun lockoutRemainingMs(): Long {
+        val until = _lockoutUntilMs.value
+        return if (until > 0L) {
+            maxOf(0L, until - System.currentTimeMillis())
+        } else {
+            0L
+        }
     }
 
     fun verifyPin(pin: String): Boolean {
         val prefs = prefs()
         val salt = prefs.getString(KEY_SALT, null) ?: return false
         val expected = prefs.getString(KEY_HASH, null) ?: return false
-        return hash(salt, pin) == expected
+        if (lockoutRemainingMs() > 0L) return false
+        val ok = hash(salt, pin) == expected
+        if (ok) {
+            if (prefs.getInt(KEY_FAIL_COUNT, 0) != 0 ||
+                prefs.getLong(KEY_LOCKOUT_UNTIL, 0L) != 0L
+            ) {
+                prefs.edit()
+                    .putInt(KEY_FAIL_COUNT, 0)
+                    .putLong(KEY_LOCKOUT_UNTIL, 0L)
+                    .apply()
+                _lockoutUntilMs.value = 0L
+            }
+        } else {
+            val fails = prefs.getInt(KEY_FAIL_COUNT, 0) + 1
+            val editor = prefs.edit().putInt(KEY_FAIL_COUNT, fails)
+            if (fails >= FREE_ATTEMPTS) {
+                val over = minOf(fails - FREE_ATTEMPTS, 4)
+                val seconds = minOf(30L shl over, 300L)
+                val until = System.currentTimeMillis() + seconds * 1000L
+                editor.putLong(KEY_LOCKOUT_UNTIL, until)
+                _lockoutUntilMs.value = until
+            }
+            editor.apply()
+        }
+        return ok
     }
 
     /** Remove the PIN entirely (caller verifies the current
@@ -99,8 +155,11 @@ object AppLock {
             .remove(KEY_SALT)
             .remove(KEY_HASH)
             .remove(KEY_LEN)
+            .remove(KEY_FAIL_COUNT)
+            .remove(KEY_LOCKOUT_UNTIL)
             .putBoolean(KEY_BIOMETRIC, false)
             .apply()
+        _lockoutUntilMs.value = 0L
         _pinSet.value = false
         _biometricEnabled.value = false
         _locked.value = false
