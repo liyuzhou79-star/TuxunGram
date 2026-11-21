@@ -111,6 +111,45 @@ fun formatMsgTime(dateSeconds: Int): String {
     return java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(cal.time)
 }
 
+/** Day-separator label for the message list: 今天 / 昨天 /
+ *  M月d日 (with the year when it differs). */
+fun formatDayLabel(dateSeconds: Int): String {
+    if (dateSeconds <= 0) return ""
+    val cal = java.util.Calendar.getInstance().apply {
+        timeInMillis = dateSeconds * 1000L
+    }
+    val today = java.util.Calendar.getInstance()
+    fun sameDay(a: java.util.Calendar, b: java.util.Calendar) =
+        a.get(java.util.Calendar.YEAR) == b.get(java.util.Calendar.YEAR) &&
+            a.get(java.util.Calendar.DAY_OF_YEAR) ==
+            b.get(java.util.Calendar.DAY_OF_YEAR)
+    if (sameDay(cal, today)) return "今天"
+    today.add(java.util.Calendar.DAY_OF_YEAR, -1)
+    if (sameDay(cal, today)) return "昨天"
+    val pattern = if (
+        cal.get(java.util.Calendar.YEAR) ==
+        java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+    ) {
+        "M月d日"
+    } else {
+        "yyyy年M月d日"
+    }
+    return java.text.SimpleDateFormat(
+        pattern, java.util.Locale.getDefault()
+    ).format(cal.time)
+}
+
+/** Local day key (year * 1000 + day-of-year) for separator
+ *  computation. */
+fun dayKey(dateSeconds: Int): Int {
+    if (dateSeconds <= 0) return -1
+    val cal = java.util.Calendar.getInstance().apply {
+        timeInMillis = dateSeconds * 1000L
+    }
+    return cal.get(java.util.Calendar.YEAR) * 1000 +
+        cal.get(java.util.Calendar.DAY_OF_YEAR)
+}
+
 @Composable
 fun ChatScreen(
     chatId: Long,
@@ -428,15 +467,51 @@ fun ChatScreen(
                 .padding(horizontal = 12.dp)
                 .lazyListScrollbar(listState, reverse = true)
         ) {
+            // Date separators (details pass): the first message
+            // of each day gets a centered day chip above it.
+            val separatorIds = remember(messages) {
+                val set = HashSet<Long>()
+                var prevKey = Int.MIN_VALUE
+                for (m in messages) {
+                    val key = dayKey(m.dateSeconds)
+                    if (key != prevKey) {
+                        set.add(m.id)
+                        prevKey = key
+                    }
+                }
+                set
+            }
             items(items = messages.asReversed(), key = { it.id }) { msg ->
-                MessageBubble(
-                    msg,
-                    isGroup = chat?.isGroup == true,
-                    allowedReactions = chat?.allowedReactions,
-                    onForward = onForward,
-                    chatId = chatId,
-                    canDeleteAny = adminCaps.canDeleteAny
-                )
+                Column {
+                    if (msg.id in separatorIds) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                formatDayLabel(msg.dateSeconds),
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                modifier = Modifier
+                                    .background(
+                                        Color(0x99000000),
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                    MessageBubble(
+                        msg,
+                        isGroup = chat?.isGroup == true,
+                        allowedReactions = chat?.allowedReactions,
+                        onForward = onForward,
+                        chatId = chatId,
+                        canDeleteAny = adminCaps.canDeleteAny
+                    )
+                }
             }
         }
 

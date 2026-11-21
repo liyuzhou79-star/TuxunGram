@@ -71,6 +71,31 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.AuthState
+import com.tuxungram.android.td.ChatItem
+import com.tuxungram.android.td.ChatStore
+import com.tuxungram.android.td.MessageStore
+import com.tuxungram.android.td.MsgItem
+import com.tuxungram.android.td.MsgKind
+import com.tuxungram.android.td.ProxyConfig
+import com.tuxungram.android.td.ProxyStore
+import com.tuxungram.android.td.TdRepository
+import com.tuxungram.android.td.UiSettings
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+
 
 /**
  * Slim vertical scroll indicator drawn over a lazy list's right
@@ -132,31 +157,6 @@ fun Modifier.columnScrollbar(state: ScrollState): Modifier =
             cornerRadius = CornerRadius(width / 2, width / 2)
         )
     }
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.tuxungram.android.td.AuthState
-import com.tuxungram.android.td.ChatItem
-import com.tuxungram.android.td.ChatStore
-import com.tuxungram.android.td.MessageStore
-import com.tuxungram.android.td.MsgItem
-import com.tuxungram.android.td.MsgKind
-import com.tuxungram.android.td.ProxyConfig
-import com.tuxungram.android.td.ProxyStore
-import com.tuxungram.android.td.TdRepository
-import com.tuxungram.android.td.UiSettings
-import java.io.File
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.delay
-
 
 /** Translate a TDLib error into one plain sentence for the UI.
  *  Raw codes are never shown except the numeric code on the

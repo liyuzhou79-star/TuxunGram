@@ -35,6 +35,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -87,6 +88,7 @@ import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import androidx.compose.foundation.border
 import com.tuxungram.android.td.ContactsStore
+import com.tuxungram.android.td.FolderStore
 import com.tuxungram.android.td.SearchHit
 import com.tuxungram.android.td.SearchStore
 import com.tuxungram.android.td.StoryStore
@@ -281,30 +283,53 @@ fun ChatListScreen(
                 .padding(horizontal = 16.dp)
         )
         Spacer(Modifier.height(8.dp))
-        // Folder tabs (B7): shown only when the account actually
-        // has folders; selecting one swaps the list below to
-        // that folder's chats. View-only — no folder editor.
-        if (folders.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        // Folder tabs (B7 + editor): selecting one swaps the
+        // list below to that folder's chats; long-press opens
+        // the editor (rename / members / delete), and the
+        // trailing chip creates a new folder.
+        var folderEditTarget by remember { mutableStateOf<Int?>(null) }
+        var folderCreateOpen by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FolderChip(
+                label = "全部",
+                selected = selectedFolder == null,
+                onClick = { ChatStore.selectFolder(null) }
+            )
+            for (folder in folders) {
                 FolderChip(
-                    label = "全部",
-                    selected = selectedFolder == null,
-                    onClick = { ChatStore.selectFolder(null) }
+                    label = folder.name.ifEmpty { "文件夹" },
+                    selected = selectedFolder == folder.id,
+                    onClick = { ChatStore.selectFolder(folder.id) },
+                    onLongClick = { folderEditTarget = folder.id }
                 )
-                for (folder in folders) {
-                    FolderChip(
-                        label = folder.name.ifEmpty { "文件夹" },
-                        selected = selectedFolder == folder.id,
-                        onClick = { ChatStore.selectFolder(folder.id) }
-                    )
-                }
             }
+            FolderChip(
+                label = "＋ 新建",
+                selected = false,
+                onClick = { folderCreateOpen = true }
+            )
+        }
+        if (folderCreateOpen) {
+            FolderEditorDialog(
+                folderId = null,
+                initialName = "",
+                onDismiss = { folderCreateOpen = false }
+            )
+        }
+        val editTarget = folderEditTarget
+        if (editTarget != null) {
+            FolderEditorDialog(
+                folderId = editTarget,
+                initialName = folders.firstOrNull { it.id == editTarget }
+                    ?.name ?: "",
+                onDismiss = { folderEditTarget = null }
+            )
         }
         // First-sync banner: while TDLib is still pulling the
         // account's chats in, say so plainly — a half-filled list
@@ -771,7 +796,13 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
 
 /** One folder tab in the chat-list header row. */
 @Composable
-fun FolderChip(label: String, selected: Boolean, onClick: () -> Unit) {
+@OptIn(ExperimentalFoundationApi::class)
+fun FolderChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null
+) {
     Box(
         modifier = Modifier
             .padding(end = 8.dp)
@@ -783,7 +814,16 @@ fun FolderChip(label: String, selected: Boolean, onClick: () -> Unit) {
                 },
                 RoundedCornerShape(16.dp)
             )
-            .clickable { onClick() }
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = onClick,
+                        onLongClick = onLongClick
+                    )
+                } else {
+                    Modifier.clickable { onClick() }
+                }
+            )
             .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
         Text(
@@ -794,4 +834,160 @@ fun FolderChip(label: String, selected: Boolean, onClick: () -> Unit) {
             maxLines = 1
         )
     }
+}
+
+/**
+ * Folder editor (B7 completion): create a folder or edit an
+ * existing one — name plus the explicitly included chats.
+ * Filter-style rules (contacts/groups/… flags) are preserved
+ * on edit but not offered here; the dialog says so.
+ */
+@Composable
+fun FolderEditorDialog(
+    folderId: Int?,
+    initialName: String,
+    onDismiss: () -> Unit
+) {
+    val chats by ChatStore.chats.collectAsState()
+    var name by remember { mutableStateOf(initialName) }
+    var selected by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    LaunchedEffect(folderId) {
+        if (folderId != null) {
+            FolderStore.loadIncluded(folderId) { included ->
+                selected = included.toSet()
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = {
+            Text(if (folderId == null) "新建文件夹" else "编辑文件夹")
+        },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    placeholder = { Text("文件夹名字") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "勾选要放进这个文件夹的对话：",
+                    fontSize = 13.sp, color = Color.Gray
+                )
+                if (folderId != null) {
+                    Text(
+                        "按联系人/群组等规则自动包含的对话不在这里改，原样保留。",
+                        fontSize = 12.sp, color = Color.Gray
+                    )
+                }
+                val editorListState = rememberLazyListState()
+                LazyColumn(
+                    state = editorListState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(280.dp)
+                        .lazyListScrollbar(editorListState)
+                ) {
+                    items(items = chats, key = { it.id }) { chat ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selected = if (chat.id in selected) {
+                                        selected - chat.id
+                                    } else {
+                                        selected + chat.id
+                                    }
+                                }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Checkbox(
+                                checked = chat.id in selected,
+                                onCheckedChange = { checked ->
+                                    selected = if (checked) {
+                                        selected + chat.id
+                                    } else {
+                                        selected - chat.id
+                                    }
+                                }
+                            )
+                            Text(chat.title, fontSize = 14.sp, maxLines = 1)
+                        }
+                    }
+                }
+                if (error != null) {
+                    Text(
+                        error!!, color = Color(0xFFC62828),
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+                if (folderId != null) {
+                    TextButton(
+                        onClick = {
+                            if (!confirmDelete) {
+                                confirmDelete = true
+                            } else if (!busy) {
+                                busy = true
+                                FolderStore.delete(folderId) { failure ->
+                                    busy = false
+                                    if (failure == null) {
+                                        onDismiss()
+                                    } else {
+                                        error = failure
+                                    }
+                                }
+                            }
+                        }
+                    ) {
+                        Text(
+                            if (confirmDelete) "再点一次确认删除" else "删除文件夹",
+                            color = Color(0xFFC62828)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !busy && name.isNotBlank(),
+                onClick = {
+                    busy = true
+                    error = null
+                    val done: (String?) -> Unit = { failure ->
+                        busy = false
+                        if (failure == null) {
+                            onDismiss()
+                        } else {
+                            error = failure
+                        }
+                    }
+                    if (folderId == null) {
+                        FolderStore.create(name.trim(), selected.toList(), done)
+                    } else {
+                        FolderStore.save(
+                            folderId, name.trim(), selected.toList(), done
+                        )
+                    }
+                }
+            ) {
+                Text(if (folderId == null) "创建" else "保存")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                enabled = !busy,
+                onClick = onDismiss
+            ) { Text("取消") }
+        }
+    )
 }
