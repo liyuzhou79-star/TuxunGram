@@ -16,14 +16,34 @@ object UiSettings {
     private const val PREFS = "ui"
     private const val KEY_UNREAD_CAP = "unread_cap"
     private const val KEY_KEEP_ALIVE = "keep_alive"
+    private const val KEY_THEME_MODE = "theme_mode"
+    private const val KEY_SEED_INDEX = "seed_index"
 
     val UNREAD_CAPS = listOf(99, 999, 9999)
+
+    /** Theme modes: follow system / always light / always dark. */
+    const val THEME_SYSTEM = 0
+    const val THEME_LIGHT = 1
+    const val THEME_DARK = 2
+
+    /** Accent seed colors (Batch 3, C3): Telegram blue, green,
+     *  purple, orange — stored as ARGB longs. */
+    val SEED_COLORS = listOf(
+        0xFF2AABEE, 0xFF43A047, 0xFF7E57C2, 0xFFFB8C00
+    )
+    val SEED_NAMES = listOf("电报蓝", "绿", "紫", "橙")
 
     private val _unreadCap = MutableStateFlow(999)
     val unreadCap: StateFlow<Int> = _unreadCap
 
     private val _keepAlive = MutableStateFlow(true)
     val keepAlive: StateFlow<Boolean> = _keepAlive
+
+    private val _themeMode = MutableStateFlow(THEME_SYSTEM)
+    val themeMode: StateFlow<Int> = _themeMode
+
+    private val _seedIndex = MutableStateFlow(0)
+    val seedIndex: StateFlow<Int> = _seedIndex
 
     @Volatile
     private var appContext: Context? = null
@@ -34,6 +54,30 @@ object UiSettings {
         val saved = prefs.getInt(KEY_UNREAD_CAP, 999)
         _unreadCap.value = if (saved in UNREAD_CAPS) saved else 999
         _keepAlive.value = prefs.getBoolean(KEY_KEEP_ALIVE, true)
+        val mode = prefs.getInt(KEY_THEME_MODE, THEME_SYSTEM)
+        _themeMode.value =
+            if (mode in THEME_SYSTEM..THEME_DARK) mode else THEME_SYSTEM
+        val seed = prefs.getInt(KEY_SEED_INDEX, 0)
+        _seedIndex.value = if (seed in SEED_COLORS.indices) seed else 0
+    }
+
+    fun setThemeMode(mode: Int) {
+        if (mode !in THEME_SYSTEM..THEME_DARK) return
+        _themeMode.value = mode
+        persist { it.putInt(KEY_THEME_MODE, mode) }
+    }
+
+    fun setSeedIndex(index: Int) {
+        if (index !in SEED_COLORS.indices) return
+        _seedIndex.value = index
+        persist { it.putInt(KEY_SEED_INDEX, index) }
+    }
+
+    private fun persist(block: (android.content.SharedPreferences.Editor) -> Unit) {
+        val ctx = appContext ?: return
+        val editor = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        block(editor)
+        editor.apply()
     }
 
     fun setKeepAlive(on: Boolean) {

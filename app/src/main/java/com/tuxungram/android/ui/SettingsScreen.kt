@@ -83,6 +83,7 @@ import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import android.content.Intent
 import android.webkit.MimeTypeMap
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.core.content.FileProvider
@@ -288,6 +289,63 @@ fun SettingsScreen(onBack: () -> Unit) {
                 ) {
                     Text(if (unreadCap == cap) "● $cap+" else "○ $cap+")
                 }
+            }
+        }
+        Spacer(Modifier.height(28.dp))
+        Text("外观", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "深浅模式和主题色，选完立刻生效，不用重启。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val themeMode by UiSettings.themeMode.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val modes = listOf(
+                UiSettings.THEME_SYSTEM to "跟随系统",
+                UiSettings.THEME_LIGHT to "浅色",
+                UiSettings.THEME_DARK to "深色"
+            )
+            for ((mode, label) in modes) {
+                TextButton(
+                    onClick = { UiSettings.setThemeMode(mode) },
+                    enabled = themeMode != mode
+                ) {
+                    Text(if (themeMode == mode) "● $label" else "○ $label")
+                }
+            }
+        }
+        val seedIndex by UiSettings.seedIndex.collectAsState()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 4.dp)
+        ) {
+            for ((index, argb) in UiSettings.SEED_COLORS.withIndex()) {
+                val selected = seedIndex == index
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .padding(4.dp)
+                        .background(Color(argb), CircleShape)
+                        .then(
+                            if (selected) {
+                                Modifier.border(
+                                    2.dp,
+                                    MaterialTheme.colorScheme.onSurface,
+                                    CircleShape
+                                )
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .clickable { UiSettings.setSeedIndex(index) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selected) {
+                        Text("✓", color = Color.White, fontSize = 15.sp)
+                    }
+                }
+                Text(UiSettings.SEED_NAMES[index], fontSize = 12.sp)
+                Spacer(Modifier.width(10.dp))
             }
         }
         Spacer(Modifier.height(28.dp))

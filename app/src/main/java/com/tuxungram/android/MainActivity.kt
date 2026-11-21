@@ -34,9 +34,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -116,7 +119,23 @@ class MainActivity : ComponentActivity() {
         handleOpenChatIntent(intent)
         TdRepository.start(applicationContext)
         setContent {
-            MaterialTheme {
+            // App theme (Batch 3, C3): persisted dark/light mode
+            // plus an accent seed color, applied live.
+            val themeMode by UiSettings.themeMode.collectAsState()
+            val seedIndex by UiSettings.seedIndex.collectAsState()
+            val systemDark = isSystemInDarkTheme()
+            val dark = when (themeMode) {
+                UiSettings.THEME_LIGHT -> false
+                UiSettings.THEME_DARK -> true
+                else -> systemDark
+            }
+            val seed = Color(UiSettings.SEED_COLORS[seedIndex])
+            val scheme = if (dark) {
+                darkColorScheme(primary = seed, secondary = seed)
+            } else {
+                lightColorScheme(primary = seed, secondary = seed)
+            }
+            MaterialTheme(colorScheme = scheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     AppRoot()
                 }
