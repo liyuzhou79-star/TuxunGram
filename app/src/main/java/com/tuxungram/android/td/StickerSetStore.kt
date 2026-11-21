@@ -1,0 +1,214 @@
+package com.tuxungram.android.td
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
+
+/** One installed sticker set on the management page, flattened
+ *  from stickerSetInfo (verified in td_api.tl). */
+data class StickerSetManageUi(
+    val id: Long,
+    val name: String,
+    val title: String,
+    val count: Int,
+    val thumbFileId: Int,
+    val thumbPath: String?
+)
+
+/**
+ * Sticker-set management (v0.8.0, G3): list installed sets with
+ * covers, remove a set, add one by its t.me/addstickers link or
+ * bare name. Interfaces verified in td_api.tl:
+ * getInstalledStickerSets, searchStickerSet (resolves a set
+ * NAME to the full set), changeStickerSet (install/remove).
+ * After any change the chat panel's set chips are refreshed via
+ * MediaStore.refreshInstalledSets so both views agree.
+ */
+object StickerSetStore {
+    private val _sets = MutableStateFlow<List<StickerSetManageUi>>(emptyList())
+    val sets: StateFlow<List<StickerSetManageUi>> = _sets
+
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice
+
+    private val pathByFileId = ConcurrentHashMap<Int, String>()
+    private val downloadPending = ConcurrentHashMap.newKeySet<Int>()
+
+    @Volatile
+    private var attached = false
+
+    private fun attach() {
+        if (attached) return
+        attached = true
+        TdRepository.addUpdateListener { update ->
+            if (update.optString("@type") != "updateFile") {
+                return@addUpdateListener
+            }
+            val file = update.optJSONObject("file") ?: return@addUpdateListener
+            val local = file.optJSONObject("local") ?: return@addUpdateListener
+            if (!local.optBoolean("is_downloading_completed")) {
+                return@addUpdateListener
+            }
+            val fileId = file.optInt("id")
+            downloadPending.remove(fileId)
+            pathByFileId[fileId] = local.optString("path")
+            _sets.value = _sets.value.map { set ->
+                if (set.thumbFileId == fileId && set.thumbPath == null) {
+                    set.copy(thumbPath = local.optString("path"))
+                } else {
+                    set
+                }
+            }
+        }
+    }
+
+    fun load() {
+        attach()
+        val query = TdClient.request("getInstalledStickerSets").apply {
+            put(
+                "sticker_type",
+                JSONObject().put("@type", "stickerTypeRegular")
+            )
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _notice.value = "贴纸包列表没拉下来，检查网络再试。"
+                return@sendRaw
+            }
+            val arr = response.optJSONArray("sets")
+            val out = ArrayList<StickerSetManageUi>()
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val set = arr.optJSONObject(i) ?: continue
+                    out.add(parseSet(set))
+                }
+            }
+            _sets.value = out
+        }
+    }
+
+    private fun parseSet(set: JSONObject): StickerSetManageUi {
+        // Cover: the set thumbnail if present, else the first
+        // cover sticker's file.
+        var thumbFile = set.optJSONObject("thumbnail")
+            ?.optJSONObject("file")
+        if (thumbFile == null) {
+            val covers = set.optJSONArray("covers")
+            if (covers != null && covers.length() > 0) {
+                thumbFile = covers.optJSONObject(0)
+                    ?.optJSONObject("sticker")
+            }
+        }
+        val fileId = thumbFile?.optInt("id", 0) ?: 0
+        var path = pathByFileId[fileId]
+        val local = thumbFile?.optJSONObject("local")
+        if (local?.optBoolean("is_downloading_completed") == true) {
+            path = local.optString("path")
+            if (path != null) pathByFileId[fileId] = path
+        } else if (fileId != 0) {
+            ensureThumb(fileId)
+        }
+        return StickerSetManageUi(
+            id = set.optLong("id"),
+            name = set.optString("name"),
+            title = set.optString("title"),
+            count = set.optInt("size"),
+            thumbFileId = fileId,
+            thumbPath = path
+        )
+    }
+
+    private fun ensureThumb(fileId: Int) {
+        if (pathByFileId.containsKey(fileId)) return
+        if (!downloadPending.add(fileId)) return
+        TdRepository.sendRaw(TdClient.request("downloadFile").apply {
+            put("file_id", fileId)
+            put("priority", 8)
+            put("offset", 0L)
+            put("limit", 0L)
+            put("synchronous", false)
+        }) {}
+    }
+
+    /** Remove an installed set (it stays in the archive-free
+     *  "recently removed" state server-side; re-adding by name
+     *  brings it back). */
+    fun remove(set: StickerSetManageUi) {
+        val query = TdClient.request("changeStickerSet").apply {
+            put("set_id", set.id)
+            put("is_installed", false)
+            put("is_archived", false)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _notice.value = "移除「${set.title}」失败，再试一次。"
+            } else {
+                _notice.value = "已移除「${set.title}」。"
+                load()
+                MediaStore.refreshInstalledSets()
+            }
+        }
+    }
+
+    /** Add a set from a t.me/addstickers/NAME link, an
+     *  addstickers URL, or the bare set name. */
+    fun addByInput(raw: String) {
+        val name = extractSetName(raw)
+        if (name.isEmpty()) {
+            _notice.value = "没认出贴纸包名，粘贴 t.me/addstickers/ 开头的链接试试。"
+            return
+        }
+        _notice.value = "正在查找「$name」…"
+        val query = TdClient.request("searchStickerSet").apply {
+            put("name", name)
+            put("ignore_cache", false)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _notice.value = "没找到叫「$name」的贴纸包，检查一下名字。"
+                return@sendRaw
+            }
+            val setId = response.optLong("id")
+            val title = response.optString("title")
+            if (setId == 0L) {
+                _notice.value = "没找到叫「$name」的贴纸包，检查一下名字。"
+                return@sendRaw
+            }
+            val install = TdClient.request("changeStickerSet").apply {
+                put("set_id", setId)
+                put("is_installed", true)
+                put("is_archived", false)
+            }
+            TdRepository.sendRaw(install) { done ->
+                if (TdClient.isError(done)) {
+                    _notice.value = "添加「$title」失败，再试一次。"
+                } else {
+                    _notice.value = "已添加「$title」，去贴纸面板就能用了。"
+                    load()
+                    MediaStore.refreshInstalledSets()
+                }
+            }
+        }
+    }
+
+    private fun extractSetName(raw: String): String {
+        val trimmed = raw.trim()
+        val marker = "addstickers/"
+        val idx = trimmed.indexOf(marker)
+        val candidate = if (idx >= 0) {
+            trimmed.substring(idx + marker.length)
+        } else {
+            trimmed
+        }
+        return candidate
+            .substringBefore('?')
+            .substringBefore('/')
+            .substringBefore(' ')
+            .trim()
+    }
+
+    fun clearNotice() {
+        _notice.value = null
+    }
+}

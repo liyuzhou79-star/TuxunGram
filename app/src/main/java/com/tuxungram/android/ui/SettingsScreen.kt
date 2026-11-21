@@ -143,7 +143,11 @@ fun openDownloadedFile(context: android.content.Context, path: String) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenSessions: () -> Unit = {}) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenSessions: () -> Unit = {},
+    onOpenStickerSets: () -> Unit = {}
+) {
     BackHandler { onBack() }
     val settingsContext = LocalContext.current
     // Proxy list (v0.6.0, E4): entries live in ProxyStore; the
@@ -873,6 +877,21 @@ fun SettingsScreen(onBack: () -> Unit, onOpenSessions: () -> Unit = {}) {
             "一句实话：有些手机系统管后台管得严（比如魅族），光在这里打开还不够——请再去系统设置里给 TuxunGram 开「自启动」，电池用量选「不限制」，不然把 App 从最近任务里划掉后，系统可能还是会把它冻住，通知就迟到甚至收不到。这一层是系统说了算，App 里改不了。",
             color = Color.Gray, fontSize = 13.sp
         )
+        Spacer(Modifier.height(28.dp))
+        Text("贴纸包", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "查看已装的贴纸包、移除不用的，或者用链接添加新的。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        Button(
+            onClick = onOpenStickerSets,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp)
+        ) {
+            Text("管理贴纸包")
+        }
         Spacer(Modifier.height(28.dp))
         Text("存储空间", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))

@@ -97,6 +97,18 @@ object MediaStore {
                 _savedAnimations.value = parseAnimations(response)
             }
         }
+        fetchInstalledSets()
+    }
+
+    /** Re-fetch the installed-set chips — the sticker-set
+     *  management page (v0.8.0, G3) calls this after adding or
+     *  removing a set so the panel and the manager agree. */
+    fun refreshInstalledSets() {
+        attach()
+        fetchInstalledSets()
+    }
+
+    private fun fetchInstalledSets() {
         TdRepository.sendRaw(TdClient.request("getInstalledStickerSets").apply {
             put(
                 "sticker_type",

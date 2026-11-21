@@ -121,6 +121,7 @@ import com.tuxungram.android.ui.RegistrationScreen
 import com.tuxungram.android.ui.SessionsScreen
 import com.tuxungram.android.ui.SettingsScreen
 import com.tuxungram.android.ui.SplashScreen
+import com.tuxungram.android.ui.StickerSetsScreen
 import com.tuxungram.android.ui.StoryViewerScreen
 import com.tuxungram.android.ui.ThreadScreen
 import com.tuxungram.android.ui.TransitionScreen
@@ -297,6 +298,7 @@ private fun ReadyHost() {
     }
     var showSettings by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
+    var showStickerSets by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }
     var showCreate by remember { mutableStateOf(false) }
@@ -332,11 +334,18 @@ private fun ReadyHost() {
             onBack = { threadReq = null }
         )
         showSessions -> SessionsScreen(onBack = { showSessions = false })
+        showStickerSets -> StickerSetsScreen(
+            onBack = { showStickerSets = false }
+        )
         showSettings -> SettingsScreen(
             onBack = { showSettings = false },
             onOpenSessions = {
                 showSettings = false
                 showSessions = true
+            },
+            onOpenStickerSets = {
+                showSettings = false
+                showStickerSets = true
             }
         )
         showArchive -> ArchiveScreen(
