@@ -66,10 +66,26 @@ android {
             signingConfig = signingConfigs.getByName("testPin")
         }
         release {
-            isMinifyEnabled = false
-            if (System.getenv("TUXUNGRAM_KEYSTORE_PATH") != null) {
-                signingConfig = signingConfigs.getByName("release")
+            // Slimming (v0.9.0, H3): shrink and obfuscate code
+            // and resources; the packaging block below already
+            // selects legacy packaging, so the native library
+            // is stored compressed in release packages (debug
+            // builds keep it uncompressed for fast installs).
+            // Signing: the formal release keystore when its
+            // secrets are configured; otherwise the pinned test
+            // certificate, so slim test packages install over
+            // the existing debug test packages.
+            signingConfig = if (System.getenv("TUXUNGRAM_KEYSTORE_PATH") != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("testPin")
             }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     packaging {
