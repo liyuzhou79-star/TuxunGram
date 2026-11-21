@@ -1,0 +1,83 @@
+name: Build TDLib
+
+# Builds libtdjson.so (arm64-v8a) from the official TDLib sources
+# plus a matching OpenSSL, once, and caches the result. The app
+# build consumes the cached library; TDLib is far too heavy to
+# rebuild on every app change.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tdlib:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Show cached TDLib
+        id: td-cache
+        uses: actions/cache@v4
+        with:
+          path: tdlib-cache/libtdjson.so
+          key: tdlib-master-arm64-v1
+
+      - name: Install host tools
+        if: steps.td-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gperf perl make
+
+      - name: Checkout TDLib sources
+        if: steps.td-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: tdlib/td
+          path: td-src
+
+      - name: Record TDLib commit
+        if: steps.td-cache.outputs.cache-hit != 'true'
+        run: |
+          cd td-src
+          git rev-parse HEAD | tee ../tdlib-commit.txt
+
+      - name: Build OpenSSL for Android arm64
+        if: steps.td-cache.outputs.cache-hit != 'true'
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "Using NDK: $NDK"
+          curl -sL -o openssl.tar.gz https://www.openssl.org/source/openssl-3.0.15.tar.gz
+          tar xzf openssl.tar.gz
+          cd openssl-3.0.15
+          export ANDROID_NDK_ROOT="$NDK"
+          export PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          ./Configure android-arm64 -D__ANDROID_API__=29 --prefix="$GITHUB_WORKSPACE/openssl-install" no-shared no-tests
+          make -j"$(nproc)" build_libs
+          make install_sw
+          ls -la "$GITHUB_WORKSPACE/openssl-install/lib"
+
+      - name: Build TDLib (tdjson) for Android arm64
+        if: steps.td-cache.outputs.cache-hit != 'true'
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          cd td-src
+          cmake -B build-android \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-29 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPENSSL_ROOT_DIR="$GITHUB_WORKSPACE/openssl-install" \
+            -DOPENSSL_INCLUDE_DIR="$GITHUB_WORKSPACE/openssl-install/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$GITHUB_WORKSPACE/openssl-install/lib/libcrypto.a" \
+            -DOPENSSL_SSL_LIBRARY="$GITHUB_WORKSPACE/openssl-install/lib/libssl.a" \
+            -DTD_ENABLE_LTO=OFF
+          cmake --build build-android --target tdjson -j"$(nproc)"
+          mkdir -p ../tdlib-cache
+          find build-android -name "libtdjson.so*" -exec cp -v {} ../tdlib-cache/libtdjson.so \;
+          ls -la ../tdlib-cache/
+
+      - name: Upload TDLib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tdlib-arm64
+          path: |
+            tdlib-cache/libtdjson.so
+            tdlib-commit.txt
