@@ -27,7 +27,7 @@ sealed interface AuthState {
 
 /**
  * Process-wide owner of the TDLib client and the authorization flow.
- * The UI observes [authState] and calls the set*/check* methods;
+ * The UI observes [authState] and calls the set/check methods;
  * request errors surface through [lastError] as (code, message) —
  * the UI translates them into plain language, raw codes never
  * reach the screen.
