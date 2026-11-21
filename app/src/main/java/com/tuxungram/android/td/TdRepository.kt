@@ -76,6 +76,7 @@ object TdRepository {
         if (client != null) return
         appContext = context.applicationContext
         ProxyStore.init(context)
+        UiSettings.init(context)
         val c = TdClient { update ->
             handleUpdate(update)
             for (listener in updateListeners) listener(update)

@@ -31,6 +31,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -67,6 +71,7 @@ import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdRepository
+import com.tuxungram.android.td.UiSettings
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -588,6 +593,24 @@ private fun SettingsScreen(onBack: () -> Unit) {
         }
         ErrorText()
         Spacer(Modifier.height(28.dp))
+        Text("显示", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "未读数上限：对话很多时，角标数字太长不好看。超过上限就显示成「上限+」。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val unreadCap by UiSettings.unreadCap.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            for (cap in UiSettings.UNREAD_CAPS) {
+                TextButton(
+                    onClick = { UiSettings.setUnreadCap(cap) },
+                    enabled = unreadCap != cap
+                ) {
+                    Text(if (unreadCap == cap) "● $cap+" else "○ $cap+")
+                }
+            }
+        }
+        Spacer(Modifier.height(28.dp))
         Text(
             "TuxunGram ${BuildConfig.VERSION_NAME}",
             color = Color.Gray, fontSize = 13.sp
@@ -658,7 +681,9 @@ private fun ChatListScreen(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Uni
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
             )
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = onOpenSettings) { Text("设置") }
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Filled.Settings, contentDescription = "设置")
+            }
         }
         OutlinedTextField(
             value = query,
@@ -772,8 +797,13 @@ private fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                             .padding(horizontal = 6.dp, vertical = 1.dp),
                         contentAlignment = Alignment.Center
                     ) {
+                        val unreadCap by UiSettings.unreadCap.collectAsState()
                         Text(
-                            if (chat.unreadCount > 99) "99+" else chat.unreadCount.toString(),
+                            if (chat.unreadCount > unreadCap) {
+                                "$unreadCap+"
+                            } else {
+                                chat.unreadCount.toString()
+                            },
                             color = Color.White,
                             fontSize = 11.sp
                         )
