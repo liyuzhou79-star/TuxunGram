@@ -15,6 +15,15 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+            }
+        }
+
         // Telegram API credentials, injected at build time. CI Secrets
         // (TUXUNGRAM_API_ID / TUXUNGRAM_API_HASH) win when present.
         // The fallback is Telegram Desktop's publicly known pair, used
@@ -79,6 +88,12 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 }
 
