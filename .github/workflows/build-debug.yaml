@@ -40,8 +40,8 @@ jobs:
           pos = block_start + 8
           end = cd_off - 24
           def field(buf, off):
-              ln = struct.unpack_from("<Q", buf, off)[0]
-              return buf[off + 8:off + 8 + ln], off + 8 + ln
+              ln = struct.unpack_from("<I", buf, off)[0]
+              return buf[off + 4:off + 4 + ln], off + 4 + ln
           certs = []
           while pos < end:
               pair_len = struct.unpack_from("<Q", data, pos)[0]
