@@ -8,6 +8,14 @@ import java.util.concurrent.ConcurrentHashMap
 
 enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, OTHER }
 
+/** One reaction shown under a bubble: the emoji, how many people
+ *  used it, and whether I am one of them. */
+data class ReactionChip(
+    val emoji: String,
+    val count: Int,
+    val chosen: Boolean
+)
+
 data class MsgItem(
     val id: Long,
     val outgoing: Boolean,
@@ -31,7 +39,8 @@ data class MsgItem(
     val fileSize: Long = 0L,
     val fileMime: String = "",
     val durationSec: Int = 0,
-    val fileDownloading: Boolean = false
+    val fileDownloading: Boolean = false,
+    val reactions: List<ReactionChip> = emptyList()
 )
 
 /**
@@ -361,6 +370,16 @@ object MessageStore {
                 byId[messageId] = parseContent(existing, content)
                 publish()
             }
+            "updateMessageInteractionInfo" -> {
+                val chatId = update.optLong("chat_id")
+                if (chatId != currentChatId) return
+                val messageId = update.optLong("message_id")
+                val existing = byId[messageId] ?: return
+                byId[messageId] = existing.copy(
+                    reactions = reactionsOf(update.optJSONObject("interaction_info"))
+                )
+                publish()
+            }
             "updateFile" -> {
                 val file = update.optJSONObject("file") ?: return
                 val local = file.optJSONObject("local") ?: return
@@ -456,7 +475,8 @@ object MessageStore {
             },
             replyToId = replyTargetId(msg),
             replyChatId = replyTargetChatId(msg),
-            replySummary = replySummaryOf(msg)
+            replySummary = replySummaryOf(msg),
+            reactions = reactionsOf(msg.optJSONObject("interaction_info"))
         )
         val content = msg.optJSONObject("content") ?: return base
         return parseContent(base, content)
@@ -637,6 +657,66 @@ object MessageStore {
                 val item = parseMessage(response)
                 byId[item.id] = item
                 publish()
+            }
+        }
+    }
+
+    /** Flatten messageInteractionInfo.reactions (verified in
+     *  td_api.tl: messageReactions -> messageReaction{type,
+     *  total_count, is_chosen}); only plain emoji reactions are
+     *  rendered, custom-emoji ones are skipped for now. */
+    private fun reactionsOf(interactionInfo: JSONObject?): List<ReactionChip> {
+        val reactions = interactionInfo?.optJSONObject("reactions")
+            ?.optJSONArray("reactions") ?: return emptyList()
+        val out = ArrayList<ReactionChip>()
+        for (i in 0 until reactions.length()) {
+            val reaction = reactions.optJSONObject(i) ?: continue
+            val type = reaction.optJSONObject("type") ?: continue
+            if (type.optString("@type") != "reactionTypeEmoji") continue
+            val emoji = type.optString("emoji")
+            if (emoji.isEmpty()) continue
+            out.add(
+                ReactionChip(
+                    emoji = emoji,
+                    count = reaction.optInt("total_count"),
+                    chosen = reaction.optBoolean("is_chosen")
+                )
+            )
+        }
+        return out
+    }
+
+    val COMMON_REACTIONS = listOf("👍", "❤️", "🔥", "🎉", "😂", "👏")
+
+    /** Add my reaction, or remove it if I already chose it
+     *  (addMessageReaction / removeMessageReaction, verified in
+     *  td_api.tl). The chips refresh via updateMessageInteractionInfo. */
+    fun toggleReaction(item: MsgItem, emoji: String) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val already = item.reactions.any { it.emoji == emoji && it.chosen }
+        val reactionType = JSONObject().apply {
+            put("@type", "reactionTypeEmoji")
+            put("emoji", emoji)
+        }
+        val query = if (already) {
+            TdClient.request("removeMessageReaction").apply {
+                put("chat_id", chatId)
+                put("message_id", item.id)
+                put("reaction_type", reactionType)
+            }
+        } else {
+            TdClient.request("addMessageReaction").apply {
+                put("chat_id", chatId)
+                put("message_id", item.id)
+                put("reaction_type", reactionType)
+                put("is_big", false)
+                put("update_recent_reactions", false)
+            }
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
             }
         }
     }
