@@ -18,7 +18,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tdlib-cache/libtdjson.so
-          key: tdlib-master-arm64-v1
+          key: tdlib-master-arm64-v2
 
       - name: Install host tools
         if: steps.td-cache.outputs.cache-hit != 'true'
@@ -53,6 +53,17 @@ jobs:
           make -j"$(nproc)" build_libs
           make install_sw
           ls -la "$GITHUB_WORKSPACE/openssl-install/lib"
+
+      - name: Generate MIME type tables (host step required before cross-compiling)
+        if: steps.td-cache.outputs.cache-hit != 'true'
+        run: |
+          cd td-src/tdutils/generate
+          mkdir -p auto
+          g++ -O2 -std=c++17 -o /tmp/generate_mime_types_gperf generate_mime_types_gperf.cpp
+          /tmp/generate_mime_types_gperf mime_types.txt auto/mime_type_to_extension.gperf auto/extension_to_mime_type.gperf
+          gperf -m100 --output-file=auto/mime_type_to_extension.cpp auto/mime_type_to_extension.gperf
+          gperf -m100 --output-file=auto/extension_to_mime_type.cpp auto/extension_to_mime_type.gperf
+          ls -la auto/
 
       - name: Build TDLib (tdjson) for Android arm64
         if: steps.td-cache.outputs.cache-hit != 'true'
