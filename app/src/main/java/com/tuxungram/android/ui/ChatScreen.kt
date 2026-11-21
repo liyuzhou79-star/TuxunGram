@@ -85,6 +85,8 @@ import com.tuxungram.android.td.AdminStore
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
+import com.tuxungram.android.td.ForumStore
+import com.tuxungram.android.td.ForumTopicUi
 import com.tuxungram.android.td.InlineBtn
 import com.tuxungram.android.td.MediaEntry
 import com.tuxungram.android.td.MediaStore
@@ -202,6 +204,13 @@ fun ChatScreen(
     // actions. Empty set = not in selection mode.
     var selectedIds by remember(chatId) { mutableStateOf<Set<Long>>(emptySet()) }
     val selectionMode = selectedIds.isNotEmpty()
+    // Forum groups (v0.8.0, G2): opening one lands on its
+    // topic list; a chosen topic replaces the message area.
+    val isForum by ForumStore.isForum.collectAsState()
+    var forumTopic by remember(chatId) { mutableStateOf<ForumTopicUi?>(null) }
+    LaunchedEffect(chatId) {
+        ForumStore.checkForum(chatId)
+    }
     var pendingDelete by remember { mutableStateOf<List<MsgItem>?>(null) }
     // Full-screen photo viewer (v0.7.0, F2): the photo message
     // id the viewer opens at; null = closed.
@@ -260,9 +269,16 @@ fun ChatScreen(
         }
     }
     // In selection mode Back first leaves the mode, like in
-    // mature clients; only a second Back leaves the chat.
+    // mature clients; only a second Back leaves the chat. In a
+    // forum, Back first returns from a topic to the topic list.
     BackHandler {
-        if (selectionMode) selectedIds = emptySet() else onBack()
+        if (forumTopic != null) {
+            forumTopic = null
+        } else if (selectionMode) {
+            selectedIds = emptySet()
+        } else {
+            onBack()
+        }
     }
 
     // Arriving from a search result: jump to that message once.
@@ -460,6 +476,25 @@ fun ChatScreen(
                 Icon(Icons.Filled.Search, contentDescription = "搜索聊天记录")
             }
         }
+        }
+
+        if (isForum) {
+            // Forum group (v0.8.0, G2): the topic list (or one
+            // open topic) fills the whole area under the top
+            // bar; the normal message list and dock do not
+            // apply — a forum's messages live inside topics.
+            val topic = forumTopic
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (topic == null) {
+                    ForumTopicsList(
+                        chatId = chatId,
+                        onOpenTopic = { forumTopic = it }
+                    )
+                } else {
+                    ForumTopicView(chatId = chatId, topic = topic)
+                }
+            }
+            return@Column
         }
 
         if (chat?.isSecret == true) {
