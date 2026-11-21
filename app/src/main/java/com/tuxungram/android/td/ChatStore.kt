@@ -90,9 +90,7 @@ object ChatStore {
     @Volatile
     private var lastRecomputeAt = 0L
 
-    private companion object {
-        const val RECOMPUTE_WINDOW_MS = 100L
-    }
+    private const val RECOMPUTE_WINDOW_MS = 100L
 
     private fun requestRecompute() {
         recomputeDirty = true
