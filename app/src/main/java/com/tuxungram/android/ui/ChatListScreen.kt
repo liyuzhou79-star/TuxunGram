@@ -13,6 +13,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -182,15 +184,33 @@ fun ChatListScreen(
     onOpenChat: (Long) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenChatLocated: (Long, Long) -> Unit,
-    onOpenArchive: () -> Unit
+    onOpenArchive: () -> Unit,
+    onOpenCreate: () -> Unit
 ) {
     val chats by ChatStore.chats.collectAsState()
     val allLoaded by ChatStore.allLoaded.collectAsState()
+    val folders by ChatStore.folders.collectAsState()
+    val selectedFolder by ChatStore.selectedFolder.collectAsState()
+    val folderChats by ChatStore.folderChats.collectAsState()
+    val folderLoaded by ChatStore.folderLoaded.collectAsState()
     var query by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    val shown = if (query.isBlank()) chats else chats.filter {
+    val baseList = if (selectedFolder == null) chats else folderChats
+    val shown = if (query.isBlank()) baseList else baseList.filter {
         it.title.contains(query.trim(), ignoreCase = true)
+    }
+
+    LaunchedEffect(listState, shown.size, folderLoaded, selectedFolder) {
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        }.collect { lastVisible ->
+            if (selectedFolder != null && !folderLoaded &&
+                shown.isNotEmpty() && lastVisible >= shown.size - 5
+            ) {
+                ChatStore.loadFolderMore()
+            }
+        }
     }
 
     // Global message search, debounced; the local title filter
@@ -232,6 +252,9 @@ fun ChatListScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
             )
             Spacer(Modifier.weight(1f))
+            IconButton(onClick = onOpenCreate) {
+                Icon(Icons.Filled.Add, contentDescription = "新建群组或频道")
+            }
             TextButton(onClick = onOpenArchive) {
                 Text("归档")
             }
@@ -249,11 +272,36 @@ fun ChatListScreen(
                 .padding(horizontal = 16.dp)
         )
         Spacer(Modifier.height(8.dp))
+        // Folder tabs (B7): shown only when the account actually
+        // has folders; selecting one swaps the list below to
+        // that folder's chats. View-only — no folder editor.
+        if (folders.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FolderChip(
+                    label = "全部",
+                    selected = selectedFolder == null,
+                    onClick = { ChatStore.selectFolder(null) }
+                )
+                for (folder in folders) {
+                    FolderChip(
+                        label = folder.name.ifEmpty { "文件夹" },
+                        selected = selectedFolder == folder.id,
+                        onClick = { ChatStore.selectFolder(folder.id) }
+                    )
+                }
+            }
+        }
         // First-sync banner: while TDLib is still pulling the
         // account's chats in, say so plainly — a half-filled list
         // must not look like chats were lost.
         val syncing by ChatStore.syncing.collectAsState()
-        if (syncing && shown.isNotEmpty()) {
+        if (syncing && shown.isNotEmpty() && selectedFolder == null) {
             Row(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -265,7 +313,13 @@ fun ChatListScreen(
         }
         if (shown.isEmpty() && query.isBlank()) {
             CenterColumn {
-                if (!allLoaded) {
+                if (selectedFolder != null && !folderLoaded) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text("正在加载文件夹…", color = Color.Gray)
+                } else if (selectedFolder != null) {
+                    Text("这个文件夹里还没有对话", color = Color.Gray)
+                } else if (!allLoaded) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(12.dp))
                     Text("正在加载对话…", color = Color.Gray)
@@ -287,7 +341,7 @@ fun ChatListScreen(
                 ) { chat ->
                     ChatRow(chat, onClick = { onOpenChat(chat.id) })
                 }
-                if (query.isNotBlank()) {
+                if (query.isNotBlank() && selectedFolder == null) {
                     val contactHits = ContactsStore.search(query)
                     if (contactHits.isNotEmpty()) {
                         item(key = "contacts_header") {
@@ -632,5 +686,32 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                 }
             }
         }
+    }
+}
+
+/** One folder tab in the chat-list header row. */
+@Composable
+fun FolderChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .padding(end = 8.dp)
+            .background(
+                if (selected) {
+                    androidx.compose.material3.MaterialTheme.colorScheme.primary
+                } else {
+                    Color(0xFFE8E8E8)
+                },
+                RoundedCornerShape(16.dp)
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+    ) {
+        Text(
+            label,
+            color = if (selected) Color.White else Color(0xFF424242),
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1
+        )
     }
 }

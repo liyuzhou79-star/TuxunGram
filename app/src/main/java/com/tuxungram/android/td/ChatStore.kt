@@ -208,6 +208,103 @@ object ChatStore {
         _archivedChats.value = items
     }
 
+    // ---- Chat folders (Batch 2, B7): tabs only, no editor ----
+
+    data class FolderTab(val id: Int, val name: String)
+
+    private val _folders = MutableStateFlow<List<FolderTab>>(emptyList())
+    val folders: StateFlow<List<FolderTab>> = _folders
+
+    private val _selectedFolder = MutableStateFlow<Int?>(null)
+    val selectedFolder: StateFlow<Int?> = _selectedFolder
+
+    private val _folderChats = MutableStateFlow<List<ChatItem>>(emptyList())
+    val folderChats: StateFlow<List<ChatItem>> = _folderChats
+
+    private val _folderLoaded = MutableStateFlow(false)
+    val folderLoaded: StateFlow<Boolean> = _folderLoaded
+
+    @Volatile
+    private var loadingFolder = false
+    private var emptyFolderRetries = 0
+
+    fun selectFolder(folderId: Int?) {
+        _selectedFolder.value = folderId
+        _folderChats.value = emptyList()
+        _folderLoaded.value = folderId == null
+        emptyFolderRetries = 0
+        if (folderId != null) loadFolderMore()
+    }
+
+    fun loadFolderMore() {
+        val folderId = _selectedFolder.value ?: return
+        if (_folderLoaded.value || loadingFolder) return
+        loadingFolder = true
+        val countBefore = folderCount(folderId)
+        val query = TdClient.request("loadChats").apply {
+            put(
+                "chat_list",
+                JSONObject().apply {
+                    put("@type", "chatListFolder")
+                    put("chat_folder_id", folderId)
+                }
+            )
+            put("limit", 100)
+        }
+        TdRepository.sendRaw(query) { response ->
+            loadingFolder = false
+            if (TdClient.isError(response) && response.optInt("code") == 404) {
+                _folderLoaded.value = true
+            }
+            recomputeFolder()
+            if (!_folderLoaded.value && _selectedFolder.value == folderId) {
+                if (folderCount(folderId) > countBefore) {
+                    emptyFolderRetries = 0
+                    loadFolderMore()
+                } else if (emptyFolderRetries < 5) {
+                    emptyFolderRetries++
+                    loadFolderMore()
+                }
+            }
+        }
+    }
+
+    private fun folderPosition(chat: JSONObject, folderId: Int): JSONObject? {
+        val positions = chat.optJSONArray("positions") ?: return null
+        for (i in 0 until positions.length()) {
+            val p = positions.optJSONObject(i) ?: continue
+            val list = p.optJSONObject("list") ?: continue
+            if (list.optString("@type") == "chatListFolder" &&
+                list.optInt("chat_folder_id") == folderId
+            ) {
+                return p
+            }
+        }
+        return null
+    }
+
+    private fun folderCount(folderId: Int): Int {
+        var n = 0
+        for (chat in cache.values) {
+            val p = folderPosition(chat, folderId) ?: continue
+            if (p.optLong("order") != 0L) n++
+        }
+        return n
+    }
+
+    private fun recomputeFolder() {
+        val folderId = _selectedFolder.value ?: return
+        val items = ArrayList<ChatItem>()
+        for (chat in cache.values) {
+            val position = folderPosition(chat, folderId) ?: continue
+            val order = position.optLong("order")
+            if (order == 0L) continue
+            items.add(toItem(chat, position, order))
+        }
+        items.sortWith(compareByDescending<ChatItem> { it.order }.thenByDescending { it.id })
+        _folderChats.value = items
+    }
+
     /** Move a chat back out of the archive into the main list. */
     fun unarchive(chat: ChatItem) {
         val query = TdClient.request("addChatToList").apply {
@@ -305,6 +402,23 @@ object ChatStore {
                     )
                 }
             }
+            "updateChatFolders" -> {
+                val arr = update.optJSONArray("chat_folders") ?: return
+                val tabs = ArrayList<FolderTab>()
+                for (i in 0 until arr.length()) {
+                    val f = arr.optJSONObject(i) ?: continue
+                    val name = f.optJSONObject("name")
+                        ?.optJSONObject("text")?.optString("text") ?: ""
+                    tabs.add(FolderTab(f.optInt("id"), name))
+                }
+                _folders.value = tabs
+                // Selected folder vanished on the server: fall
+                // back to the main list rather than an empty tab.
+                val selected = _selectedFolder.value
+                if (selected != null && tabs.none { it.id == selected }) {
+                    selectFolder(null)
+                }
+            }
             "updateChatAvailableReactions" -> {
                 val chat = cache[chatId] ?: return
                 if (update.has("available_reactions")) {
@@ -343,6 +457,7 @@ object ChatStore {
         }
         recompute()
         recomputeArchive()
+        recomputeFolder()
     }
 
     private fun patchPosition(chat: JSONObject, position: JSONObject) {
