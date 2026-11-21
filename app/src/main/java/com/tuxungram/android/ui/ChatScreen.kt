@@ -1,7 +1,10 @@
 package com.tuxungram.android.ui
 
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import android.graphics.BitmapFactory
@@ -82,6 +85,7 @@ import com.tuxungram.android.td.AdminStore
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
+import com.tuxungram.android.td.InlineBtn
 import com.tuxungram.android.td.MediaEntry
 import com.tuxungram.android.td.MediaStore
 import com.tuxungram.android.td.MessageStore
@@ -1088,6 +1092,146 @@ fun PhotoPreview(
 }
 
 @OptIn(ExperimentalFoundationApi::class)
+/** Inline keyboard under a bot message (v0.8.0, G4): rows of
+ *  buttons from replyMarkupInlineKeyboard. URL buttons open the
+ *  browser; callback buttons go through getCallbackQueryAnswer
+ *  and the bot's answer is shown as a toast, an alert dialog
+ *  (show_alert), or opened as a URL; callback-with-password
+ *  buttons first ask for the account's 2FA password. Types this
+ *  app cannot honour yet (switch-inline, games, payments,
+ *  user-profile buttons) answer with an honest hint instead of
+ *  silently doing nothing. Reused by the thread/forum screens. */
+@Composable
+fun InlineButtonGrid(msg: MsgItem, chatId: Long) {
+    if (msg.buttons.isEmpty()) return
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var alertText by remember { mutableStateOf<String?>(null) }
+    var passwordBtn by remember { mutableStateOf<InlineBtn?>(null) }
+    var password by remember { mutableStateOf("") }
+    fun toast(text: String) {
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+    }
+    fun openUrl(url: String) {
+        try {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            )
+        } catch (t: Throwable) {
+            toast("打不开这个链接")
+        }
+    }
+    fun onAnswer(text: String, showAlert: Boolean, url: String) {
+        when {
+            url.isNotEmpty() -> openUrl(url)
+            showAlert && text.isNotEmpty() -> alertText = text
+            text.isNotEmpty() -> toast(text)
+        }
+    }
+    fun press(btn: InlineBtn) {
+        when (btn.kind) {
+            "url" -> if (btn.url.isNotEmpty()) openUrl(btn.url)
+            "copy" -> {
+                clipboard.setText(AnnotatedString(btn.copyText))
+                toast("已复制")
+            }
+            "callback" -> MessageStore.answerCallback(
+                chatId, msg.id, btn.data, null,
+                onAnswer = ::onAnswer,
+                onError = { toast(it) }
+            )
+            "callbackPw" -> {
+                password = ""
+                passwordBtn = btn
+            }
+            "switch" ->
+                toast("这个按钮要在输入框里配合机器人使用，暂未支持")
+            "game" -> toast("小游戏按钮暂未支持")
+            "buy" -> toast("付款按钮暂未支持")
+            "user" -> toast("暂未支持从按钮打开对方主页")
+            else -> toast("这个按钮暂不可用")
+        }
+    }
+    Column(modifier = Modifier.padding(top = 6.dp)) {
+        for (row in msg.buttons) {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                for (btn in row) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(2.dp)
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer,
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { press(btn) }
+                            .padding(horizontal = 6.dp, vertical = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            btn.text,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 13.sp,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+    }
+    val alert = alertText
+    if (alert != null) {
+        AlertDialog(
+            onDismissRequest = { alertText = null },
+            title = { Text("机器人回复") },
+            text = { Text(alert) },
+            confirmButton = {
+                TextButton(onClick = { alertText = null }) {
+                    Text("知道了")
+                }
+            }
+        )
+    }
+    val pwTarget = passwordBtn
+    if (pwTarget != null) {
+        AlertDialog(
+            onDismissRequest = { passwordBtn = null },
+            title = { Text("需要两步验证密码") },
+            text = {
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    placeholder = { Text("输入你的两步验证密码") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val pw = password
+                        passwordBtn = null
+                        if (pw.isNotEmpty()) {
+                            MessageStore.answerCallback(
+                                chatId, msg.id, pwTarget.data, pw,
+                                onAnswer = ::onAnswer,
+                                onError = { toast(it) }
+                            )
+                        }
+                    },
+                    enabled = password.isNotEmpty()
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { passwordBtn = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
 @Composable
 fun MessageBubble(
     msg: MsgItem,
@@ -1367,6 +1511,9 @@ fun MessageBubble(
                             Spacer(Modifier.width(5.dp))
                         }
                     }
+                }
+                if (msg.buttons.isNotEmpty()) {
+                    InlineButtonGrid(msg, chatId)
                 }
                 Row {
                     Text(formatMsgTime(msg.dateSeconds), color = Color.Gray, fontSize = 11.sp)

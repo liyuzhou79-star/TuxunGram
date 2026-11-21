@@ -40,6 +40,23 @@ data class ReactionChip(
     val chosen: Boolean
 )
 
+/** One inline-keyboard button under a bot message, flattened
+ *  from replyMarkupInlineKeyboard / inlineKeyboardButtonType*
+ *  (verified in td_api.tl). [kind] is one of: url, callback,
+ *  callbackPw (callback that needs the 2FA password), switch
+ *  (switch-inline query), copy (copy-text), user, game, buy,
+ *  disabled. [data] is the callback payload, base64 as TDLib's
+ *  JSON interface ships bytes. */
+data class InlineBtn(
+    val text: String,
+    val kind: String,
+    val url: String = "",
+    val data: String = "",
+    val query: String = "",
+    val copyText: String = "",
+    val userId: Long = 0L
+)
+
 data class MsgItem(
     val id: Long,
     val outgoing: Boolean,
@@ -82,7 +99,13 @@ data class MsgItem(
     val lpDescription: String = "",
     val lpUrl: String = "",
     val lpPhotoFileId: Int = 0,
-    val lpPhotoPath: String? = null
+    val lpPhotoPath: String? = null,
+    // Inline keyboard from the message's reply_markup (v0.8.0,
+    // G4); rows of buttons rendered under the bubble.
+    val buttons: List<List<InlineBtn>> = emptyList(),
+    // Channel post flag (message.is_channel_post); the comment
+    // entry (G1) only makes sense on these.
+    val isChannelPost: Boolean = false
 )
 
 /**
@@ -918,7 +941,7 @@ object MessageStore {
         }
     }
 
-    private fun parseMessage(msg: JSONObject): MsgItem {
+    fun parseMessage(msg: JSONObject): MsgItem {
         val base = MsgItem(
             id = msg.optLong("id"),
             outgoing = msg.optBoolean("is_outgoing"),
@@ -943,7 +966,9 @@ object MessageStore {
             replyToId = replyTargetId(msg),
             replyChatId = replyTargetChatId(msg),
             replySummary = replySummaryOf(msg),
-            reactions = reactionsOf(msg.optJSONObject("interaction_info"))
+            reactions = reactionsOf(msg.optJSONObject("interaction_info")),
+            buttons = parseButtons(msg.optJSONObject("reply_markup")),
+            isChannelPost = msg.optBoolean("is_channel_post")
         )
         val content = msg.optJSONObject("content") ?: return base
         return parseContent(base, content)
@@ -1410,6 +1435,107 @@ object MessageStore {
         return out
     }
 
+    /** Flatten a reply_markup object into button rows. Only
+     *  replyMarkupInlineKeyboard carries tappable buttons;
+     *  reply-markup keyboards / force-reply are input-area
+     *  concepts this app does not render yet. Button types
+     *  verified in td_api.tl (inlineKeyboardButtonType*). */
+    private fun parseButtons(markup: JSONObject?): List<List<InlineBtn>> {
+        if (markup == null) return emptyList()
+        if (markup.optString("@type") != "replyMarkupInlineKeyboard") {
+            return emptyList()
+        }
+        val rows = markup.optJSONArray("rows") ?: return emptyList()
+        val out = ArrayList<List<InlineBtn>>()
+        for (r in 0 until rows.length()) {
+            val rowArr = rows.optJSONArray(r) ?: continue
+            val row = ArrayList<InlineBtn>()
+            for (b in 0 until rowArr.length()) {
+                val btn = rowArr.optJSONObject(b) ?: continue
+                val type = btn.optJSONObject("type") ?: continue
+                val text = btn.optString("text")
+                if (text.isEmpty()) continue
+                row.add(
+                    when (type.optString("@type")) {
+                        "inlineKeyboardButtonTypeUrl" -> InlineBtn(
+                            text, "url", url = type.optString("url")
+                        )
+                        "inlineKeyboardButtonTypeLoginUrl",
+                        "inlineKeyboardButtonTypeWebApp" -> InlineBtn(
+                            text, "url", url = type.optString("url")
+                        )
+                        "inlineKeyboardButtonTypeCallback" -> InlineBtn(
+                            text, "callback", data = type.optString("data")
+                        )
+                        "inlineKeyboardButtonTypeCallbackWithPassword" ->
+                            InlineBtn(
+                                text, "callbackPw",
+                                data = type.optString("data")
+                            )
+                        "inlineKeyboardButtonTypeSwitchInline" -> InlineBtn(
+                            text, "switch", query = type.optString("query")
+                        )
+                        "inlineKeyboardButtonTypeCopyText" -> InlineBtn(
+                            text, "copy", copyText = type.optString("text")
+                        )
+                        "inlineKeyboardButtonTypeUser" -> InlineBtn(
+                            text, "user", userId = type.optLong("user_id")
+                        )
+                        "inlineKeyboardButtonTypeCallbackGame" ->
+                            InlineBtn(text, "game")
+                        "inlineKeyboardButtonTypeBuy" ->
+                            InlineBtn(text, "buy")
+                        else -> InlineBtn(text, "disabled")
+                    }
+                )
+            }
+            if (row.isNotEmpty()) out.add(row)
+        }
+        return out
+    }
+
+    /** Press a callback button (getCallbackQueryAnswer, verified
+     *  in td_api.tl). The bot's answer comes back as
+     *  callbackQueryAnswer{text, show_alert, url}; the UI decides
+     *  how to present it. [password] is only for
+     *  callbackWithPassword buttons (the account's 2FA password,
+     *  wrapped in callbackQueryPayloadDataWithPassword). Works
+     *  for any chat, so thread/forum pages reuse it too. */
+    fun answerCallback(
+        chatId: Long,
+        messageId: Long,
+        data: String,
+        password: String?,
+        onAnswer: (text: String, showAlert: Boolean, url: String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val payload = JSONObject().apply {
+            if (password != null) {
+                put("@type", "callbackQueryPayloadDataWithPassword")
+                put("password", password)
+            } else {
+                put("@type", "callbackQueryPayloadData")
+            }
+            put("data", data)
+        }
+        val query = TdClient.request("getCallbackQueryAnswer").apply {
+            put("chat_id", chatId)
+            put("message_id", messageId)
+            put("payload", payload)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                onError(sendErrorText(response))
+            } else {
+                onAnswer(
+                    response.optString("text"),
+                    response.optBoolean("show_alert"),
+                    response.optString("url")
+                )
+            }
+        }
+    }
+
     val COMMON_REACTIONS = listOf("👍", "❤️", "🔥", "🎉", "😂", "👏")
 
     /** Add my reaction, or remove it if I already chose it
@@ -1418,6 +1544,19 @@ object MessageStore {
     fun toggleReaction(item: MsgItem, emoji: String) {
         val chatId = currentChatId
         if (chatId == 0L) return
+        toggleReactionIn(chatId, item, emoji) { _sendError.value = it }
+    }
+
+    /** toggleReaction for an explicit chat — thread and forum
+     *  pages (v0.8.0) show messages from chats other than the
+     *  open one and reuse this; errors go to [onError] instead
+     *  of the chat screen's send-error line. */
+    fun toggleReactionIn(
+        chatId: Long,
+        item: MsgItem,
+        emoji: String,
+        onError: (String) -> Unit
+    ) {
         val already = item.reactions.any { it.emoji == emoji && it.chosen }
         val reactionType = JSONObject().apply {
             put("@type", "reactionTypeEmoji")
@@ -1446,14 +1585,16 @@ object MessageStore {
                 // reaction is not allowed in this chat" — say that
                 // in plain words, never show the raw code.
                 val message = response.optString("message")
-                _sendError.value = if (
-                    response.optInt("code") == 400 ||
-                    message.contains("REACTION", ignoreCase = true)
-                ) {
-                    "这个对话不允许这个回应。"
-                } else {
-                    sendErrorText(response)
-                }
+                onError(
+                    if (
+                        response.optInt("code") == 400 ||
+                        message.contains("REACTION", ignoreCase = true)
+                    ) {
+                        "这个对话不允许这个回应。"
+                    } else {
+                        sendErrorText(response)
+                    }
+                )
             }
         }
     }
