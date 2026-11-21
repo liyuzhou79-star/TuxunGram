@@ -1,5 +1,7 @@
 package com.tuxungram.android.td
 
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -64,6 +66,68 @@ object ChatStore {
     @Volatile
     private var attached = false
 
+    // ---- Recompute throttling (v0.9.1, audit K1) ----
+    // handleUpdate used to re-sort and republish all three
+    // lists (main + archive + folder) on EVERY TDLib update,
+    // on the receiver thread: a bulk first sync over thousands
+    // of chats made that O(n log n) work per update and could
+    // delay update processing itself. The published lists are
+    // pure functions of the cache and StateFlow already
+    // conflates intermediate values for the UI, so bursts are
+    // now coalesced: at most one flush per RECOMPUTE_WINDOW_MS,
+    // with a guaranteed trailing flush so the final state is
+    // always published. The flush itself still runs on the
+    // receiver thread (see requestRecompute), exactly where
+    // every cache mutation happens — no new threading surface.
+    private val recomputeHandler = Handler(Looper.getMainLooper())
+
+    @Volatile
+    private var recomputeDirty = false
+
+    @Volatile
+    private var recomputeScheduled = false
+
+    @Volatile
+    private var lastRecomputeAt = 0L
+
+    private companion object {
+        const val RECOMPUTE_WINDOW_MS = 100L
+    }
+
+    private fun requestRecompute() {
+        recomputeDirty = true
+        val now = System.currentTimeMillis()
+        if (now - lastRecomputeAt >= RECOMPUTE_WINDOW_MS) {
+            flushRecompute()
+            return
+        }
+        if (recomputeScheduled) return
+        recomputeScheduled = true
+        recomputeHandler.postDelayed({
+            recomputeScheduled = false
+            // Route the trailing flush through a throwaway
+            // request: its response callback runs on the
+            // receiver thread, like every other cache access.
+            // If the client is mid-restart the probe is dropped
+            // silently — the dirty flag stays set and the next
+            // update (window long past) flushes synchronously.
+            TdRepository.sendRaw(
+                TdClient.request("getAuthorizationState")
+            ) {
+                flushRecompute()
+            }
+        }, RECOMPUTE_WINDOW_MS)
+    }
+
+    private fun flushRecompute() {
+        if (!recomputeDirty) return
+        recomputeDirty = false
+        lastRecomputeAt = System.currentTimeMillis()
+        recompute()
+        recomputeArchive()
+        recomputeFolder()
+    }
+
     fun attach() {
         if (attached) return
         attached = true
@@ -116,7 +180,7 @@ object ChatStore {
                 // chat, however old, has been pulled in.
                 _allLoaded.value = true
             }
-            recompute()
+            requestRecompute()
             _syncing.value = !_allLoaded.value
             // Keep pulling until TDLib says the list is complete, so
             // the chat list is whole even if the user never scrolls.
@@ -166,7 +230,7 @@ object ChatStore {
             if (TdClient.isError(response) && response.optInt("code") == 404) {
                 _archiveLoaded.value = true
             }
-            recomputeArchive()
+            requestRecompute()
             if (!_archiveLoaded.value) {
                 if (archiveCount() > countBefore) {
                     emptyArchiveRetries = 0
@@ -259,7 +323,7 @@ object ChatStore {
             if (TdClient.isError(response) && response.optInt("code") == 404) {
                 _folderLoaded.value = true
             }
-            recomputeFolder()
+            requestRecompute()
             if (!_folderLoaded.value && _selectedFolder.value == folderId) {
                 if (folderCount(folderId) > countBefore) {
                     emptyFolderRetries = 0
@@ -459,9 +523,7 @@ object ChatStore {
             }
             else -> return
         }
-        recompute()
-        recomputeArchive()
-        recomputeFolder()
+        requestRecompute()
     }
 
     private fun patchPosition(chat: JSONObject, position: JSONObject) {
@@ -590,7 +652,7 @@ object ChatStore {
             if (smallId != 0) {
                 userPhotoFileByChat[chatId] = smallId
                 ensurePhotoDownload(smallId)
-                recompute()
+                requestRecompute()
             }
         }
     }
