@@ -8,8 +8,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- No backups (audit fix A8): the TDLib database and the
+         app's preferences (which include proxy credentials)
+         must not be extractable through cloud backup or
+         adb backup. Chat history is server-side anyway. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="TuxunGram"
