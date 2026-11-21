@@ -157,7 +157,9 @@ object MessageStore {
     @Volatile
     private var lastTypingSentAt = 0L
 
-    private val replyFetchPending = ConcurrentHashMap.newKeySet<Long>()
+    /** In-flight reply-summary fetches, keyed "chatId:messageId"
+     *  (message ids repeat across chats). */
+    private val replyFetchPending = ConcurrentHashMap.newKeySet<String>()
 
     // ---- In-chat search + jump-to-message (Batch 2, B4) ----
 
@@ -1633,13 +1635,22 @@ object MessageStore {
     }
 
     private fun fetchReplySummary(chatId: Long, messageId: Long) {
-        if (!replyFetchPending.add(messageId)) return
+        // Message ids are only unique WITHIN a chat, so the
+        // pending key must carry the chat id too — keyed by the
+        // message id alone, a fetch for one chat could suppress
+        // or satisfy another chat's fetch (audit fix A4).
+        val key = "$chatId:$messageId"
+        if (!replyFetchPending.add(key)) return
         val query = TdClient.request("getMessage").apply {
             put("chat_id", chatId)
             put("message_id", messageId)
         }
         TdRepository.sendRaw(query) { response ->
-            replyFetchPending.remove(messageId)
+            replyFetchPending.remove(key)
+            // The user may have moved to another chat while the
+            // answer was in flight; patching now would write
+            // this chat's summary into the other chat's bubbles.
+            if (currentChatId != chatId) return@sendRaw
             if (TdClient.isError(response)) return@sendRaw
             val content = response.optJSONObject("content") ?: return@sendRaw
             val summary = summarizeContent(content)
