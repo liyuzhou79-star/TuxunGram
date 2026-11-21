@@ -78,6 +78,14 @@ class TdClient(
 
     fun close() {
         running = false
+        // Audit K3 (v0.9.1): requests still in flight on a dying
+        // client can never be answered once the receiver stops;
+        // drop their callbacks now instead of leaving them in
+        // the map for the rest of this client's lifetime. They
+        // are NOT invoked — callers of a closing client must not
+        // be handed a fake answer (a restart builds a fresh
+        // client and the stores re-issue what they need).
+        callbacks.clear()
         send(JSONObject().put("@type", "close"))
     }
 

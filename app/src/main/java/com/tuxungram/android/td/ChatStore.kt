@@ -681,15 +681,57 @@ object ChatStore {
         TdRepository.sendRaw(query) { reportIfError(it) }
     }
 
+    /** Chat-list preview line. Per-type labels since v0.9.1
+     *  (audit K6 — previously every non-text/photo type rendered
+     *  as the same "[消息]"); content type names and the fields
+     *  read here are verified in td_api.tl (messageDocument
+     *  .document.file_name, messageAudio.audio.title, message
+     *  Sticker.sticker.emoji, messagePoll.poll.question). */
     private fun previewOf(message: JSONObject?): String {
         if (message == null) return ""
         val content = message.optJSONObject("content")
+        fun caption(): String =
+            content?.optJSONObject("caption")?.optString("text") ?: ""
+        fun withCaption(label: String): String {
+            val cap = caption()
+            return if (cap.isEmpty()) label else "$label $cap"
+        }
         val body = when (content?.optString("@type")) {
-            "messageText" -> content.optJSONObject("text")?.optString("text") ?: ""
-            "messagePhoto" -> {
-                val caption = content.optJSONObject("caption")?.optString("text") ?: ""
-                if (caption.isEmpty()) "[图片]" else "[图片] $caption"
+            "messageText" ->
+                content.optJSONObject("text")?.optString("text") ?: ""
+            "messagePhoto" -> withCaption("[图片]")
+            "messageVideo" -> withCaption("[视频]")
+            "messageDocument" -> {
+                val name = content.optJSONObject("document")
+                    ?.optString("file_name") ?: ""
+                when {
+                    name.isNotEmpty() -> withCaption("[文件] $name")
+                    else -> withCaption("[文件]")
+                }
             }
+            "messageVoiceNote" -> withCaption("[语音]")
+            "messageAudio" -> {
+                val title = content.optJSONObject("audio")
+                    ?.optString("title") ?: ""
+                if (title.isNotEmpty()) "[音频] $title"
+                else withCaption("[音频]")
+            }
+            "messageAnimation" -> withCaption("[GIF]")
+            "messageSticker" -> {
+                val emoji = content.optJSONObject("sticker")
+                    ?.optString("emoji") ?: ""
+                if (emoji.isNotEmpty()) "[贴纸] $emoji" else "[贴纸]"
+            }
+            "messageVideoNote" -> "[视频消息]"
+            "messagePoll" -> {
+                val question = content.optJSONObject("poll")
+                    ?.optJSONObject("question")?.optString("text") ?: ""
+                if (question.isNotEmpty()) "[投票] $question" else "[投票]"
+            }
+            "messageLocation", "messageVenue" -> "[位置]"
+            "messageContact" -> "[联系人]"
+            "messageCall" -> "[通话]"
+            "messageGame" -> "[游戏]"
             null -> ""
             else -> "[消息]"
         }

@@ -68,10 +68,22 @@ object ProxyStore {
         if (raw != null) {
             _proxies.value = parseList(raw)
             _activeId.value = prefs.getLong(KEY_ACTIVE, 0L)
+            // K2 migration: a list written by v0.9.0 or earlier
+            // holds plaintext passwords/secrets; rewrite it in
+            // encrypted form once (persist encrypts, see below).
+            if (legacyPlaintextSeen) {
+                legacyPlaintextSeen = false
+                persist()
+            }
         } else {
             migrateLegacy(prefs)
         }
     }
+
+    /** Set by parseList when a stored password/secret was not
+     *  in ProxyCrypto's encrypted form yet. */
+    @Volatile
+    private var legacyPlaintextSeen = false
 
     private fun migrateLegacy(prefs: android.content.SharedPreferences) {
         val server = prefs.getString(KEY_SERVER, "") ?: ""
@@ -102,6 +114,15 @@ object ProxyStore {
             val arr = JSONArray(raw)
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
+                val rawPassword = o.optString("password")
+                val rawSecret = o.optString("secret")
+                if ((rawPassword.isNotEmpty() &&
+                        !ProxyCrypto.isEncrypted(rawPassword)) ||
+                    (rawSecret.isNotEmpty() &&
+                        !ProxyCrypto.isEncrypted(rawSecret))
+                ) {
+                    legacyPlaintextSeen = true
+                }
                 out.add(
                     ProxyConfig(
                         id = o.optLong("id"),
@@ -110,8 +131,8 @@ object ProxyStore {
                         server = o.optString("server"),
                         port = o.optInt("port", 1080),
                         username = o.optString("username"),
-                        password = o.optString("password"),
-                        secret = o.optString("secret")
+                        password = ProxyCrypto.decrypt(rawPassword),
+                        secret = ProxyCrypto.decrypt(rawSecret)
                     )
                 )
             }
@@ -132,8 +153,12 @@ object ProxyStore {
                 put("server", entry.server)
                 put("port", entry.port)
                 put("username", entry.username)
-                put("password", entry.password)
-                put("secret", entry.secret)
+                // Passwords and MTProto secrets are stored
+                // encrypted at rest (v0.9.1, audit K2); the
+                // in-memory ProxyConfig stays plaintext because
+                // the settings UI edits it and addProxy needs it.
+                put("password", ProxyCrypto.encrypt(entry.password))
+                put("secret", ProxyCrypto.encrypt(entry.secret))
             })
         }
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
