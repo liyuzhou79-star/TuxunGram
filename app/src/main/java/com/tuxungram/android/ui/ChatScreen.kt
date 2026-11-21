@@ -458,6 +458,20 @@ fun ChatScreen(
 
 
 
+        // Date separators (details pass): the first message of
+        // each day gets a centered day chip above it. Computed
+        // here — remember() is not allowed inside the lazy
+        // list's content lambda.
+        val separatorIds = HashSet<Long>().apply {
+            var prevKey = Int.MIN_VALUE
+            for (m in messages) {
+                val key = dayKey(m.dateSeconds)
+                if (key != prevKey) {
+                    add(m.id)
+                    prevKey = key
+                }
+            }
+        }
         LazyColumn(
             state = listState,
             reverseLayout = true,
@@ -467,20 +481,6 @@ fun ChatScreen(
                 .padding(horizontal = 12.dp)
                 .lazyListScrollbar(listState, reverse = true)
         ) {
-            // Date separators (details pass): the first message
-            // of each day gets a centered day chip above it.
-            val separatorIds = remember(messages) {
-                val set = HashSet<Long>()
-                var prevKey = Int.MIN_VALUE
-                for (m in messages) {
-                    val key = dayKey(m.dateSeconds)
-                    if (key != prevKey) {
-                        set.add(m.id)
-                        prevKey = key
-                    }
-                }
-                set
-            }
             items(items = messages.asReversed(), key = { it.id }) { msg ->
                 Column {
                     if (msg.id in separatorIds) {
