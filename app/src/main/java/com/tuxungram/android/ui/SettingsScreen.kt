@@ -87,6 +87,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.core.content.FileProvider
+import com.tuxungram.android.td.AccountStore
 import com.tuxungram.android.td.KeepAliveService
 import com.tuxungram.android.td.StorageStore
 import com.tuxungram.android.td.ProxyConfig
@@ -347,6 +348,45 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Text(UiSettings.SEED_NAMES[index], fontSize = 12.sp)
                 Spacer(Modifier.width(10.dp))
             }
+        }
+        Spacer(Modifier.height(28.dp))
+        Text("账号", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "可以登录多个 Telegram 账号，每个账号的数据各自独立。切换账号时 App 会自动重启一下，稍等片刻就好。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val accountSlots by AccountStore.slots.collectAsState()
+        val currentSlot by AccountStore.current.collectAsState()
+        val accountLabels by AccountStore.labels.collectAsState()
+        for (slot in accountSlots) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (slot != currentSlot) {
+                            TdRepository.switchAccount(slot)
+                        }
+                    }
+                    .padding(vertical = 8.dp)
+            ) {
+                Text(if (slot == currentSlot) "● " else "○ ")
+                Text(
+                    accountLabels[slot] ?: "账号 ${slot + 1}",
+                    fontSize = 15.sp
+                )
+                if (slot == currentSlot) {
+                    Text(
+                        "（当前）",
+                        color = Color.Gray, fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
+                }
+            }
+        }
+        TextButton(onClick = { TdRepository.addAccount() }) {
+            Text("添加账号")
         }
         Spacer(Modifier.height(28.dp))
         Text("通知", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
