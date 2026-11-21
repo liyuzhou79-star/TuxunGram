@@ -966,6 +966,14 @@ fun SettingsScreen(
                 }
             )
         }
+        // One delete-confirm target for the whole file list
+        // (audit fix A7): a per-row remember() inside the loop
+        // below is positional state — after the list changes it
+        // can attach the confirm dialog to a different file
+        // than the one the user long-pressed.
+        var fileDeleteTarget by remember {
+            mutableStateOf<com.tuxungram.android.td.DownloadedEntry?>(null)
+        }
         if (downloaded.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             Text(
@@ -974,13 +982,12 @@ fun SettingsScreen(
                 color = Color.Gray
             )
             for (entry in downloaded.take(50)) {
-                var askDelete by remember(entry.path) { mutableStateOf(false) }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .combinedClickable(
                             onClick = { openDownloadedFile(settingsContext, entry.path) },
-                            onLongClick = { askDelete = true }
+                            onLongClick = { fileDeleteTarget = entry }
                         )
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -997,25 +1004,26 @@ fun SettingsScreen(
                         )
                     }
                 }
-                if (askDelete) {
-                    AlertDialog(
-                        onDismissRequest = { askDelete = false },
-                        title = { Text("删除这个文件？") },
-                        text = { Text(entry.name) },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                askDelete = false
-                                StorageStore.deleteOne(entry.path)
-                                storageTick++
-                            }) { Text("删除") }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { askDelete = false }) {
-                                Text("取消")
-                            }
+            }
+            val targetFile = fileDeleteTarget
+            if (targetFile != null) {
+                AlertDialog(
+                    onDismissRequest = { fileDeleteTarget = null },
+                    title = { Text("删除这个文件？") },
+                    text = { Text(targetFile.name) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            fileDeleteTarget = null
+                            StorageStore.deleteOne(targetFile.path)
+                            storageTick++
+                        }) { Text("删除") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { fileDeleteTarget = null }) {
+                            Text("取消")
                         }
-                    )
-                }
+                    }
+                )
             }
             if (downloaded.size > 50) {
                 Text(
