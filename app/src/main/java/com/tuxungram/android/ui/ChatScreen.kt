@@ -878,13 +878,19 @@ fun MessageBubble(
                         }
                     )
                 }
-                DropdownMenuItem(
-                    text = { Text("添加回应") },
-                    onClick = {
-                        menuOpen = false
-                        reactionOpen = true
-                    }
-                )
+                // Channels commonly restrict reactions to a
+                // short admin-picked list, or turn them off
+                // entirely; with an empty allowed list the entry
+                // is not shown at all.
+                if (allowedReactions == null || allowedReactions.isNotEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text("添加回应") },
+                        onClick = {
+                            menuOpen = false
+                            reactionOpen = true
+                        }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("转发") },
                     onClick = {
