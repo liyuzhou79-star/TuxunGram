@@ -78,13 +78,19 @@ import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
+import com.tuxungram.android.td.MediaEntry
+import com.tuxungram.android.td.MediaStore
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import com.tuxungram.android.td.PollUi
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -135,6 +141,7 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
     }
 
     var attachMenuOpen by remember { mutableStateOf(false) }
+    var mediaPickerOpen by remember { mutableStateOf(false) }
     // (path, mimeType, displayName) of a picked file awaiting confirm.
     var pendingFile by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     val filePicker = rememberLauncherForActivityResult(
@@ -241,6 +248,10 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
             )
         }
 
+        if (mediaPickerOpen) {
+            MediaPickerDialog(onDismiss = { mediaPickerOpen = false })
+        }
+
         LazyColumn(
             state = listState,
             reverseLayout = true,
@@ -338,6 +349,14 @@ fun ChatScreen(chatId: Long, onBack: () -> Unit, onForward: (MsgItem) -> Unit) {
                                 onClick = {
                                     attachMenuOpen = false
                                     filePicker.launch("*/*")
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("贴纸 / GIF") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    MediaStore.load()
+                                    mediaPickerOpen = true
                                 }
                             )
                         }
@@ -474,14 +493,21 @@ fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -> Unit) 
             Column(
                 modifier = Modifier
                     .background(
-                        if (outgoing) Color(0xFFD8EDCB) else Color(0xFFF1F1F1),
+                        if (msg.kind == MsgKind.STICKER) {
+                            Color.Transparent
+                        } else if (outgoing) {
+                            Color(0xFFD8EDCB)
+                        } else {
+                            Color(0xFFF1F1F1)
+                        },
                         RoundedCornerShape(12.dp)
                     )
                     .combinedClickable(
                         onClick = {
                             // File-like messages: tap opens the
                             // downloaded file, or starts the download.
-                            if (msg.fileId != 0) {
+                            // (Stickers are display-only.)
+                            if (msg.fileId != 0 && msg.kind != MsgKind.STICKER) {
                                 val path = msg.filePath
                                 if (path != null) {
                                     openFileWithSystem(context, path, msg.fileMime)
@@ -518,7 +544,29 @@ fun MessageBubble(msg: MsgItem, isGroup: Boolean, onForward: (MsgItem) -> Unit) 
                     Spacer(Modifier.height(4.dp))
                 }
                 when (msg.kind) {
-                    MsgKind.TEXT -> Text(msg.text, fontSize = 15.sp)
+                    MsgKind.TEXT -> {
+                        Text(msg.text, fontSize = 15.sp)
+                        if (msg.lpTitle.isNotEmpty() || msg.lpSiteName.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            LinkPreviewCard(msg)
+                        }
+                    }
+                    MsgKind.STICKER -> StickerBubbleContent(msg)
+                    MsgKind.ANIMATION -> {
+                        AnimationBubbleContent(msg)
+                        if (msg.text.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(msg.text, fontSize = 15.sp)
+                        }
+                    }
+                    MsgKind.POLL -> {
+                        val poll = msg.poll
+                        if (poll != null) {
+                            PollBubbleContent(msg, poll)
+                        } else {
+                            Text("[投票]", color = Color.Gray, fontSize = 14.sp)
+                        }
+                    }
                     MsgKind.PHOTO -> {
                         PhotoBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
@@ -840,3 +888,407 @@ fun PhotoBubbleContent(msg: MsgItem) {
     }
 }
 
+
+/** Sticker image (webp decoded straight from the TDLib file);
+ *  shown at a fixed chat-friendly size, no bubble chrome. */
+@Composable
+private fun StickerBubbleContent(msg: MsgItem) {
+    val path = msg.filePath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                try {
+                    BitmapFactory.decodeFile(path)
+                } catch (t: Throwable) {
+                    null
+                }
+            }
+        }
+    }
+    val bmp = bitmap
+    if (bmp != null) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = msg.stickerEmoji,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.size(150.dp)
+        )
+    } else {
+        Box(
+            modifier = Modifier.size(150.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                msg.stickerEmoji.ifEmpty { "贴纸" },
+                fontSize = 40.sp
+            )
+        }
+    }
+}
+
+/** GIF/animation bubble: first frame pulled from the downloaded
+ *  mp4 via MediaMetadataRetriever, with a GIF tag; tapping the
+ *  bubble (handled by the generic file tap) opens the player. */
+@Composable
+private fun AnimationBubbleContent(msg: MsgItem) {
+    val path = msg.filePath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                try {
+                    val retriever = android.media.MediaMetadataRetriever()
+                    retriever.setDataSource(path)
+                    val frame = retriever.frameAtTime
+                    retriever.release()
+                    frame
+                } catch (t: Throwable) {
+                    null
+                }
+            }
+        }
+    }
+    val ratio = if (msg.photoWidth > 0 && msg.photoHeight > 0) {
+        msg.photoHeight.toFloat() / msg.photoWidth.toFloat()
+    } else {
+        0.75f
+    }
+    val heightDp = (220f * ratio).coerceIn(110f, 300f)
+    Box {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(width = 220.dp, height = heightDp.dp)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(width = 220.dp, height = heightDp.dp)
+                    .background(Color(0xFFE0E0E0)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (msg.filePath == null) "动图下载中…" else "动图",
+                    color = Color.Gray, fontSize = 13.sp
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .padding(6.dp)
+                .background(Color(0x99000000), RoundedCornerShape(4.dp))
+                .padding(horizontal = 5.dp, vertical = 1.dp)
+        ) {
+            Text("GIF", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/** Poll bubble: question, tappable options with result bars.
+ *  Single-answer polls vote on tap; multiple-answer polls collect
+ *  a local selection and submit together. State always re-renders
+ *  from TDLib's poll object (updatePoll keeps it current). */
+@Composable
+private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
+    var selected by remember(msg.id) {
+        mutableStateOf(
+            poll.options.indices.filter { poll.options[it].chosen }.toSet()
+        )
+    }
+    LaunchedEffect(poll) {
+        selected = poll.options.indices.filter { poll.options[it].chosen }.toSet()
+    }
+    val voted = poll.options.any { it.chosen }
+    val showResults = voted || poll.isClosed
+    Column(modifier = Modifier.width(240.dp)) {
+        Text(poll.question, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            when {
+                poll.isClosed -> "投票已结束"
+                poll.isQuiz -> "测验"
+                poll.isAnonymous -> "匿名投票"
+                else -> "公开投票"
+            } + if (poll.allowsMultiple) " · 可多选" else "",
+            color = Color.Gray, fontSize = 12.sp
+        )
+        Spacer(Modifier.height(6.dp))
+        poll.options.forEachIndexed { index, option ->
+            val pct = option.percentage
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp)
+                    .background(Color(0x0D000000), RoundedCornerShape(8.dp))
+                    .clickable(enabled = !poll.isClosed) {
+                        if (poll.allowsMultiple) {
+                            selected = if (index in selected) {
+                                selected - index
+                            } else {
+                                selected + index
+                            }
+                        } else {
+                            MessageStore.clearSendError()
+                            MessageStore.setPollAnswer(
+                                msg,
+                                if (option.chosen) emptyList() else listOf(index)
+                            )
+                        }
+                    }
+                    .padding(horizontal = 9.dp, vertical = 7.dp)
+            ) {
+                if (showResults) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(pct / 100f)
+                            .height(30.dp)
+                            .background(
+                                if (option.chosen || (poll.isQuiz && option.isCorrect)) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    Color(0x14000000)
+                                },
+                                RoundedCornerShape(8.dp)
+                            )
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        option.text,
+                        fontSize = 14.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (showResults) {
+                        Text(
+                            "$pct%",
+                            color = Color.Gray,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    } else if (index in selected && poll.allowsMultiple) {
+                        Text("✓", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)
+                    }
+                }
+            }
+        }
+        if (poll.allowsMultiple && !poll.isClosed) {
+            Spacer(Modifier.height(4.dp))
+            Button(
+                onClick = {
+                    MessageStore.clearSendError()
+                    MessageStore.setPollAnswer(msg, selected.sorted())
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (voted) "更新投票" else "投票")
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "共 ${poll.totalVoters} 人参与",
+            color = Color.Gray, fontSize = 12.sp
+        )
+        if (poll.isQuiz && voted && poll.explanation.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(poll.explanation, color = Color.Gray, fontSize = 12.sp)
+        }
+    }
+}
+
+/** Link preview card under a text message, rendered from the
+ *  link_preview object TDLib ships with the message. Tapping
+ *  opens the link in the browser. */
+@Composable
+private fun LinkPreviewCard(msg: MsgItem) {
+    val context = LocalContext.current
+    val photoPath = msg.lpPhotoPath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, photoPath
+    ) {
+        value = if (photoPath == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                try {
+                    BitmapFactory.decodeFile(photoPath)
+                } catch (t: Throwable) {
+                    null
+                }
+            }
+        }
+    }
+    Column(
+        modifier = Modifier
+            .width(240.dp)
+            .background(Color(0x0D000000), RoundedCornerShape(8.dp))
+            .clickable {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse(msg.lpUrl)
+                        ).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    )
+                } catch (t: Throwable) {
+                    // No browser / bad URL: nothing sensible to do.
+                }
+            }
+            .padding(9.dp)
+    ) {
+        if (msg.lpSiteName.isNotEmpty()) {
+            Text(
+                msg.lpSiteName,
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        if (msg.lpTitle.isNotEmpty()) {
+            Text(msg.lpTitle, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+        }
+        if (msg.lpDescription.isNotEmpty()) {
+            Text(msg.lpDescription, color = Color.Gray, fontSize = 12.sp, maxLines = 3)
+        }
+        val bmp = bitmap
+        if (bmp != null) {
+            Spacer(Modifier.height(6.dp))
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp)
+                    .clip(RoundedCornerShape(6.dp))
+            )
+        }
+    }
+}
+
+/** Sticker / GIF picker: three tabs (recent stickers, favorite
+ *  stickers, saved GIFs) fed by MediaStore; tapping an entry
+ *  sends it immediately. */
+@Composable
+private fun MediaPickerDialog(onDismiss: () -> Unit) {
+    var tab by remember { mutableIntStateOf(0) }
+    val recent by MediaStore.recentStickers.collectAsState()
+    val favorites by MediaStore.favoriteStickers.collectAsState()
+    val animations by MediaStore.savedAnimations.collectAsState()
+    val entries = when (tab) {
+        0 -> recent
+        1 -> favorites
+        else -> animations
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("贴纸 / GIF") },
+        text = {
+            Column {
+                Row {
+                    for ((index, label) in listOf("最近", "收藏", "GIF").withIndex()) {
+                        TextButton(
+                            onClick = { tab = index },
+                            enabled = tab != index
+                        ) {
+                            Text(if (tab == index) "● $label" else label)
+                        }
+                    }
+                }
+                if (entries.isEmpty()) {
+                    Text(
+                        "这里还没有内容。在 Telegram 里用过贴纸、存过 GIF 后，这里就会有。",
+                        color = Color.Gray, fontSize = 13.sp,
+                        modifier = Modifier.padding(vertical = 16.dp)
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4),
+                        modifier = Modifier.height(300.dp)
+                    ) {
+                        gridItems(entries, key = { it.fileId }) { entry ->
+                            MediaPickerCell(entry) {
+                                MessageStore.clearSendError()
+                                if (entry.isAnimation) {
+                                    MessageStore.sendAnimationFile(
+                                        entry.fileId, entry.durationSec,
+                                        entry.width, entry.height
+                                    )
+                                } else {
+                                    MessageStore.sendStickerFile(entry.fileId, entry.emoji)
+                                }
+                                onDismiss()
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+@Composable
+private fun MediaPickerCell(entry: MediaEntry, onClick: () -> Unit) {
+    val path = entry.previewPath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                try {
+                    BitmapFactory.decodeFile(path)
+                } catch (t: Throwable) {
+                    null
+                }
+            }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clickable { onClick() }
+            .padding(6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = entry.emoji,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (entry.isAnimation) {
+            Text("GIF", fontWeight = FontWeight.Bold, color = Color.Gray)
+        } else {
+            Text(entry.emoji.ifEmpty { "…" }, fontSize = 28.sp)
+        }
+        if (entry.isAnimation) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .background(Color(0x99000000), RoundedCornerShape(3.dp))
+                    .padding(horizontal = 3.dp)
+            ) {
+                Text("GIF", color = Color.White, fontSize = 8.sp)
+            }
+        }
+    }
+}

@@ -6,7 +6,29 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, OTHER }
+enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, OTHER }
+
+/** One poll option, flattened from pollOption. */
+data class PollOptionUi(
+    val text: String,
+    val voterCount: Int,
+    val percentage: Int,
+    val chosen: Boolean,
+    val isCorrect: Boolean = false
+)
+
+/** A poll message, flattened from the poll object; refreshed
+ *  wholesale whenever TDLib pushes updatePoll. */
+data class PollUi(
+    val question: String,
+    val options: List<PollOptionUi>,
+    val totalVoters: Int,
+    val isClosed: Boolean,
+    val isAnonymous: Boolean,
+    val allowsMultiple: Boolean,
+    val isQuiz: Boolean,
+    val explanation: String = ""
+)
 
 /** One reaction shown under a bubble: the emoji, how many people
  *  used it, and whether I am one of them. */
@@ -44,7 +66,21 @@ data class MsgItem(
     // Outgoing delivery state derived from the chat's
     // last_read_outbox_message_id: "" (not applicable / pending),
     // "sent" (delivered, unread), "read".
-    val readState: String = ""
+    val readState: String = "",
+    // Sticker emoji (STICKER kind); the image itself rides the
+    // generic fileId/filePath fields and renders from filePath.
+    val stickerEmoji: String = "",
+    // Poll payload (POLL kind).
+    val pollId: Long = 0L,
+    val poll: PollUi? = null,
+    // Link preview card (TEXT kind), straight from messageText's
+    // link_preview object — TDLib ships it with the message.
+    val lpSiteName: String = "",
+    val lpTitle: String = "",
+    val lpDescription: String = "",
+    val lpUrl: String = "",
+    val lpPhotoFileId: Int = 0,
+    val lpPhotoPath: String? = null
 )
 
 /**
@@ -419,6 +455,20 @@ object MessageStore {
                 lastReadOutbox = update.optLong("last_read_outbox_message_id")
                 publish()
             }
+            "updatePoll" -> {
+                // Full poll object pushed on every vote change;
+                // match it to the open chat's poll message by id.
+                val pollObj = update.optJSONObject("poll") ?: return
+                val pollId = pollObj.optLong("id")
+                var changed = false
+                for ((id, item) in byId) {
+                    if (item.pollId == pollId && item.pollId != 0L) {
+                        byId[id] = item.copy(poll = parsePoll(pollObj))
+                        changed = true
+                    }
+                }
+                if (changed) publish()
+            }
             "updateFile" -> {
                 val file = update.optJSONObject("file") ?: return
                 val local = file.optJSONObject("local") ?: return
@@ -430,6 +480,10 @@ object MessageStore {
                 for ((id, item) in byId) {
                     if (completed && item.photoFileId == fileId && item.photoPath == null) {
                         byId[id] = item.copy(photoPath = path)
+                        changed = true
+                    }
+                    if (completed && item.lpPhotoFileId == fileId && item.lpPhotoPath == null) {
+                        byId[id] = item.copy(lpPhotoPath = path)
                         changed = true
                     }
                     if (item.fileId == fileId && item.fileId != 0) {
@@ -523,10 +577,70 @@ object MessageStore {
 
     private fun parseContent(base: MsgItem, content: JSONObject): MsgItem {
         return when (content.optString("@type")) {
-            "messageText" -> base.copy(
-                kind = MsgKind.TEXT,
-                text = content.optJSONObject("text")?.optString("text") ?: ""
-            )
+            "messageText" -> {
+                val lp = content.optJSONObject("link_preview")
+                val lpPhoto = lpPhotoFile(lp)
+                val lpFileId = lpPhoto?.optInt("id", 0) ?: 0
+                if (lpFileId != 0 && downloadedPath(lpPhoto) == null) {
+                    requestDownload(lpFileId, priority = 1)
+                }
+                base.copy(
+                    kind = MsgKind.TEXT,
+                    text = content.optJSONObject("text")?.optString("text") ?: "",
+                    lpSiteName = lp?.optString("site_name") ?: "",
+                    lpTitle = lp?.optString("title") ?: "",
+                    lpDescription = lp?.optJSONObject("description")
+                        ?.optString("text") ?: "",
+                    lpUrl = lp?.optString("url") ?: "",
+                    lpPhotoFileId = lpFileId,
+                    lpPhotoPath = downloadedPath(lpPhoto)
+                )
+            }
+            "messageSticker" -> {
+                val sticker = content.optJSONObject("sticker")
+                val file = sticker?.optJSONObject("sticker")
+                val fileId = file?.optInt("id", 0) ?: 0
+                if (fileId != 0 && downloadedPath(file) == null) {
+                    requestDownload(fileId, priority = 16)
+                }
+                base.copy(
+                    kind = MsgKind.STICKER,
+                    stickerEmoji = sticker?.optString("emoji") ?: "",
+                    fileId = fileId,
+                    filePath = downloadedPath(file),
+                    fileMime = "image/webp",
+                    photoWidth = sticker?.optInt("width", 0) ?: 0,
+                    photoHeight = sticker?.optInt("height", 0) ?: 0
+                )
+            }
+            "messageAnimation" -> {
+                val animation = content.optJSONObject("animation")
+                val file = animation?.optJSONObject("animation")
+                val fileId = file?.optInt("id", 0) ?: 0
+                if (fileId != 0 && downloadedPath(file) == null) {
+                    requestDownload(fileId, priority = 16)
+                }
+                base.copy(
+                    kind = MsgKind.ANIMATION,
+                    text = content.optJSONObject("caption")?.optString("text") ?: "",
+                    fileId = fileId,
+                    filePath = downloadedPath(file),
+                    fileName = animation?.optString("file_name") ?: "",
+                    fileSize = fileSizeOf(file),
+                    fileMime = animation?.optString("mime_type") ?: "video/mp4",
+                    durationSec = animation?.optInt("duration", 0) ?: 0,
+                    photoWidth = animation?.optInt("width", 0) ?: 0,
+                    photoHeight = animation?.optInt("height", 0) ?: 0
+                )
+            }
+            "messagePoll" -> {
+                val pollObj = content.optJSONObject("poll")
+                base.copy(
+                    kind = MsgKind.POLL,
+                    pollId = pollObj?.optLong("id", 0L) ?: 0L,
+                    poll = pollObj?.let { parsePoll(it) }
+                )
+            }
             "messagePhoto" -> {
                 val photo = content.optJSONObject("photo")
                 val size = pickPhotoSize(photo?.optJSONArray("sizes"))
@@ -594,6 +708,203 @@ object MessageStore {
                 )
             }
             else -> base.copy(kind = MsgKind.OTHER, text = "")
+        }
+    }
+
+    private fun requestDownload(fileId: Int, priority: Int) {
+        TdRepository.sendRaw(TdClient.request("downloadFile").apply {
+            put("file_id", fileId)
+            put("priority", priority)
+            put("offset", 0L)
+            put("limit", 0L)
+            put("synchronous", false)
+        }) {}
+    }
+
+    /** The photo file inside a linkPreview's type object, when the
+     *  type carries one (article/app/photo/... types all expose a
+     *  `photo` photo object; pick its largest size's file). */
+    private fun lpPhotoFile(lp: JSONObject?): JSONObject? {
+        val photo = lp?.optJSONObject("type")?.optJSONObject("photo") ?: return null
+        val sizes = photo.optJSONArray("sizes") ?: return null
+        var best: JSONObject? = null
+        for (i in 0 until sizes.length()) {
+            val s = sizes.optJSONObject(i) ?: continue
+            if (best == null || s.optInt("width") > best.optInt("width")) best = s
+        }
+        return best?.optJSONObject("photo")
+    }
+
+    /** Flatten a poll object (fields verified in td_api.tl: poll,
+     *  pollOption, pollTypeQuiz). */
+    private fun parsePoll(poll: JSONObject): PollUi {
+        val type = poll.optJSONObject("type")
+        val isQuiz = type?.optString("@type") == "pollTypeQuiz"
+        val correctIds = HashSet<Int>()
+        var explanation = ""
+        if (isQuiz && type != null) {
+            val arr = type.optJSONArray("correct_option_ids")
+            if (arr != null) {
+                for (i in 0 until arr.length()) correctIds.add(arr.optInt(i))
+            }
+            explanation = type.optJSONObject("explanation")
+                ?.optString("text") ?: ""
+        }
+        val options = ArrayList<PollOptionUi>()
+        val arr = poll.optJSONArray("options") ?: JSONArray()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            options.add(
+                PollOptionUi(
+                    text = o.optJSONObject("text")?.optString("text") ?: "",
+                    voterCount = o.optInt("voter_count"),
+                    percentage = o.optInt("vote_percentage"),
+                    chosen = o.optBoolean("is_chosen"),
+                    isCorrect = correctIds.contains(i)
+                )
+            )
+        }
+        return PollUi(
+            question = poll.optJSONObject("question")?.optString("text") ?: "",
+            options = options,
+            totalVoters = poll.optInt("total_voter_count"),
+            isClosed = poll.optBoolean("is_closed"),
+            isAnonymous = poll.optBoolean("is_anonymous"),
+            allowsMultiple = poll.optBoolean("allows_multiple_answers"),
+            isQuiz = isQuiz,
+            explanation = explanation
+        )
+    }
+
+    /** Vote (or retract, with an empty option list) via
+     *  setPollAnswer; results refresh through updatePoll. */
+    fun setPollAnswer(item: MsgItem, optionIds: List<Int>) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val ids = JSONArray()
+        for (id in optionIds) ids.put(id)
+        val query = TdClient.request("setPollAnswer").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+            put("option_ids", ids)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            }
+        }
+    }
+
+    /** Send a sticker already known to TDLib (from the recent /
+     *  favorite lists) by its local file id — inputFileId is the
+     *  documented way to reference an existing file. */
+    fun sendStickerFile(fileId: Int, emoji: String) {
+        val chatId = currentChatId
+        if (chatId == 0L || fileId == 0) return
+        val replyTo = replyToJson()
+        _replyTarget.value = null
+        val query = TdClient.request("sendMessage").apply {
+            put("chat_id", chatId)
+            if (replyTo != null) put("reply_to", replyTo)
+            put("input_message_content", JSONObject().apply {
+                put("@type", "inputMessageSticker")
+                put("sticker", JSONObject().apply {
+                    put("@type", "inputSticker")
+                    put("sticker", JSONObject().apply {
+                        put("@type", "inputFileId")
+                        put("id", fileId)
+                    })
+                    put("thumbnail", JSONObject.NULL)
+                    put("width", 0)
+                    put("height", 0)
+                })
+                put("emoji", emoji)
+            })
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            } else {
+                val item = parseMessage(response)
+                byId[item.id] = item
+                publish()
+            }
+        }
+    }
+
+    /** Send a saved GIF (animation) by its local file id. */
+    fun sendAnimationFile(fileId: Int, duration: Int, width: Int, height: Int) {
+        val chatId = currentChatId
+        if (chatId == 0L || fileId == 0) return
+        val replyTo = replyToJson()
+        _replyTarget.value = null
+        val query = TdClient.request("sendMessage").apply {
+            put("chat_id", chatId)
+            if (replyTo != null) put("reply_to", replyTo)
+            put("input_message_content", JSONObject().apply {
+                put("@type", "inputMessageAnimation")
+                put("animation", JSONObject().apply {
+                    put("@type", "inputAnimation")
+                    put("animation", JSONObject().apply {
+                        put("@type", "inputFileId")
+                        put("id", fileId)
+                    })
+                    put("thumbnail", JSONObject.NULL)
+                    put("added_sticker_file_ids", JSONArray())
+                    put("duration", duration)
+                    put("width", width)
+                    put("height", height)
+                })
+                put("caption", formattedText(""))
+                put("show_caption_above_media", false)
+                put("has_spoiler", false)
+            })
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            } else {
+                val item = parseMessage(response)
+                byId[item.id] = item
+                publish()
+            }
+        }
+    }
+
+    /** Send a locally recorded voice note (OGG/Opus file).
+     *  [waveform] is the base64 of TDLib's 5-bit packed amplitudes;
+     *  a wrong waveform only renders oddly, never blocks sending. */
+    fun sendVoiceNote(path: String, durationSec: Int, waveform: String) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val replyTo = replyToJson()
+        _replyTarget.value = null
+        val query = TdClient.request("sendMessage").apply {
+            put("chat_id", chatId)
+            if (replyTo != null) put("reply_to", replyTo)
+            put("input_message_content", JSONObject().apply {
+                put("@type", "inputMessageVoiceNote")
+                put("voice_note", JSONObject().apply {
+                    put("@type", "inputVoiceNote")
+                    put("voice_note", JSONObject().apply {
+                        put("@type", "inputFileLocal")
+                        put("path", path)
+                    })
+                    put("duration", durationSec)
+                    put("waveform", waveform)
+                })
+                put("caption", formattedText(""))
+                put("self_destruct_type", JSONObject.NULL)
+            })
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            } else {
+                val item = parseMessage(response)
+                byId[item.id] = item
+                publish()
+            }
         }
     }
 
@@ -831,6 +1142,11 @@ object MessageStore {
             "messageVoiceNote" -> "[语音]"
             "messageAnimation" -> "[动图]"
             "messageSticker" -> "[贴纸]"
+            "messagePoll" -> {
+                val q = content.optJSONObject("poll")
+                    ?.optJSONObject("question")?.optString("text") ?: ""
+                if (q.isEmpty()) "[投票]" else "[投票] $q"
+            }
             else -> "[消息]"
         }
     }
