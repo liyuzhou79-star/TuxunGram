@@ -3549,6 +3549,48 @@ fun OfficialChatBackground() {
     }
 }
 
+/** Floating media time stamp (v0.9.18, Y1): on captionless
+ *  photo / GIF / album messages the official client stamps
+ *  the time and read ticks in a translucent dark capsule at
+ *  the media's bottom-right corner (white glyphs) instead of
+ *  spending a footer row inside the bubble. A failed send is
+ *  flagged inside the capsule; the retry tap itself stays
+ *  available under the media in MessageBubble. */
+@Composable
+fun MediaTimeCapsule(msg: MsgItem, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .background(Color(0x66000000), RoundedCornerShape(10.dp))
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            formatMsgTime(msg.dateSeconds),
+            color = Color.White,
+            fontSize = 11.sp
+        )
+        when (msg.readState) {
+            "read" -> {
+                Spacer(Modifier.width(4.dp))
+                TicksIcon(read = true, color = Color.White, sizeDp = 14)
+            }
+            "sent" -> {
+                Spacer(Modifier.width(4.dp))
+                TicksIcon(read = false, color = Color.White, sizeDp = 14)
+            }
+        }
+        when (msg.sendingState) {
+            "pending" -> Text(
+                " 发送中…", color = Color.White, fontSize = 11.sp
+            )
+            "failed" -> Text(
+                " 发送失败", color = Color(0xFFFF8A80),
+                fontSize = 11.sp
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubble(
@@ -3875,6 +3917,13 @@ fun MessageBubble(
                     }
                     Spacer(Modifier.height(4.dp))
                 }
+                // Floating media time (v0.9.18, Y1): a
+                // captionless photo / GIF stamps its time on
+                // the media itself (MediaTimeCapsule) instead
+                // of taking the footer row below.
+                val mediaOverlay = msg.text.isEmpty() &&
+                    (msg.kind == MsgKind.PHOTO ||
+                        msg.kind == MsgKind.ANIMATION)
                 when (msg.kind) {
                     MsgKind.TEXT -> {
                         RichMessageText(
@@ -3892,7 +3941,19 @@ fun MessageBubble(
                     MsgKind.ANIMATED_EMOJI ->
                         AnimatedEmojiBubbleContent(msg, animEffect)
                     MsgKind.ANIMATION -> {
-                        AnimationBubbleContent(msg)
+                        if (mediaOverlay) {
+                            Box {
+                                AnimationBubbleContent(msg)
+                                MediaTimeCapsule(
+                                    msg,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(6.dp)
+                                )
+                            }
+                        } else {
+                            AnimationBubbleContent(msg)
+                        }
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
@@ -3912,7 +3973,19 @@ fun MessageBubble(
                         }
                     }
                     MsgKind.PHOTO -> {
-                        PhotoBubbleContent(msg)
+                        if (mediaOverlay) {
+                            Box {
+                                PhotoBubbleContent(msg)
+                                MediaTimeCapsule(
+                                    msg,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(6.dp)
+                                )
+                            }
+                        } else {
+                            PhotoBubbleContent(msg)
+                        }
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
@@ -3997,6 +4070,9 @@ fun MessageBubble(
                 // at its bottom-right, in chat_inTimeText /
                 // chat_outTimeText; the ticks ride the same
                 // out-time color (chat_outSentCheck family).
+                // Captionless media skips this row — its stamp
+                // floats on the media instead (v0.9.18, Y1).
+                if (!mediaOverlay) {
                 Row(
                     modifier = Modifier
                         .align(Alignment.End)
@@ -4041,6 +4117,22 @@ fun MessageBubble(
                             }
                         )
                     }
+                }
+                }
+                if (mediaOverlay && msg.sendingState == "failed") {
+                    // The capsule only flags the failure; the
+                    // retry tap stays available under the media.
+                    Text(
+                        "发送失败，点这里重发",
+                        color = Color(0xFFC62828),
+                        fontSize = 11.sp,
+                        modifier = Modifier
+                            .align(Alignment.End)
+                            .padding(top = 3.dp)
+                            .clickable {
+                                MessageStore.resend(msg.id)
+                            }
+                    )
                 }
                 // Scheduled-send label (v0.9.3, M5): the
                 // bubble stays in the chat with its send time
@@ -4623,15 +4715,29 @@ fun AlbumBubble(
                     }
                     Spacer(Modifier.height(4.dp))
                 }
-                Column {
-                    items.chunked(2).forEach { rowItems ->
-                        Row {
-                            for (item in rowItems) {
-                                AlbumCell(item, onOpenPhoto, onOpenVideo)
-                                Spacer(Modifier.width(4.dp))
+                // Captionless album (v0.9.18, Y1): the time
+                // stamp floats over the grid's bottom-right
+                // cell, like the official client; with a
+                // caption the footer row under it stays.
+                Box {
+                    Column {
+                        items.chunked(2).forEach { rowItems ->
+                            Row {
+                                for (item in rowItems) {
+                                    AlbumCell(item, onOpenPhoto, onOpenVideo)
+                                    Spacer(Modifier.width(4.dp))
+                                }
                             }
+                            Spacer(Modifier.height(4.dp))
                         }
-                        Spacer(Modifier.height(4.dp))
+                    }
+                    if (captionItem == null) {
+                        MediaTimeCapsule(
+                            last,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 8.dp, bottom = 8.dp)
+                        )
                     }
                 }
                 if (captionItem != null) {
@@ -4653,6 +4759,7 @@ fun AlbumBubble(
                     }
                     Spacer(Modifier.height(2.dp))
                 }
+                if (captionItem != null) {
                 Row(
                     modifier = Modifier
                         .padding(horizontal = 4.dp)
@@ -4694,6 +4801,7 @@ fun AlbumBubble(
                             fontSize = 11.sp
                         )
                     }
+                }
                 }
             }
             DropdownMenu(
