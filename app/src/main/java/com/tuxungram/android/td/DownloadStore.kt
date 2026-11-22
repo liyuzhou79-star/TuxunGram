@@ -27,16 +27,25 @@ data class DownloadEntryUi(
     val mime: String = "",
     val speedBps: Long = 0L,
     val queued: Boolean = false,
-    val failed: Boolean = false
+    val failed: Boolean = false,
+    // Persistent-list bookkeeping (v0.9.27, T2): where the
+    // file's message lives (needed by addFileToDownloads),
+    // whether the file sits in TDLib's persistent download
+    // list, and whether that list already knows it finished
+    // (updateFile may not have replayed it this session).
+    val chatId: Long = 0L,
+    val messageId: Long = 0L,
+    val inList: Boolean = false,
+    val listCompleted: Boolean = false
 ) {
     val key: String
         get() = if (fileId != 0) "f$fileId" else "p${path ?: name}"
 }
 
 /**
- * Download manager aggregation (v0.9.12, S5). Honest scope:
- * TDLib has no "list all downloads" call, so the page
- * aggregates what the app actually knows —
+ * Download manager aggregation (v0.9.12, S5; persistent
+ * list merged in v0.9.27, T2 — see the last section of
+ * this comment). The page aggregates what the app knows —
  *  1. files of messages the app has rendered (the open chat
  *     via MessageStore, the last shared-media page via
  *     SharedMediaStore): documents, videos, voice notes,
@@ -84,11 +93,45 @@ data class DownloadEntryUi(
  * [retryLimit] times. A user cancel removes the file from
  * every queue structure BEFORE cancelDownloadFile is sent,
  * so a cancel is never mistaken for a failure.
+ *
+ * Persistent download list (v0.9.27, T2). TDLib keeps its
+ * own download list (addFileToDownloads / searchFileDownloads
+ * / removeFileFromDownloads, all verified in td_api.tl) which
+ * survives app restarts when the message database is used —
+ * the tl says so verbatim. The split of duties: the list
+ * remembers WHICH files are downloads (including unfinished
+ * ones from before a restart, which TDLib itself resumes),
+ * while the queue above still decides WHEN a user-started
+ * file is handed over. Concretely: a file enters the
+ * persistent list at the moment the queue releases it
+ * (startDownload also calls addFileToDownloads with the
+ * message's chat/message ids, remembered at enqueue /
+ * register time); [refresh] merges the list back in via
+ * searchFileDownloads so a restarted app shows the same
+ * center; cancel also removes the file from the list (the
+ * tl notes a list download is independent of downloadFile,
+ * so cancelDownloadFile alone would NOT stop it). If the
+ * list calls fail (old state, not ready), the center simply
+ * keeps the pre-T2 aggregation behaviour — nothing is lost.
  */
 object DownloadStore {
 
     private val registry = ConcurrentHashMap<Int, DownloadEntryUi>()
     private val fileState = ConcurrentHashMap<Int, JSONObject>()
+
+    // Persistent-list state (v0.9.27, T2): fileId ->
+    // (chatId, messageId) of the message the file belongs
+    // to; file ids registered from rendered content; file
+    // ids present in TDLib's persistent download list; file
+    // ids we already handed to addFileToDownloads.
+    private val origins =
+        ConcurrentHashMap<Int, Pair<Long, Long>>()
+    private val contentIds = ConcurrentHashMap.newKeySet<Int>()
+    private val listIds = ConcurrentHashMap.newKeySet<Int>()
+    private val addedToList = ConcurrentHashMap.newKeySet<Int>()
+
+    @Volatile
+    private var listLoading = false
 
     private val _entries = MutableStateFlow<List<DownloadEntryUi>>(
         emptyList()
@@ -188,16 +231,55 @@ object DownloadStore {
         if (attached) return
         attached = true
         TdRepository.addUpdateListener { update ->
-            if (update.optString("@type") != "updateFile") {
-                return@addUpdateListener
+            when (update.optString("@type")) {
+                "updateFile" -> {
+                    val file = update.optJSONObject("file")
+                        ?: return@addUpdateListener
+                    val fileId = file.optInt("id", 0)
+                    if (fileId == 0) return@addUpdateListener
+                    fileState[fileId] = file
+                    onFileUpdated(fileId, file)
+                    if (registry.containsKey(fileId)) publish()
+                }
+                "updateFileAddedToDownloads" -> {
+                    // Ours or another client's addition: the
+                    // file belongs in the center from now on.
+                    val fd = update.optJSONObject("file_download")
+                        ?: return@addUpdateListener
+                    val entry = parseListEntry(fd)
+                        ?: return@addUpdateListener
+                    listIds.add(entry.fileId)
+                    addedToList.add(entry.fileId)
+                    mergeListEntry(entry)
+                    publish()
+                }
+                "updateFileRemovedFromDownloads" -> {
+                    val fileId = update.optInt("file_id", 0)
+                    if (fileId == 0) return@addUpdateListener
+                    listIds.remove(fileId)
+                    addedToList.remove(fileId)
+                    // A row that only the list kept alive
+                    // goes with it; content rows stay.
+                    if (fileId !in contentIds) {
+                        registry.remove(fileId)
+                    }
+                    publish()
+                }
+                "updateFileDownload" -> {
+                    val fileId = update.optInt("file_id", 0)
+                    if (fileId == 0) return@addUpdateListener
+                    if (update.optInt("complete_date", 0) > 0) {
+                        registry[fileId]?.let { existing ->
+                            if (!existing.listCompleted) {
+                                registry[fileId] = existing.copy(
+                                    listCompleted = true
+                                )
+                            }
+                        }
+                    }
+                    if (registry.containsKey(fileId)) publish()
+                }
             }
-            val file = update.optJSONObject("file")
-                ?: return@addUpdateListener
-            val fileId = file.optInt("id", 0)
-            if (fileId == 0) return@addUpdateListener
-            fileState[fileId] = file
-            onFileUpdated(fileId, file)
-            if (registry.containsKey(fileId)) publish()
         }
     }
 
@@ -296,10 +378,21 @@ object DownloadStore {
     /** Ask for a file to be downloaded through the queue.
      *  [boost] puts it at the front (a tap on the file in a
      *  chat, or 优先下载 in the download center). Safe to
-     *  call for files already downloading or done. */
-    fun enqueue(fileId: Int, boost: Boolean = false) {
+     *  call for files already downloading or done. [chatId] /
+     *  [messageId] locate the owning message; they are what
+     *  addFileToDownloads needs when the queue releases the
+     *  file into the persistent list (v0.9.27, T2). */
+    fun enqueue(
+        fileId: Int,
+        boost: Boolean = false,
+        chatId: Long = 0L,
+        messageId: Long = 0L
+    ) {
         if (fileId == 0) return
         attach()
+        if (chatId != 0L && messageId != 0L) {
+            origins[fileId] = chatId to messageId
+        }
         val local = fileState[fileId]?.optJSONObject("local")
         if (local?.optBoolean("is_downloading_completed") == true) {
             return
@@ -364,6 +457,35 @@ object DownloadStore {
             put("synchronous", false)
         }
         TdRepository.sendRaw(query) {}
+        maybeAddToList(fileId, priority)
+    }
+
+    /** Enter the file into TDLib's persistent download list
+     *  the first time the queue releases it (v0.9.27, T2).
+     *  Needs the owning message's ids; without them (a file
+     *  the center only knows by id) the file simply stays a
+     *  queue-only download, exactly as before T2. A failed
+     *  add is not latched — the next release may retry. */
+    private fun maybeAddToList(fileId: Int, priority: Int) {
+        val origin = origins[fileId] ?: return
+        if (!addedToList.add(fileId)) return
+        val query = TdClient.request("addFileToDownloads").apply {
+            put("file_id", fileId)
+            put("chat_id", origin.first)
+            put("message_id", origin.second)
+            put("priority", priority)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                addedToList.remove(fileId)
+                return@sendRaw
+            }
+            if (response.optInt("id", 0) == fileId) {
+                fileState[fileId] = response
+            }
+            listIds.add(fileId)
+            if (registry.containsKey(fileId)) publish()
+        }
     }
 
     /** Rebuild the rows from every known source. Called when
@@ -371,11 +493,16 @@ object DownloadStore {
      *  cheap map work over lists the app already holds. */
     fun refresh(context: Context) {
         attach()
-        for (item in MessageStore.messages.value) register(item)
+        for (item in MessageStore.messages.value) {
+            register(item, MessageStore.currentChatId)
+        }
         for ((_, list) in SharedMediaStore.items.value) {
-            for (item in list) register(item)
+            for (item in list) {
+                register(item, SharedMediaStore.mediaChatId)
+            }
         }
         publish()
+        loadPersistentList()
         // On-disk completion seed runs off the caller's
         // thread; rows republish when it lands.
         Thread {
@@ -403,12 +530,16 @@ object DownloadStore {
         }.start()
     }
 
-    private fun register(item: MsgItem) {
+    private fun register(item: MsgItem, chatId: Long = 0L) {
         if (item.fileId == 0) return
         when (item.kind) {
             MsgKind.DOCUMENT, MsgKind.VIDEO, MsgKind.VOICE,
             MsgKind.ANIMATION -> Unit
             else -> return
+        }
+        contentIds.add(item.fileId)
+        if (chatId != 0L && item.id != 0L) {
+            origins[item.fileId] = chatId to item.id
         }
         val name = when {
             item.fileName.isNotEmpty() -> item.fileName
@@ -426,8 +557,184 @@ object DownloadStore {
             } else {
                 existing?.totalSize ?: 0L
             },
-            mime = item.fileMime
+            mime = item.fileMime,
+            chatId = chatId,
+            messageId = item.id,
+            listCompleted = existing?.listCompleted ?: false
         )
+    }
+
+    // ---- Persistent download list (v0.9.27, T2) ----
+
+    /** Flatten one fileDownload object (searchFileDownloads /
+     *  updateFileAddedToDownloads) into a center row, or null
+     *  when the message carries no file kind the center lists
+     *  (photos and the rest stay out, as before). */
+    private fun parseListEntry(fd: JSONObject): DownloadEntryUi? {
+        val fileId = fd.optInt("file_id", 0)
+        if (fileId == 0) return null
+        val message = fd.optJSONObject("message") ?: return null
+        val content = message.optJSONObject("content") ?: return null
+        var holder: JSONObject? = null
+        var file: JSONObject? = null
+        var fallbackName = "文件"
+        when (content.optString("@type")) {
+            "messageDocument" -> {
+                holder = content.optJSONObject("document")
+                file = holder?.optJSONObject("document")
+                fallbackName = "文件"
+            }
+            "messageVideo" -> {
+                holder = content.optJSONObject("video")
+                file = holder?.optJSONObject("video")
+                fallbackName = "视频"
+            }
+            "messageVoiceNote" -> {
+                holder = content.optJSONObject("voice_note")
+                file = holder?.optJSONObject("voice")
+                fallbackName = "语音消息"
+            }
+            "messageAnimation" -> {
+                holder = content.optJSONObject("animation")
+                file = holder?.optJSONObject("animation")
+                fallbackName = "GIF"
+            }
+            "messageAudio" -> {
+                holder = content.optJSONObject("audio")
+                file = holder?.optJSONObject("audio")
+                fallbackName = "音频"
+            }
+            else -> return null
+        }
+        val f = file ?: return null
+        val size = f.optLong("size", 0L).let {
+            if (it > 0) it else f.optLong("expected_size", 0L)
+        }
+        val name = holder?.optString("file_name")
+            ?.ifEmpty { null } ?: fallbackName
+        return DownloadEntryUi(
+            fileId = fileId,
+            name = name,
+            totalSize = size,
+            mime = holder?.optString("mime_type") ?: "",
+            chatId = message.optLong("chat_id", 0L),
+            messageId = message.optLong("id", 0L),
+            inList = true,
+            listCompleted = fd.optInt("complete_date", 0) > 0
+        )
+    }
+
+    /** Fold a persistent-list row into the registry without
+     *  clobbering richer data a content source already gave
+     *  (real file name beats the fallback, and so on). */
+    private fun mergeListEntry(entry: DownloadEntryUi) {
+        if (entry.chatId != 0L && entry.messageId != 0L) {
+            origins[entry.fileId] = entry.chatId to entry.messageId
+        }
+        val existing = registry[entry.fileId]
+        registry[entry.fileId] = if (existing == null) {
+            entry
+        } else {
+            existing.copy(
+                chatId = if (existing.chatId != 0L) {
+                    existing.chatId
+                } else {
+                    entry.chatId
+                },
+                messageId = if (existing.messageId != 0L) {
+                    existing.messageId
+                } else {
+                    entry.messageId
+                },
+                listCompleted = existing.listCompleted ||
+                    entry.listCompleted
+            )
+        }
+    }
+
+    /** Merge TDLib's persistent download list into the
+     *  center (v0.9.27, T2): paged searchFileDownloads with
+     *  an empty query returns the whole list. This is what
+     *  makes the center survive a restart — entries the app
+     *  has not rendered this session still show up, and
+     *  TDLib resumes their downloads on its own. Any failure
+     *  just skips the merge; the aggregated rows stay. */
+    private fun loadPersistentList() {
+        if (listLoading) return
+        listLoading = true
+        loadListPage("")
+    }
+
+    private fun loadListPage(offset: String) {
+        val query = TdClient.request("searchFileDownloads").apply {
+            put("query", "")
+            put("only_active", false)
+            put("only_completed", false)
+            put("offset", offset)
+            put("limit", 100)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response) ||
+                response.optString("@type") != "foundFileDownloads"
+            ) {
+                listLoading = false
+                return@sendRaw
+            }
+            val files = response.optJSONArray("files")
+            val landed = ArrayList<Int>()
+            if (files != null) {
+                for (i in 0 until files.length()) {
+                    val fd = files.optJSONObject(i) ?: continue
+                    val entry = parseListEntry(fd) ?: continue
+                    listIds.add(entry.fileId)
+                    addedToList.add(entry.fileId)
+                    mergeListEntry(entry)
+                    landed.add(entry.fileId)
+                }
+            }
+            publish()
+            // Hydrate live state (path / progress) for the
+            // rows TDLib has not sent an updateFile for yet.
+            for (fileId in landed) {
+                if (fileState.containsKey(fileId)) continue
+                val get = TdClient.request("getFile").apply {
+                    put("file_id", fileId)
+                }
+                TdRepository.sendRaw(get) { file ->
+                    if (TdClient.isError(file)) return@sendRaw
+                    if (file.optInt("id", 0) != fileId) {
+                        return@sendRaw
+                    }
+                    fileState[fileId] = file
+                    onFileUpdated(fileId, file)
+                    if (registry.containsKey(fileId)) publish()
+                }
+            }
+            val next = response.optString("next_offset", "")
+            if (next.isNotEmpty() && next != offset) {
+                loadListPage(next)
+            } else {
+                listLoading = false
+            }
+        }
+    }
+
+    /** Take a file out of the persistent download list
+     *  (v0.9.27, T2). The cached file itself is kept —
+     *  delete_from_cache stays false. A row the list alone
+     *  kept alive disappears with it. */
+    fun removeFromList(fileId: Int) {
+        if (fileId == 0) return
+        listIds.remove(fileId)
+        addedToList.remove(fileId)
+        val query = TdClient.request("removeFileFromDownloads")
+            .apply {
+                put("file_id", fileId)
+                put("delete_from_cache", false)
+            }
+        TdRepository.sendRaw(query) {}
+        if (fileId !in contentIds) registry.remove(fileId)
+        publish()
     }
 
     private fun publish(diskRows: List<DownloadEntryUi> = emptyList()) {
@@ -443,7 +750,7 @@ object DownloadStore {
             val local = file?.optJSONObject("local")
             val completed = local?.optBoolean(
                 "is_downloading_completed"
-            ) ?: (base.path != null)
+            ) ?: (base.listCompleted || base.path != null)
             val active = local?.optBoolean("is_downloading_active")
                 ?: false
             val path = local?.optString("path")?.ifEmpty { null }
@@ -460,6 +767,7 @@ object DownloadStore {
                 local != null -> local.optLong("downloaded_size", 0L)
                 else -> 0L
             }
+            val origin = origins[fileId]
             rows.add(
                 base.copy(
                     totalSize = total,
@@ -473,7 +781,10 @@ object DownloadStore {
                         0L
                     },
                     queued = fileId in queuedSnapshot,
-                    failed = fileId in failedSnapshot
+                    failed = fileId in failedSnapshot,
+                    chatId = origin?.first ?: base.chatId,
+                    messageId = origin?.second ?: base.messageId,
+                    inList = fileId in listIds
                 )
             )
         }
@@ -516,6 +827,21 @@ object DownloadStore {
             // The follow-up updateFile settles the row; if none
             // arrives (already stopped), republish anyway.
             publish()
+        }
+        // A list download is independent of downloadFile
+        // (td_api.tl on addFileToDownloads): without this,
+        // TDLib would keep fetching a file the user just
+        // cancelled. The entry leaves the persistent list;
+        // the row itself stays when a content source owns it.
+        if (fileId in listIds) {
+            listIds.remove(fileId)
+            addedToList.remove(fileId)
+            val remove = TdClient.request("removeFileFromDownloads")
+                .apply {
+                    put("file_id", fileId)
+                    put("delete_from_cache", false)
+                }
+            TdRepository.sendRaw(remove) {}
         }
         pump()
     }

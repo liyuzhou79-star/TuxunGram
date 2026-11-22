@@ -242,9 +242,17 @@ object StoryStore {
      *  only period non-Premium accounts may use). */
     /** Privacy choices offered at publish time (v0.9.25,
      *  R3), mapped to storyPrivacySettings* in doPostStory:
-     *  everyone / contacts / close_friends. Selected-users
-     *  needs a user picker and is not offered. */
-    fun postPhotoStory(path: String, privacy: String = "everyone") {
+     *  everyone / contacts / close_friends; v0.9.27 (T3)
+     *  adds "selected" — storyPrivacySettingsSelectedUsers
+     *  with the picked user_ids (verified in td_api.tl:
+     *  user_ids:vector<int53>). An empty selection is
+     *  refused here as well as in the UI: posting to nobody
+     *  would silently waste the story. */
+    fun postPhotoStory(
+        path: String,
+        privacy: String = "everyone",
+        selectedUserIds: List<Long> = emptyList()
+    ) {
         val content = JSONObject().apply {
             put("@type", "inputStoryContentPhoto")
             put("photo", JSONObject().apply {
@@ -253,7 +261,7 @@ object StoryStore {
             })
             put("added_sticker_file_ids", JSONArray())
         }
-        startPost(content, privacy)
+        startPost(content, privacy, selectedUserIds)
     }
 
     /** Post one video as my own story (v0.9.26, S3):
@@ -266,7 +274,8 @@ object StoryStore {
     fun postVideoStory(
         path: String,
         durationSec: Double,
-        privacy: String = "everyone"
+        privacy: String = "everyone",
+        selectedUserIds: List<Long> = emptyList()
     ) {
         val content = JSONObject().apply {
             put("@type", "inputStoryContentVideo")
@@ -279,10 +288,19 @@ object StoryStore {
             put("cover_frame_timestamp", 0.0)
             put("is_animation", false)
         }
-        startPost(content, privacy)
+        startPost(content, privacy, selectedUserIds)
     }
 
-    private fun startPost(content: JSONObject, privacy: String) {
+    private fun startPost(
+        content: JSONObject,
+        privacy: String,
+        selectedUserIds: List<Long> = emptyList()
+    ) {
+        if (privacy == "selected" && selectedUserIds.isEmpty()) {
+            _postNotice.value =
+                "「指定用户」还没选人，先选至少一位能看的人。"
+            return
+        }
         _postNotice.value = "正在发布动态…"
         TdRepository.sendRaw(TdClient.request("getMe")) { me ->
             if (TdClient.isError(me)) {
@@ -300,7 +318,9 @@ object StoryStore {
                 }
                 when (result.optString("@type")) {
                     "canPostStoryResultOk" ->
-                        doPostStory(myId, content, privacy)
+                        doPostStory(
+                            myId, content, privacy, selectedUserIds
+                        )
                     "canPostStoryResultPremiumNeeded" ->
                         _postNotice.value =
                             "发动态需要 Premium，当前账号暂时发不了。"
@@ -326,7 +346,8 @@ object StoryStore {
     private fun doPostStory(
         myId: Long,
         content: JSONObject,
-        privacy: String
+        privacy: String,
+        selectedUserIds: List<Long> = emptyList()
     ) {
         val query = TdClient.request("postStory").apply {
             put("chat_id", myId)
@@ -344,6 +365,15 @@ object StoryStore {
                 }
                 "close_friends" -> JSONObject().apply {
                     put("@type", "storyPrivacySettingsCloseFriends")
+                }
+                "selected" -> JSONObject().apply {
+                    put(
+                        "@type",
+                        "storyPrivacySettingsSelectedUsers"
+                    )
+                    put("user_ids", JSONArray().apply {
+                        for (id in selectedUserIds) put(id)
+                    })
                 }
                 else -> JSONObject().apply {
                     put("@type", "storyPrivacySettingsEveryone")
@@ -369,6 +399,8 @@ object StoryStore {
                 val who = when (privacy) {
                     "contacts" -> "联系人可见"
                     "close_friends" -> "亲密朋友可见"
+                    "selected" ->
+                        "指定的 ${selectedUserIds.size} 人可见"
                     else -> "所有人可见"
                 }
                 "动态已发布，$who，24 小时后自动归档。"

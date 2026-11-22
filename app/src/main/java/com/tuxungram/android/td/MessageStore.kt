@@ -3259,8 +3259,13 @@ object MessageStore {
         if (item.fileId == 0 || item.filePath != null) return
         // User-started file downloads go through the download
         // center's queue (v0.9.23, P2): the tap counts as a
-        // boost — this file jumps the queue.
-        DownloadStore.enqueue(item.fileId, boost = true)
+        // boost — this file jumps the queue. The message's
+        // coordinates ride along so the queue can enter the
+        // file into the persistent download list (v0.9.27, T2).
+        DownloadStore.enqueue(
+            item.fileId, boost = true,
+            chatId = currentChatId, messageId = item.id
+        )
         val existing = byId[item.id] ?: return
         byId[item.id] = existing.copy(fileDownloading = true)
         publish()

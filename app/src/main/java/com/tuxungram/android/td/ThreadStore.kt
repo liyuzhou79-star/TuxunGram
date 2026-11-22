@@ -312,8 +312,12 @@ object ThreadStore {
      *  the local byId patch differs from MessageStore's). */
     fun downloadFileFor(item: MsgItem) {
         if (item.fileId == 0 || item.filePath != null) return
-        // Via the download center's queue, boosted (v0.9.23, P2).
-        DownloadStore.enqueue(item.fileId, boost = true)
+        // Via the download center's queue, boosted (v0.9.23, P2);
+        // message coordinates for the persistent list (T2).
+        DownloadStore.enqueue(
+            item.fileId, boost = true,
+            chatId = threadChatId, messageId = item.id
+        )
         val existing = byId[item.id] ?: return
         byId[item.id] = existing.copy(fileDownloading = true)
         publish()

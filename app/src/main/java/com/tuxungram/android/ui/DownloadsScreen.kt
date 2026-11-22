@@ -52,11 +52,14 @@ import com.tuxungram.android.td.DownloadStore
  *  progress and speed, a concurrency queue the user controls
  *  (how many files TDLib is asked to fetch at once), a
  *  boost action per file, and automatic retries for downloads
- *  that die on their own. The list is an aggregation (TDLib
- *  has no global download list), so the intro says plainly
- *  where entries come from and what the queue does not cover
- *  (media TDLib fetches by itself — those follow the
- *  auto-download settings, one tap away at the top). */
+ *  that die on their own. Since v0.9.27 (T2) the rows are
+ *  backed by TDLib's persistent download list (user-started
+ *  files enter it when the queue releases them), merged with
+ *  the aggregation of files from chats opened this session;
+ *  the intro says plainly where entries come from and what
+ *  the queue does not cover (media TDLib fetches by itself —
+ *  those follow the auto-download settings, one tap away at
+ *  the top). */
 @Composable
 fun DownloadsScreen(
     onBack: () -> Unit,
@@ -98,6 +101,7 @@ fun DownloadsScreen(
         }
         Text(
             "这里汇总的是你在聊天里打开过、下载过的文件（文档、视频、语音、GIF）。" +
+                "下载列表会存进 Telegram 的持久下载列表，重启 App 后没下完的还在、会接着下。" +
                 "照片不在这里——照片算媒体缓存，在设置的存储空间里管。",
             color = Color.Gray, fontSize = 13.sp,
             modifier = Modifier.padding(horizontal = 20.dp)
@@ -331,6 +335,15 @@ private fun DownloadRow(entry: DownloadEntryUi) {
                     onClick = {
                         menuOpen = false
                         DownloadStore.cancel(entry.fileId)
+                    }
+                )
+            }
+            if (entry.inList && !entry.active && !entry.queued) {
+                DropdownMenuItem(
+                    text = { Text("从下载列表移除") },
+                    onClick = {
+                        menuOpen = false
+                        DownloadStore.removeFromList(entry.fileId)
                     }
                 )
             }

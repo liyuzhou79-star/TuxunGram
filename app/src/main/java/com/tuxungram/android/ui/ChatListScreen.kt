@@ -714,10 +714,24 @@ fun ChatListScreen(
             ) {
                 mutableStateOf("everyone")
             }
+            // "Specified users" tier (v0.9.27, T3): the
+            // picked contacts ride to postStory as
+            // storyPrivacySettingsSelectedUsers.
+            var storySelectedUsers by remember(
+                pendingStoryPhoto, pendingStoryVideo
+            ) {
+                mutableStateOf<Set<Long>>(emptySet())
+            }
+            var storyPickerOpen by remember(
+                pendingStoryPhoto, pendingStoryVideo
+            ) {
+                mutableStateOf(false)
+            }
             val privacyOptions = listOf(
                 "everyone" to "所有人",
                 "contacts" to "我的联系人",
-                "close_friends" to "亲密朋友"
+                "close_friends" to "亲密朋友",
+                "selected" to "指定用户"
             )
             AlertDialog(
                 onDismissRequest = {
@@ -754,24 +768,62 @@ fun ChatListScreen(
                                 Text(label, fontSize = 14.sp)
                             }
                         }
+                        if (storyPrivacy == "selected") {
+                            Spacer(Modifier.height(6.dp))
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        storyPickerOpen = true
+                                    }
+                                    .padding(vertical = 6.dp)
+                            ) {
+                                Text(
+                                    if (storySelectedUsers.isEmpty()) {
+                                        "点这里选能看的人（还没选）"
+                                    } else {
+                                        "已选 ${storySelectedUsers.size} 人" +
+                                            "，点这里改"
+                                    },
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme
+                                        .primary
+                                )
+                            }
+                            if (storySelectedUsers.isEmpty()) {
+                                Text(
+                                    "一个人都没选时不能发布，先选至少一位。",
+                                    fontSize = 12.5.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                        }
                     }
                 },
                 confirmButton = {
-                    Button(onClick = {
-                        val photoPath = pendingStoryPhoto
-                        val video = pendingStoryVideo
-                        pendingStoryPhoto = null
-                        pendingStoryVideo = null
-                        if (video != null) {
-                            StoryStore.postVideoStory(
-                                video.first, video.second, storyPrivacy
-                            )
-                        } else if (photoPath != null) {
-                            StoryStore.postPhotoStory(
-                                photoPath, storyPrivacy
-                            )
+                    Button(
+                        enabled = storyPrivacy != "selected" ||
+                            storySelectedUsers.isNotEmpty(),
+                        onClick = {
+                            val photoPath = pendingStoryPhoto
+                            val video = pendingStoryVideo
+                            val picked = storySelectedUsers.toList()
+                            pendingStoryPhoto = null
+                            pendingStoryVideo = null
+                            if (video != null) {
+                                StoryStore.postVideoStory(
+                                    video.first, video.second,
+                                    storyPrivacy, picked
+                                )
+                            } else if (photoPath != null) {
+                                StoryStore.postPhotoStory(
+                                    photoPath, storyPrivacy, picked
+                                )
+                            }
                         }
-                    }) { Text("发布") }
+                    ) { Text("发布") }
                 },
                 dismissButton = {
                     TextButton(onClick = {
@@ -782,6 +834,16 @@ fun ChatListScreen(
                     }
                 }
             )
+            if (storyPickerOpen) {
+                StoryUserPickerDialog(
+                    initial = storySelectedUsers,
+                    onDismiss = { storyPickerOpen = false },
+                    onConfirm = { picked ->
+                        storySelectedUsers = picked
+                        storyPickerOpen = false
+                    }
+                )
+            }
         }
         // Stories row (Batch 3, C5): one ring per chat with
         // active stories; colored ring = unread, gray = seen.
@@ -2266,6 +2328,106 @@ fun FolderEditorDialog(
                 enabled = !busy,
                 onClick = onDismiss
             ) { Text("取消") }
+        }
+    )
+}
+
+/** Multi-select contact picker for the story "specified
+ *  users" privacy tier (v0.9.27, T3). Same shape as the
+ *  group-creation member picker (CreateChatScreen):
+ *  ContactsStore's address book with checkbox rows and a
+ *  name/@username filter. The selection is local until the
+ *  caller confirms; an empty result is allowed here — the
+ *  publish dialog itself refuses to post with nobody
+ *  picked. */
+@Composable
+fun StoryUserPickerDialog(
+    initial: Set<Long>,
+    onDismiss: () -> Unit,
+    onConfirm: (Set<Long>) -> Unit
+) {
+    val contacts by ContactsStore.contacts.collectAsState()
+    var picked by remember { mutableStateOf(initial) }
+    var query by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { ContactsStore.loadContacts() }
+    val shown = remember(contacts, query) {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) {
+            contacts
+        } else {
+            contacts.filter {
+                it.name.lowercase().contains(q) ||
+                    it.username.lowercase().contains(q)
+            }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("谁能看这条动态（已选 ${picked.size} 人）") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("搜联系人") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                if (shown.isEmpty()) {
+                    Text(
+                        "联系人还没同步好，或者没有联系人。",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                }
+                LazyColumn(modifier = Modifier.height(320.dp)) {
+                    items(items = shown, key = { it.userId }) { contact ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    picked =
+                                        if (contact.userId in picked) {
+                                            picked - contact.userId
+                                        } else {
+                                            picked + contact.userId
+                                        }
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = contact.userId in picked,
+                                onCheckedChange = { checked ->
+                                    picked = if (checked) {
+                                        picked + contact.userId
+                                    } else {
+                                        picked - contact.userId
+                                    }
+                                }
+                            )
+                            Column {
+                                Text(contact.name, fontSize = 15.sp)
+                                if (contact.username.isNotEmpty()) {
+                                    Text(
+                                        "@${contact.username}",
+                                        color = Color.Gray,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(picked) }) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
 }

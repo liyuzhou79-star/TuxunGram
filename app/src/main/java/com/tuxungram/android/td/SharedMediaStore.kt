@@ -34,6 +34,12 @@ object SharedMediaStore {
     val error: StateFlow<String?> = _error
 
     private var chatId = 0L
+
+    /** The chat the current lists belong to (read by the
+     *  download center to locate files' messages, v0.9.27). */
+    val mediaChatId: Long
+        get() = chatId
+
     private val lists = HashMap<MediaTab, ArrayList<MsgItem>>()
     private val nextFrom = HashMap<MediaTab, Long>()
     private val loading = HashSet<MediaTab>()
@@ -169,7 +175,10 @@ object SharedMediaStore {
                 put("synchronous", false)
             }) {}
         } else {
-            DownloadStore.enqueue(fileId, boost = true)
+            DownloadStore.enqueue(
+                fileId, boost = true,
+                chatId = chatId, messageId = item.id
+            )
         }
         for ((_, list) in lists) {
             for (i in list.indices) {
