@@ -654,6 +654,9 @@ private fun ReadyHost() {
     val allChats by ChatStore.chats.collectAsState()
     val homeUnread = allChats.sumOf { it.unreadCount }
     val unreadCap by UiSettings.unreadCap.collectAsState()
+    // Duck bar switch (v0.9.19, Z5): off removes the bottom
+    // bar entirely; home navigation is the drawer's alone.
+    val duckBar by UiSettings.duckBar.collectAsState()
     // Proxy links (v0.9.9, W3) ask for the Settings tab,
     // where the proxy editor opens prefilled.
     val openSettingsWanted by DeepLink.pendingOpenSettings.collectAsState()
@@ -982,6 +985,15 @@ private fun ReadyHost() {
                             onOpenGuide = { showGuideReplay = true }
                         )
                         3 -> MeScreen(
+                            // With the Duck bar off (Z5) the
+                            // Me page is reached from the
+                            // drawer and needs its own way
+                            // back to the chat list.
+                            onBack = if (duckBar) {
+                                null
+                            } else {
+                                { homeTab = 0 }
+                            },
                             onEditProfile = { showEditProfile = true },
                             onOpenSavedChat = { openChatId = it },
                             onOpenSettingsTab = { homeTab = 2 },
@@ -1023,6 +1035,7 @@ private fun ReadyHost() {
                 unselectedIconColor = navPalette.textSecondary,
                 unselectedTextColor = navPalette.textSecondary
             )
+            if (duckBar) {
             NavigationBar(
                 containerColor = navPalette.panelBg,
                 tonalElevation = 0.dp
@@ -1080,6 +1093,7 @@ private fun ReadyHost() {
                     },
                     label = { Text("我的") }
                 )
+            }
             }
             }
             }

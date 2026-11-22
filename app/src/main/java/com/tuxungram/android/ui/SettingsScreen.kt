@@ -1040,6 +1040,27 @@ fun SettingsScreen(
                 }
             }
         }
+        Spacer(Modifier.height(16.dp))
+        Text("底部导航栏", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "屏幕底部常驻的「对话 / 联系人 / 设置 / 我的」导航栏（本应用的自有设计）。" +
+                "关掉后，主页改用官方的抽屉式导航：点左上角菜单按钮打开抽屉，" +
+                "联系人、设置、我的都在抽屉里，一个不少。切换立刻生效。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val duckBar by UiSettings.duckBar.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (duckBar) "已开启" else "已关闭",
+                fontSize = 14.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = duckBar,
+                onCheckedChange = { UiSettings.setDuckBar(it) }
+            )
+        }
         }
         Spacer(Modifier.height(28.dp))
         SectionTitle(Icons.Filled.AccountCircle, "账号")

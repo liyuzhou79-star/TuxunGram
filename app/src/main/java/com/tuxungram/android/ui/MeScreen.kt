@@ -3,6 +3,7 @@ package com.tuxungram.android.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,10 +14,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,7 +51,12 @@ fun MeScreen(
     onEditProfile: () -> Unit,
     onOpenSavedChat: (Long) -> Unit,
     onOpenSettingsTab: () -> Unit,
-    onOpenChangelog: () -> Unit
+    onOpenChangelog: () -> Unit,
+    // Set only when the bottom navigation bar is off
+    // (v0.9.19, Z5): the page is then reached from the
+    // drawer and shows its own back row; as a bottom-bar
+    // tab it stays null and nothing changes.
+    onBack: (() -> Unit)? = null
 ) {
     val me by MeStore.me.collectAsState()
     Column(
@@ -55,6 +64,23 @@ fun MeScreen(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
     ) {
+        if (onBack != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "返回"
+                    )
+                }
+                Text(
+                    "我的",
+                    fontSize = 18.sp, fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
         // Graphical header banner (v0.9.11, A2): the Me tab
         // opens with a seed-colour gradient banner (deco
         // circles + plane watermark, all program-drawn)

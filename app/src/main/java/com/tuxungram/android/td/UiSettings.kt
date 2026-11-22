@@ -24,6 +24,7 @@ object UiSettings {
     private const val KEY_CHAT_BG_PER_CHAT = "chat_bg_per_chat"
     private const val KEY_BUBBLE_STYLE = "bubble_style"
     private const val KEY_FONT_SIZE = "font_size"
+    private const val KEY_DUCK_BAR = "duck_bar"
     private const val KEY_VOICE_SPEED = "voice_speed"
     private const val KEY_SEEN_VERSION = "seen_version"
 
@@ -124,6 +125,15 @@ object UiSettings {
     private val _fontSize = MutableStateFlow(1)
     val fontSize: StateFlow<Int> = _fontSize
 
+    /** Bottom navigation bar (the "Duck bar", v0.9.19, Z5):
+     *  the app's own bottom tab bar, on by default. Turning
+     *  it off leaves the home level to the official drawer
+     *  navigation alone — every tab's destination stays
+     *  reachable from the drawer (contacts / settings items,
+     *  the header opens 我的）. */
+    private val _duckBar = MutableStateFlow(true)
+    val duckBar: StateFlow<Boolean> = _duckBar
+
     /** Voice-message playback speed (v0.9.2, L5): one global
      *  choice (1x / 1.5x / 2x), remembered across messages and
      *  restarts, like the mature clients do it. */
@@ -167,6 +177,7 @@ object UiSettings {
             if (bubble in BUBBLE_MODERN..BUBBLE_CLASSIC) bubble else BUBBLE_MODERN
         val font = prefs.getInt(KEY_FONT_SIZE, 1)
         _fontSize.value = if (font in FONT_SCALES.indices) font else 1
+        _duckBar.value = prefs.getBoolean(KEY_DUCK_BAR, true)
         val speed = prefs.getFloat(KEY_VOICE_SPEED, 1f)
         _voiceSpeed.value = if (speed in VOICE_SPEEDS) speed else 1f
     }
@@ -252,6 +263,11 @@ object UiSettings {
         if (style !in BUBBLE_MODERN..BUBBLE_CLASSIC) return
         _bubbleStyle.value = style
         persist { it.putInt(KEY_BUBBLE_STYLE, style) }
+    }
+
+    fun setDuckBar(on: Boolean) {
+        _duckBar.value = on
+        persist { it.putBoolean(KEY_DUCK_BAR, on) }
     }
 
     fun setFontSize(index: Int) {

@@ -50,6 +50,8 @@ object SettingsBackup {
             // local setting older than the backup itself
             // that was never included).
             put("keep_alive", UiSettings.keepAlive.value)
+            // Bottom navigation bar switch (v0.9.19, Z5).
+            put("duck_bar", UiSettings.duckBar.value)
         }
         val chatWallpapers = JSONObject()
         for ((chatId, path) in UiSettings.chatWallpapers.value) {
@@ -124,6 +126,7 @@ object SettingsBackup {
         var chatBgImage: String? = null
         var chatWallpapers: Map<Long, String>? = null
         var keepAlive: Boolean? = null
+        var duckBar: Boolean? = null
         var proxyAutoFailover: Boolean? = null
         val uiObj = root.optJSONObject("ui")
         if (uiObj != null) {
@@ -189,6 +192,9 @@ object SettingsBackup {
                 }
                 if (uiObj.has("keep_alive")) {
                     keepAlive = uiObj.getBoolean("keep_alive")
+                }
+                if (uiObj.has("duck_bar")) {
+                    duckBar = uiObj.getBoolean("duck_bar")
                 }
             } catch (t: Throwable) {
                 return "备份里的设置部分格式不对，设置没有改动。"
@@ -293,6 +299,7 @@ object SettingsBackup {
         }
         chatWallpapers?.let { UiSettings.replaceChatWallpapers(it) }
         keepAlive?.let { UiSettings.setKeepAlive(it) }
+        duckBar?.let { UiSettings.setDuckBar(it) }
         proxyAutoFailover?.let { ProxyStore.setAutoFailover(it) }
 
         val proxies = stagedProxies
