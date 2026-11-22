@@ -833,7 +833,39 @@ fun SettingsScreen(
                 }
             }
         }
+        // Appearance preset (v0.9.17, X1): the official-style
+        // palette as one set is the default; the accent seeds
+        // below stay available as the custom alternative.
+        val accentMode by UiSettings.accentMode.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(
+                onClick = { UiSettings.setAccentMode(UiSettings.ACCENT_OFFICIAL) },
+                enabled = accentMode != UiSettings.ACCENT_OFFICIAL
+            ) {
+                RadioText(
+                    accentMode == UiSettings.ACCENT_OFFICIAL,
+                    "官方主题", fontSize = 14.sp
+                )
+            }
+            TextButton(
+                onClick = { UiSettings.setAccentMode(UiSettings.ACCENT_CUSTOM) },
+                enabled = accentMode != UiSettings.ACCENT_CUSTOM
+            ) {
+                RadioText(
+                    accentMode == UiSettings.ACCENT_CUSTOM,
+                    "自定义强调色", fontSize = 14.sp
+                )
+            }
+        }
+        if (accentMode == UiSettings.ACCENT_OFFICIAL) {
+            Text(
+                "整套配色按官方默认主题走：顶栏、气泡、徽章、链接都成套对齐；" +
+                    "深浅两套都有。想单独换主色就切到自定义强调色。",
+                color = Color.Gray, fontSize = 13.sp
+            )
+        }
         val seedIndex by UiSettings.seedIndex.collectAsState()
+        if (accentMode == UiSettings.ACCENT_CUSTOM) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(top = 4.dp)
@@ -871,6 +903,7 @@ fun SettingsScreen(
                 Text(UiSettings.SEED_NAMES[index], fontSize = 12.sp)
                 Spacer(Modifier.width(10.dp))
             }
+        }
         }
         Spacer(Modifier.height(20.dp))
         Text("聊天背景", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)

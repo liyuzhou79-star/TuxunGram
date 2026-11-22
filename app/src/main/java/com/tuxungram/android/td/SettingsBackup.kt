@@ -38,6 +38,7 @@ object SettingsBackup {
             put("unread_cap", UiSettings.unreadCap.value)
             put("theme_mode", UiSettings.themeMode.value)
             put("seed_index", UiSettings.seedIndex.value)
+            put("accent_mode", UiSettings.accentMode.value)
             put("chat_bg", UiSettings.chatBg.value)
             put("bubble_style", UiSettings.bubbleStyle.value)
             put("font_size", UiSettings.fontSize.value)
@@ -115,6 +116,7 @@ object SettingsBackup {
         var unreadCap: Int? = null
         var themeMode: Int? = null
         var seedIndex: Int? = null
+        var accentMode: Int? = null
         var chatBg: Int? = null
         var bubbleStyle: Int? = null
         var fontSize: Int? = null
@@ -146,6 +148,13 @@ object SettingsBackup {
                         return "备份里的主题色取值不对，设置没有改动。"
                     }
                     seedIndex = v
+                }
+                if (uiObj.has("accent_mode")) {
+                    val v = uiObj.getInt("accent_mode")
+                    if (v !in UiSettings.ACCENT_OFFICIAL..UiSettings.ACCENT_CUSTOM) {
+                        return "备份里的外观预设取值不对，设置没有改动。"
+                    }
+                    accentMode = v
                 }
                 if (uiObj.has("chat_bg")) {
                     val v = uiObj.getInt("chat_bg")
@@ -268,6 +277,7 @@ object SettingsBackup {
         unreadCap?.let { UiSettings.setUnreadCap(it) }
         themeMode?.let { UiSettings.setThemeMode(it) }
         seedIndex?.let { UiSettings.setSeedIndex(it) }
+        accentMode?.let { UiSettings.setAccentMode(it) }
         chatBg?.let { UiSettings.setChatBg(it) }
         bubbleStyle?.let { UiSettings.setBubbleStyle(it) }
         fontSize?.let { UiSettings.setFontSize(it) }

@@ -132,6 +132,7 @@ import com.tuxungram.android.ui.JoinRequestsScreen
 import com.tuxungram.android.ui.NetworkStatsScreen
 import com.tuxungram.android.ui.StatsScreen
 import com.tuxungram.android.ui.ChangelogScreen
+import com.tuxungram.android.ui.OfficialTheme
 import com.tuxungram.android.ui.GuideScreen
 import com.tuxungram.android.ui.WhatsNewScreen
 import com.tuxungram.android.ui.ChatListScreen
@@ -204,7 +205,15 @@ class MainActivity : ComponentActivity() {
                 else -> systemDark
             }
             val seed = Color(UiSettings.SEED_COLORS[seedIndex])
-            val scheme = if (dark) {
+            // Official preset (v0.9.17, X1): the default
+            // appearance is the official-style palette as one
+            // set; the C3 accent seeds remain as the custom
+            // alternative.
+            val accentMode by UiSettings.accentMode.collectAsState()
+            OfficialTheme.dark = dark
+            val scheme = if (accentMode == UiSettings.ACCENT_OFFICIAL) {
+                OfficialTheme.materialScheme(dark)
+            } else if (dark) {
                 darkColorScheme(primary = seed, secondary = seed)
             } else {
                 lightColorScheme(primary = seed, secondary = seed)

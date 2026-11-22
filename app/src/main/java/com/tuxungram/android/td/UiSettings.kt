@@ -18,6 +18,7 @@ object UiSettings {
     private const val KEY_KEEP_ALIVE = "keep_alive"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_SEED_INDEX = "seed_index"
+    private const val KEY_ACCENT_MODE = "accent_mode"
     private const val KEY_CHAT_BG = "chat_bg"
     private const val KEY_CHAT_BG_IMAGE = "chat_bg_image"
     private const val KEY_CHAT_BG_PER_CHAT = "chat_bg_per_chat"
@@ -33,12 +34,23 @@ object UiSettings {
     const val THEME_LIGHT = 1
     const val THEME_DARK = 2
 
-    /** Accent seed colors (Batch 3, C3): Telegram blue, green,
-     *  purple, orange — stored as ARGB longs. */
+    /** Accent seed colors (Batch 3, C3): official blue, green,
+     *  purple, orange — stored as ARGB longs. The first entry
+     *  became the official accent in v0.9.17 (chat_messagePanelSend
+     *  of the official day theme). */
     val SEED_COLORS = listOf(
-        0xFF2AABEE, 0xFF43A047, 0xFF7E57C2, 0xFFFB8C00
+        0xFF229AF0, 0xFF43A047, 0xFF7E57C2, 0xFFFB8C00
     )
-    val SEED_NAMES = listOf("电报蓝", "绿", "紫", "橙")
+    val SEED_NAMES = listOf("官方蓝", "绿", "紫", "橙")
+
+    /** Appearance presets (v0.9.17, X1): OFFICIAL = the full
+     *  official-style palette as one preset (the default);
+     *  CUSTOM = the C3 accent-seed behaviour. Migration: a
+     *  stored non-default seed (someone deliberately picked
+     *  green/purple/orange under C3) keeps CUSTOM; everyone
+     *  else lands on OFFICIAL. */
+    const val ACCENT_OFFICIAL = 0
+    const val ACCENT_CUSTOM = 1
 
     /** Chat wallpapers (v0.7.0, F3): solid colors in the theme's
      *  family, each with a light and a dark variant so the choice
@@ -77,6 +89,9 @@ object UiSettings {
 
     private val _seedIndex = MutableStateFlow(0)
     val seedIndex: StateFlow<Int> = _seedIndex
+
+    private val _accentMode = MutableStateFlow(ACCENT_OFFICIAL)
+    val accentMode: StateFlow<Int> = _accentMode
 
     private val _chatBg = MutableStateFlow(0)
     val chatBg: StateFlow<Int> = _chatBg
@@ -131,6 +146,16 @@ object UiSettings {
             if (mode in THEME_SYSTEM..THEME_DARK) mode else THEME_SYSTEM
         val seed = prefs.getInt(KEY_SEED_INDEX, 0)
         _seedIndex.value = if (seed in SEED_COLORS.indices) seed else 0
+        _accentMode.value = if (prefs.contains(KEY_ACCENT_MODE)) {
+            val m = prefs.getInt(KEY_ACCENT_MODE, ACCENT_OFFICIAL)
+            if (m in ACCENT_OFFICIAL..ACCENT_CUSTOM) m else ACCENT_OFFICIAL
+        } else if (_seedIndex.value != 0) {
+            // C3 migration (v0.9.17): a deliberately chosen
+            // non-default accent stays in charge.
+            ACCENT_CUSTOM
+        } else {
+            ACCENT_OFFICIAL
+        }
         val bg = prefs.getInt(KEY_CHAT_BG, 0)
         _chatBg.value = if (bg in CHAT_BG_COLORS.indices) bg else 0
         _chatBgImage.value = prefs.getString(KEY_CHAT_BG_IMAGE, "") ?: ""
@@ -259,6 +284,12 @@ object UiSettings {
         if (index !in SEED_COLORS.indices) return
         _seedIndex.value = index
         persist { it.putInt(KEY_SEED_INDEX, index) }
+    }
+
+    fun setAccentMode(mode: Int) {
+        if (mode !in ACCENT_OFFICIAL..ACCENT_CUSTOM) return
+        _accentMode.value = mode
+        persist { it.putInt(KEY_ACCENT_MODE, mode) }
     }
 
     private fun persist(block: (android.content.SharedPreferences.Editor) -> Unit) {
