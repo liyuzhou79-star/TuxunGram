@@ -29,7 +29,11 @@ data class PollUi(
     val isAnonymous: Boolean,
     val allowsMultiple: Boolean,
     val isQuiz: Boolean,
-    val explanation: String = ""
+    val explanation: String = "",
+    /** poll.can_get_voters (v0.9.32, Y3): the server lets
+     *  this account list an option's voters via
+     *  getPollVoters. Always false for anonymous polls. */
+    val canGetVoters: Boolean = false
 )
 
 /** One checklist task, flattened from checklistTask
@@ -3352,7 +3356,8 @@ object MessageStore {
             isAnonymous = poll.optBoolean("is_anonymous"),
             allowsMultiple = poll.optBoolean("allows_multiple_answers"),
             isQuiz = isQuiz,
-            explanation = explanation
+            explanation = explanation,
+            canGetVoters = poll.optBoolean("can_get_voters")
         )
     }
 

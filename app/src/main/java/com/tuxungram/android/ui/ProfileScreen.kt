@@ -1,6 +1,7 @@
 package com.tuxungram.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -1018,6 +1019,27 @@ fun ProfileScreen(
                                     .joinToString(" "),
                                 fontSize = 12.sp,
                                 modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                        if (info != null &&
+                            info.keyIdenticon.size >= 144
+                        ) {
+                            // Key identicon (v0.9.32, Y5): the
+                            // 12x12 picture td_api.tl prescribes
+                            // for key_hash, drawn next to the
+                            // hex — two sides compare grids
+                            // cell by cell, which is harder to
+                            // misread than 64 hex digits.
+                            Text(
+                                "密钥图案（和对方 App 里的图案格对一下，144 个格子颜色全一致才对）：",
+                                fontSize = 12.sp, color = Color.Gray,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            SecretKeyIdenticon(
+                                indices = info.keyIdenticon,
+                                modifier = Modifier
+                                    .padding(top = 4.dp)
+                                    .size(120.dp)
                             )
                         }
                         if (info != null && info.layer > 0) {
@@ -2242,6 +2264,49 @@ private fun ProfilePhotoThumb(
                 tint = Color.Gray, modifier = Modifier.size(22.dp)
             )
         }
+    }
+}
+
+/** The four colours td_api.tl names for the secret-chat
+ *  key identicon, in 2-bit-group order: FFFFFF, D5E6F3,
+ *  2D5775, 2F99C9. */
+private val identiconColors = listOf(
+    Color(0xFFFFFFFF), Color(0xFFD5E6F3),
+    Color(0xFF2D5775), Color(0xFF2F99C9)
+)
+
+/** The secret-chat key picture (v0.9.32, Y5): the 12x12
+ *  grid of [indices] (row-major, from
+ *  SecretChatStore.keyIdenticon), drawn on a hairline
+ *  frame so the white cells stay visible on the white
+ *  page. Pure Canvas — no image assets. */
+@Composable
+private fun SecretKeyIdenticon(
+    indices: List<Int>,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val cell = size.width / 12f
+        for (i in 0 until 144) {
+            val col = identiconColors[
+                indices.getOrElse(i) { 0 }.coerceIn(0, 3)
+            ]
+            drawRect(
+                color = col,
+                topLeft = androidx.compose.ui.geometry.Offset(
+                    (i % 12) * cell, (i / 12) * cell
+                ),
+                size = androidx.compose.ui.geometry.Size(
+                    cell + 0.5f, cell + 0.5f
+                )
+            )
+        }
+        drawRect(
+            color = Color(0xFFB0BEC5),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = 1.dp.toPx()
+            )
+        )
     }
 }
 

@@ -18,6 +18,16 @@ data class SecretChatInfo(
      *  exactly this rendering as the alternative to the 12x12
      *  pixel identicon). Empty until the key exists. */
     val keyHashHex: String,
+    /** The 12x12 identicon of the same key_hash (v0.9.32,
+     *  Y5): 144 colour indices (0..3) in row-major order,
+     *  derived exactly as td_api.tl prescribes for
+     *  secretChat.key_hash — the 36 hash bytes, each split
+     *  into four 2-bit groups (most significant group
+     *  first), each group naming one of the four documented
+     *  colours. Empty until the full 36 bytes exist. This is
+     *  the same picture other clients render for the key, so
+     *  two sides can compare grids as well as hex. */
+    val keyIdenticon: List<Int> = emptyList(),
     val layer: Int
 )
 
@@ -128,6 +138,7 @@ object SecretChatStore {
             userId = sc.optLong("user_id"),
             state = state,
             keyHashHex = keyHashHex(sc),
+            keyIdenticon = keyIdenticon(sc),
             layer = sc.optInt("layer")
         )
     }
@@ -135,8 +146,8 @@ object SecretChatStore {
     /** key_hash crosses the JSON interface as a base64 string
      *  (TDLib encodes every bytes field that way); an array of
      *  byte values is handled too, just in case. */
-    private fun keyHashHex(sc: JSONObject): String {
-        val bytes: ByteArray = when (val raw = sc.opt("key_hash")) {
+    private fun keyHashBytes(sc: JSONObject): ByteArray {
+        return when (val raw = sc.opt("key_hash")) {
             is String -> try {
                 Base64.decode(raw, Base64.DEFAULT)
             } catch (t: Throwable) {
@@ -147,12 +158,36 @@ object SecretChatStore {
             }
             else -> ByteArray(0)
         }
+    }
+
+    private fun keyHashHex(sc: JSONObject): String {
+        val bytes = keyHashBytes(sc)
         val out = StringBuilder()
         val n = minOf(32, bytes.size)
         for (i in 0 until n) {
             out.append(String.format("%02x", bytes[i].toInt() and 0xFF))
         }
         return out.toString()
+    }
+
+    /** The 144 identicon colour indices (v0.9.32, Y5), per
+     *  the td_api.tl prescription quoted on [SecretChatInfo]:
+     *  36 bytes x four 2-bit groups, most significant group
+     *  first, filled left to right, top to bottom. Fewer
+     *  than 36 bytes means the key is not fully there yet —
+     *  no picture rather than a partial one. */
+    private fun keyIdenticon(sc: JSONObject): List<Int> {
+        val bytes = keyHashBytes(sc)
+        if (bytes.size < 36) return emptyList()
+        val out = ArrayList<Int>(144)
+        for (i in 0 until 36) {
+            val b = bytes[i].toInt() and 0xFF
+            out.add((b shr 6) and 3)
+            out.add((b shr 4) and 3)
+            out.add((b shr 2) and 3)
+            out.add(b and 3)
+        }
+        return out
     }
 
     /** Self-destruct timer for the whole secret chat

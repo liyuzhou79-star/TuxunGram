@@ -4911,7 +4911,7 @@ fun MessageBubble(
                     MsgKind.POLL -> {
                         val poll = msg.poll
                         if (poll != null) {
-                            PollBubbleContent(msg, poll)
+                            PollBubbleContent(msg, poll, chatId)
                         } else {
                             Text(
                                 "[投票]",
@@ -7152,11 +7152,19 @@ private fun ChecklistBubbleContent(msg: MsgItem) {
 }
 
 @Composable
-private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
+private fun PollBubbleContent(msg: MsgItem, poll: PollUi, chatId: Long) {
     var selected by remember(msg.id) {
         mutableStateOf(
             poll.options.indices.filter { poll.options[it].chosen }.toSet()
         )
+    }
+    // Voter list (v0.9.32, Y3): the option index whose
+    // voters are on screen, or null. Only non-anonymous
+    // polls whose poll object says can_get_voters get the
+    // entry; anonymous polls state plainly that voters are
+    // invisible (footer below).
+    var votersOption by remember(msg.id) {
+        mutableStateOf<Int?>(null)
     }
     LaunchedEffect(poll) {
         selected = poll.options.indices.filter { poll.options[it].chosen }.toSet()
@@ -7252,6 +7260,27 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
+                        if (!poll.isAnonymous && poll.canGetVoters &&
+                            option.voterCount > 0 && chatId != 0L
+                        ) {
+                            // Voter-list entry (Y3): sits at
+                            // the option's count, where the
+                            // brief wants it.
+                            Icon(
+                                Icons.Filled.Person,
+                                contentDescription = "看谁投了这一项",
+                                tint = subText,
+                                modifier = Modifier
+                                    .padding(start = 5.dp)
+                                    .size(17.dp)
+                                    .clickable {
+                                        votersOption = index
+                                        ViewersStore.loadPollVoters(
+                                            chatId, msg.id, index
+                                        )
+                                    }
+                            )
+                        }
                     } else if (index in selected && poll.allowsMultiple) {
                         Icon(
                             Icons.Filled.Check, contentDescription = null,
@@ -7283,11 +7312,170 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
             "共 ${poll.totalVoters} 人参与",
             color = subText, fontSize = 12.sp
         )
+        if (poll.isAnonymous) {
+            // Anonymous polls have no voter entry anywhere
+            // (Y3): say so instead of just lacking the icon.
+            Text(
+                "匿名投票看不到谁投了哪一项",
+                color = subText, fontSize = 12.sp
+            )
+        }
         if (poll.isQuiz && voted && poll.explanation.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
             Text(poll.explanation, color = subText, fontSize = 12.sp)
         }
     }
+    val openOption = votersOption
+    if (openOption != null) {
+        PollVotersDialog(
+            optionText = poll.options.getOrNull(openOption)?.text ?: "",
+            onDismiss = { votersOption = null }
+        )
+    }
+}
+
+/** One poll option's voter list (v0.9.32, Y3), fed by
+ *  ViewersStore's getPollVoters paging. Rows mirror the
+ *  read-by list: avatar or initial disc, name, vote time;
+ *  a 加载更多 button pages while the store says more
+ *  exist. Shared by the main chat's poll bubble (the
+ *  thread/topic poll renderer has no results view, so it
+ *  has no entry — recorded in the checkpoint). */
+@Composable
+fun PollVotersDialog(
+    optionText: String,
+    onDismiss: () -> Unit
+) {
+    val voters by ViewersStore.pollVoters.collectAsState()
+    val total by ViewersStore.pollTotal.collectAsState()
+    val loading by ViewersStore.pollLoading.collectAsState()
+    val error by ViewersStore.pollError.collectAsState()
+    val exhausted by ViewersStore.pollExhausted.collectAsState()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                if (optionText.isEmpty()) {
+                    "投这一项的人"
+                } else {
+                    "投了「$optionText」的人"
+                }
+            )
+        },
+        text = {
+            Column {
+                when {
+                    loading && voters.isEmpty() -> Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text("正在查…", fontSize = 14.sp)
+                    }
+                    error != null && voters.isEmpty() -> Text(
+                        error!!, fontSize = 14.sp
+                    )
+                    voters.isEmpty() -> Text(
+                        "还没有人投这一项。", fontSize = 14.sp
+                    )
+                    else -> {
+                        if (total > 0) {
+                            Text(
+                                "共 $total 人",
+                                fontSize = 12.sp, color = Color.Gray,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                        }
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 360.dp)
+                        ) {
+                            items(voters, key = {
+                                (if (it.isUser) "u" else "c") +
+                                    it.senderId
+                            }) { voter ->
+                                Row(
+                                    verticalAlignment =
+                                        Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 5.dp)
+                                ) {
+                                    if (voter.photoPath != null) {
+                                        AvatarImage(
+                                            path = voter.photoPath,
+                                            sizeDp = 36
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .background(
+                                                    Color(0xFFB0BEC5),
+                                                    CircleShape
+                                                ),
+                                            contentAlignment =
+                                                Alignment.Center
+                                        ) {
+                                            Text(
+                                                voter.name.trim()
+                                                    .firstOrNull()
+                                                    ?.toString() ?: "?",
+                                                color = Color.White,
+                                                fontWeight =
+                                                    FontWeight.Bold,
+                                                fontSize = 15.sp
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        voter.name.ifEmpty { "…" },
+                                        fontSize = 15.sp,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        formatViewDate(voter.voteDate),
+                                        fontSize = 12.sp,
+                                        color = Color.Gray
+                                    )
+                                }
+                            }
+                        }
+                        if (!exhausted) {
+                            TextButton(
+                                onClick = {
+                                    ViewersStore.loadMorePollVoters()
+                                },
+                                enabled = !loading,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    if (loading) {
+                                        "正在加载…"
+                                    } else {
+                                        "加载更多"
+                                    }
+                                )
+                            }
+                        }
+                        if (error != null) {
+                            Text(
+                                error!!, fontSize = 12.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        }
+    )
 }
 
 /** Link preview card under a text message, rendered from the

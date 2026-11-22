@@ -17,6 +17,20 @@ data class ViewerUi(
     val viewDate: Int
 )
 
+/** One row of a poll option's voter list (v0.9.32, Y3),
+ *  from pollVoter in td_api.tl. The voter is a message
+ *  sender: usually a user, but a chat when a channel voted
+ *  as itself — [isUser] says which, and [senderId] is the
+ *  user id or the chat id accordingly. [voteDate] is when
+ *  the vote was cast. */
+data class PollVoterUi(
+    val senderId: Long,
+    val isUser: Boolean,
+    val name: String,
+    val photoPath: String?,
+    val voteDate: Int
+)
+
 /**
  * Read-by list for one message (v0.9.13, T1), over
  * getMessageViewers (verified in td_api.tl). The call only
@@ -134,6 +148,198 @@ object ViewersStore {
                 viewer.copy(photoPath = path)
             } else {
                 viewer
+            }
+        }
+        _pollVoters.value = _pollVoters.value.map { voter ->
+            if (!voter.isUser) {
+                voter
+            } else {
+                val path = AvatarStore.pathForUser(voter.senderId)
+                if (path != voter.photoPath) {
+                    voter.copy(photoPath = path)
+                } else {
+                    voter
+                }
+            }
+        }
+    }
+
+    // ---- Poll voters (v0.9.32, Y3) ----
+
+    private val _pollVoters = MutableStateFlow<List<PollVoterUi>>(
+        emptyList()
+    )
+    val pollVoters: StateFlow<List<PollVoterUi>> = _pollVoters
+
+    private val _pollTotal = MutableStateFlow(0)
+    val pollTotal: StateFlow<Int> = _pollTotal
+
+    private val _pollLoading = MutableStateFlow(false)
+    val pollLoading: StateFlow<Boolean> = _pollLoading
+
+    private val _pollError = MutableStateFlow<String?>(null)
+    val pollError: StateFlow<String?> = _pollError
+
+    private val _pollExhausted = MutableStateFlow(true)
+    val pollExhausted: StateFlow<Boolean> = _pollExhausted
+
+    /** (chatId, messageId, optionId) the poll state belongs
+     *  to; late answers for another option are dropped. */
+    @Volatile
+    private var pollKey: Triple<Long, Long, Int>? = null
+
+    private var pollOffset = 0
+
+    private val chatTitleById = ConcurrentHashMap<Long, String>()
+    private val chatTitlePending = ConcurrentHashMap.newKeySet<Long>()
+
+    /** Open the voter list of one poll option. Paging is by
+     *  the tl's skip-count offset: getPollVoters may return
+     *  fewer than the limit even mid-list, so the end is
+     *  only an empty page or reaching total_count. */
+    fun loadPollVoters(chatId: Long, messageId: Long, optionId: Int) {
+        attachListener()
+        pollKey = Triple(chatId, messageId, optionId)
+        pollOffset = 0
+        _pollVoters.value = emptyList()
+        _pollTotal.value = 0
+        _pollError.value = null
+        _pollExhausted.value = false
+        fetchPollPage()
+    }
+
+    fun loadMorePollVoters() {
+        if (_pollLoading.value || _pollExhausted.value) return
+        if (pollKey == null) return
+        fetchPollPage()
+    }
+
+    private fun fetchPollPage() {
+        val key = pollKey ?: return
+        _pollLoading.value = true
+        val query = TdClient.request("getPollVoters").apply {
+            put("chat_id", key.first)
+            put("message_id", key.second)
+            put("option_id", key.third)
+            put("offset", pollOffset)
+            put("limit", 50)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (pollKey != key) return@sendRaw
+            _pollLoading.value = false
+            if (TdClient.isError(response)) {
+                _pollError.value =
+                    "投票者名单没查到，再试一次。（错误码 " +
+                        "${response.optInt("code")}）"
+                _pollExhausted.value = true
+                return@sendRaw
+            }
+            _pollTotal.value = response.optInt("total_count")
+            val arr = response.optJSONArray("voters") ?: JSONArray()
+            val page = ArrayList<PollVoterUi>()
+            for (i in 0 until arr.length()) {
+                val v = arr.optJSONObject(i) ?: continue
+                val sender = v.optJSONObject("voter_id") ?: continue
+                val row = when (sender.optString("@type")) {
+                    "messageSenderUser" -> {
+                        val uid = sender.optLong("user_id")
+                        if (uid == 0L) {
+                            null
+                        } else {
+                            PollVoterUi(
+                                senderId = uid, isUser = true,
+                                name = nameByUser[uid] ?: "",
+                                photoPath = AvatarStore.pathForUser(uid),
+                                voteDate = v.optInt("date")
+                            )
+                        }
+                    }
+                    "messageSenderChat" -> {
+                        val cid = sender.optLong("chat_id")
+                        if (cid == 0L) {
+                            null
+                        } else {
+                            PollVoterUi(
+                                senderId = cid, isUser = false,
+                                name = chatTitleById[cid] ?: "",
+                                photoPath = null,
+                                voteDate = v.optInt("date")
+                            )
+                        }
+                    }
+                    else -> null
+                }
+                if (row != null) page.add(row)
+            }
+            pollOffset += arr.length()
+            val merged = _pollVoters.value + page
+            _pollVoters.value = merged
+            if (arr.length() == 0 ||
+                (_pollTotal.value > 0 && merged.size >= _pollTotal.value)
+            ) {
+                _pollExhausted.value = true
+            }
+            for (row in page) {
+                if (row.name.isNotEmpty()) continue
+                if (row.isUser) {
+                    resolvePollUserName(row.senderId)
+                } else {
+                    resolvePollChatTitle(row.senderId)
+                }
+            }
+        }
+    }
+
+    private fun resolvePollUserName(userId: Long) {
+        if (!namePending.add(userId)) return
+        val query = TdClient.request("getUser").apply {
+            put("user_id", userId)
+        }
+        TdRepository.sendRaw(query) { user ->
+            namePending.remove(userId)
+            if (TdClient.isError(user)) return@sendRaw
+            AvatarStore.noteUser(user)
+            val name = listOf(
+                user.optString("first_name"), user.optString("last_name")
+            ).filter { it.isNotEmpty() }.joinToString(" ")
+            if (name.isNotEmpty()) nameByUser[userId] = name
+            patch(userId)
+            patchPollUser(userId)
+        }
+    }
+
+    private fun patchPollUser(userId: Long) {
+        val name = nameByUser[userId] ?: ""
+        val path = AvatarStore.pathForUser(userId)
+        _pollVoters.value = _pollVoters.value.map { voter ->
+            if (voter.isUser && voter.senderId == userId &&
+                (voter.name != name || voter.photoPath != path)
+            ) {
+                voter.copy(name = name, photoPath = path)
+            } else {
+                voter
+            }
+        }
+    }
+
+    private fun resolvePollChatTitle(chatId: Long) {
+        if (!chatTitlePending.add(chatId)) return
+        val query = TdClient.request("getChat").apply {
+            put("chat_id", chatId)
+        }
+        TdRepository.sendRaw(query) { chat ->
+            chatTitlePending.remove(chatId)
+            if (TdClient.isError(chat)) return@sendRaw
+            val title = chat.optString("title")
+            if (title.isNotEmpty()) {
+                chatTitleById[chatId] = title
+                _pollVoters.value = _pollVoters.value.map { voter ->
+                    if (!voter.isUser && voter.senderId == chatId) {
+                        voter.copy(name = title)
+                    } else {
+                        voter
+                    }
+                }
             }
         }
     }
