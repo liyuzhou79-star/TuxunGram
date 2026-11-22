@@ -166,6 +166,29 @@ fun SettingsScreen(
     var pingResults by remember {
         mutableStateOf<Map<Long, String>>(emptyMap())
     }
+    // Chat wallpaper picture (v0.9.4, N4): the picked image
+    // is copied into app storage so the system picker grant
+    // expiring cannot take the wallpaper with it.
+    val wallpaperPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val target = java.io.File(
+                    settingsContext.filesDir, "chat_wallpaper.jpg"
+                )
+                settingsContext.contentResolver.openInputStream(uri)
+                    ?.use { inputStream ->
+                        target.outputStream().use { output ->
+                            inputStream.copyTo(output)
+                        }
+                    }
+                UiSettings.setChatBgImage(target.absolutePath)
+            } catch (t: Throwable) {
+                // Copy failed: keep the previous wallpaper.
+            }
+        }
+    }
 
     val settingsScroll = rememberScrollState()
     Column(
@@ -628,6 +651,36 @@ fun SettingsScreen(
                 }
                 Text(UiSettings.CHAT_BG_NAMES[index], fontSize = 12.sp)
                 Spacer(Modifier.width(10.dp))
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "聊天背景图片",
+            fontSize = 15.sp, fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "从相册选一张图当所有聊天的背景，和上面的纯色二选一；" +
+                "显示时会自动压暗一层，保证消息文字看得清。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val chatBgImage by UiSettings.chatBgImage.collectAsState()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 6.dp)
+        ) {
+            TextButton(onClick = { wallpaperPicker.launch("image/*") }) {
+                Text(if (chatBgImage.isEmpty()) "选择图片" else "换一张")
+            }
+            if (chatBgImage.isNotEmpty()) {
+                TextButton(onClick = { UiSettings.setChatBgImage("") }) {
+                    Text("恢复纯色")
+                }
+                Text(
+                    "已设置背景图片",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 13.sp
+                )
             }
         }
         Spacer(Modifier.height(16.dp))

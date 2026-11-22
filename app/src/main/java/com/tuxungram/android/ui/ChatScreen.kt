@@ -816,6 +816,21 @@ fun ChatScreen(
             else -> systemDark
         }
         val chatBgArgb = UiSettings.chatBackgroundArgb(darkNow)
+        // Custom wallpaper picture (v0.9.4, N4): when a
+        // picture is set it replaces the solid wallpaper
+        // behind the message area (the two are alternatives).
+        val chatBgImage by UiSettings.chatBgImage.collectAsState()
+        val wallpaperBitmap by produceState<android.graphics.Bitmap?>(
+            initialValue = null, chatBgImage
+        ) {
+            value = if (chatBgImage.isEmpty()) {
+                null
+            } else {
+                withContext(Dispatchers.IO) {
+                    decodeCached(chatBgImage, maxDim = 1080)
+                }
+            }
+        }
         if (pinnedMessages.isNotEmpty()) {
             // Pinned bar (v0.9.4, N3): the newest pinned
             // message's summary; tapping jumps to it and
@@ -905,16 +920,40 @@ fun ChatScreen(
                 }
             )
         }
+        // Message area with its wallpaper behind it (solid
+        // color since F3; a picked picture since N4 — the
+        // picture gets a theme-tinted scrim so text outside
+        // bubbles stays readable on any photo).
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            val wpBitmap = wallpaperBitmap
+            if (chatBgImage.isNotEmpty() && wpBitmap != null) {
+                Image(
+                    bitmap = wpBitmap.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            MaterialTheme.colorScheme.background.copy(
+                                alpha = if (darkNow) 0.45f else 0.35f
+                            )
+                        )
+                )
+            } else if (chatBgArgb != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(chatBgArgb))
+                )
+            }
         LazyColumn(
             state = listState,
             reverseLayout = true,
             modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .background(
-                    if (chatBgArgb != null) Color(chatBgArgb)
-                    else Color.Transparent
-                )
+                .fillMaxSize()
                 .padding(horizontal = 12.dp)
                 .lazyListScrollbar(listState, reverse = true)
         ) {
@@ -974,6 +1013,7 @@ fun ChatScreen(
                     )
                 }
             }
+        }
         }
 
         // Hairline above the bottom dock (Phase D, D5).

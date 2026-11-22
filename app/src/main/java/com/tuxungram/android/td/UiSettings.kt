@@ -19,6 +19,7 @@ object UiSettings {
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_SEED_INDEX = "seed_index"
     private const val KEY_CHAT_BG = "chat_bg"
+    private const val KEY_CHAT_BG_IMAGE = "chat_bg_image"
     private const val KEY_BUBBLE_STYLE = "bubble_style"
     private const val KEY_FONT_SIZE = "font_size"
     private const val KEY_VOICE_SPEED = "voice_speed"
@@ -78,6 +79,15 @@ object UiSettings {
     private val _chatBg = MutableStateFlow(0)
     val chatBg: StateFlow<Int> = _chatBg
 
+    /** Custom chat wallpaper image (v0.9.4, N4): the local
+     *  file path of the one global wallpaper picture, copied
+     *  into app storage when picked. Empty = no picture; the
+     *  solid chat background above applies instead. When a
+     *  path is set it wins over the solid colors — the two
+     *  are alternatives, never blended. */
+    private val _chatBgImage = MutableStateFlow("")
+    val chatBgImage: StateFlow<String> = _chatBgImage
+
     private val _bubbleStyle = MutableStateFlow(BUBBLE_MODERN)
     val bubbleStyle: StateFlow<Int> = _bubbleStyle
 
@@ -108,6 +118,7 @@ object UiSettings {
         _seedIndex.value = if (seed in SEED_COLORS.indices) seed else 0
         val bg = prefs.getInt(KEY_CHAT_BG, 0)
         _chatBg.value = if (bg in CHAT_BG_COLORS.indices) bg else 0
+        _chatBgImage.value = prefs.getString(KEY_CHAT_BG_IMAGE, "") ?: ""
         val bubble = prefs.getInt(KEY_BUBBLE_STYLE, BUBBLE_MODERN)
         _bubbleStyle.value =
             if (bubble in BUBBLE_MODERN..BUBBLE_CLASSIC) bubble else BUBBLE_MODERN
@@ -127,6 +138,13 @@ object UiSettings {
         if (index !in CHAT_BG_COLORS.indices) return
         _chatBg.value = index
         persist { it.putInt(KEY_CHAT_BG, index) }
+    }
+
+    /** Set (or, with an empty path, clear) the custom chat
+     *  wallpaper picture (v0.9.4, N4). */
+    fun setChatBgImage(path: String) {
+        _chatBgImage.value = path
+        persist { it.putString(KEY_CHAT_BG_IMAGE, path) }
     }
 
     fun setBubbleStyle(style: Int) {
