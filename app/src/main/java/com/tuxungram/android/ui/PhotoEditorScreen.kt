@@ -3,8 +3,12 @@ package com.tuxungram.android.ui
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas as AndroidCanvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.media.ExifInterface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -31,11 +35,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -93,6 +99,15 @@ private data class TextData(
     val sizeFrac: Float
 )
 
+/** One row of the 调色 panel (v0.9.31, X1): label, current
+ *  value, slider range, and the state writer. */
+private data class AdjustSlider(
+    val label: String,
+    val value: Float,
+    val range: ClosedFloatingPointRange<Float>,
+    val onChange: (Float) -> Unit
+)
+
 /** Crop rectangle in normalized image coordinates. */
 private data class CropRect(
     val l: Float, val t: Float, val r: Float, val b: Float
@@ -102,7 +117,23 @@ private data class CropRect(
     }
 }
 
-private enum class EditMode { CROP, DRAW, TEXT }
+private enum class EditMode { CROP, DRAW, TEXT, ADJUST }
+
+/** The two tools sharing the draw gesture layer (v0.9.31,
+ *  X1): the doodle pen paints colored strokes; the mosaic
+ *  pen marks regions the export pixelates. */
+private enum class DrawTool { PEN, MOSAIC }
+
+/** Color filter presets (v0.9.31, X1): key -> label. The
+ *  matrices live in editorColorMatrix(). */
+private val filterPresets = listOf(
+    "none" to "原图",
+    "mono" to "黑白",
+    "sepia" to "复古",
+    "vivid" to "鲜明",
+    "cool" to "冷色",
+    "warm" to "暖色"
+)
 
 private val editorPalette = listOf(
     Color(0xFF000000), Color(0xFFFFFFFF), Color(0xFFE53935),
@@ -157,14 +188,17 @@ private fun applyExifOrientation(path: String, bmp: Bitmap): Bitmap {
  * client-side, no editor library): crop with a draggable
  * frame and aspect presets （自由/1:1/4:3/16:9), rotate in
  * 90° steps, freehand doodles (color / width / undo) and
- * movable text labels. Everything is stored in normalized
- * coordinates of the rotated image, so the preview and the
- * exported JPEG run the exact same geometry. Export draws
- * crop -> strokes -> texts onto a fresh bitmap and saves a
- * JPEG into the cache; the caller then sends that file
- * through the normal photo path. Videos never come here,
- * and sticker overlays are deliberately not part of this
- * basic edition.
+ * movable text labels. v0.9.31 (X1) adds a color grade —
+ * filter presets plus brightness / contrast / saturation
+ * sliders — and a mosaic pen that pixelates what it
+ * covers. Everything is stored in normalized coordinates
+ * of the rotated image, so the preview and the exported
+ * JPEG run the exact same geometry. Export draws
+ * crop -> grade -> mosaic -> strokes -> texts onto a
+ * fresh bitmap and saves a JPEG into the cache; the
+ * caller then sends that file through the normal photo
+ * path. Videos never come here, and sticker overlays are
+ * deliberately not part of this basic edition.
  */
 @Composable
 fun PhotoEditorScreen(
@@ -202,6 +236,46 @@ fun PhotoEditorScreen(
     var currentStroke by remember { mutableStateOf<List<Offset>?>(null) }
     var drawColor by remember { mutableStateOf(editorPalette[2]) }
     var drawWidthFrac by remember { mutableStateOf(0.012f) }
+    // Mosaic pen + color grade (v0.9.31, X1): mosaic
+    // strokes share the doodle coordinate system; the grade
+    // is one filter preset plus three adjustment sliders,
+    // composed by editorColorMatrix() in a fixed order.
+    var drawTool by remember { mutableStateOf(DrawTool.PEN) }
+    var mosaicStrokes by remember {
+        mutableStateOf<List<StrokeData>>(emptyList())
+    }
+    var mosaicWidthFrac by remember { mutableFloatStateOf(0.05f) }
+    var filterKey by remember { mutableStateOf("none") }
+    var brightness by remember { mutableFloatStateOf(0f) }
+    var contrast by remember { mutableFloatStateOf(1f) }
+    var saturation by remember { mutableFloatStateOf(1f) }
+    // Preview bake (X1): the color grade and the mosaic are
+    // baked into a preview bitmap by the same functions the
+    // export runs, so what the user sees is what ships.
+    // Doodles and texts stay vector overlays on top of it.
+    var baked by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(
+        base, filterKey, brightness, contrast, saturation,
+        mosaicStrokes
+    ) {
+        val src = base
+        baked = if (src == null) {
+            null
+        } else {
+            withContext(Dispatchers.Default) {
+                runCatching {
+                    bakeColorAndMosaic(
+                        src,
+                        editorColorMatrix(
+                            filterKey, brightness, contrast,
+                            saturation
+                        ),
+                        mosaicStrokes
+                    )
+                }.getOrNull()
+            }
+        }
+    }
     var texts by remember { mutableStateOf<List<TextData>>(emptyList()) }
     var selectedTextId by remember { mutableStateOf<Int?>(null) }
     var nextTextId by remember { mutableStateOf(1) }
@@ -214,7 +288,9 @@ fun PhotoEditorScreen(
     val labelSizes = remember { mutableStateMapOf<Int, IntSize>() }
 
     val dirty = rotation != 0 || crop != CropRect.FULL ||
-        strokes.isNotEmpty() || texts.isNotEmpty()
+        strokes.isNotEmpty() || texts.isNotEmpty() ||
+        mosaicStrokes.isNotEmpty() || filterKey != "none" ||
+        brightness != 0f || contrast != 1f || saturation != 1f
 
     fun rotateAll() {
         // 90° clockwise: (x, y) -> (1 - y, x); the crop rect
@@ -224,6 +300,13 @@ fun PhotoEditorScreen(
             r = 1f - crop.t, b = crop.r
         )
         strokes = strokes.map { stroke ->
+            stroke.copy(
+                points = stroke.points.map {
+                    Offset(1f - it.y, it.x)
+                }
+            )
+        }
+        mosaicStrokes = mosaicStrokes.map { stroke ->
             stroke.copy(
                 points = stroke.points.map {
                     Offset(1f - it.y, it.x)
@@ -280,6 +363,11 @@ fun PhotoEditorScreen(
                 runCatching {
                     exportEdited(
                         bmp, crop, strokes, texts,
+                        editorColorMatrix(
+                            filterKey, brightness, contrast,
+                            saturation
+                        ),
+                        mosaicStrokes,
                         File(
                             context.cacheDir,
                             "edit_${System.currentTimeMillis()}.jpg"
@@ -366,16 +454,33 @@ fun PhotoEditorScreen(
                         }
                 ) {
                     Image(
-                        bitmap = bmp.asImageBitmap(),
+                        // The baked preview (grade + mosaic)
+                        // once it lands; the plain rotated
+                        // base until then (X1).
+                        bitmap = (baked ?: bmp).asImageBitmap(),
                         contentDescription = null,
                         contentScale = ContentScale.FillBounds,
                         modifier = Modifier.fillMaxSize()
                     )
                     // Doodles (always visible).
                     Canvas(modifier = Modifier.fillMaxSize()) {
+                        // In-progress stroke: the pen draws in
+                        // its color; the mosaic pen draws a
+                        // translucent gray smear (its baked
+                        // pixelation replaces it on release).
                         val all = if (currentStroke != null) {
                             strokes + StrokeData(
-                                currentStroke!!, drawColor, drawWidthFrac
+                                currentStroke!!,
+                                if (drawTool == DrawTool.MOSAIC) {
+                                    Color(0x99616161)
+                                } else {
+                                    drawColor
+                                },
+                                if (drawTool == DrawTool.MOSAIC) {
+                                    mosaicWidthFrac
+                                } else {
+                                    drawWidthFrac
+                                }
                             )
                         } else {
                             strokes
@@ -540,7 +645,9 @@ fun PhotoEditorScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .pointerInput(mode, containerSize, rotation) {
+                            .pointerInput(
+                                mode, containerSize, rotation, drawTool
+                            ) {
                                 val w = containerSize.width
                                     .coerceAtLeast(1)
                                 val h = containerSize.height
@@ -571,11 +678,24 @@ fun PhotoEditorScreen(
                                         onDragEnd = {
                                             currentStroke?.let { pts ->
                                                 if (pts.isNotEmpty()) {
-                                                    strokes = strokes +
-                                                        StrokeData(
-                                                            pts, drawColor,
-                                                            drawWidthFrac
-                                                        )
+                                                    if (drawTool ==
+                                                        DrawTool.MOSAIC
+                                                    ) {
+                                                        mosaicStrokes =
+                                                            mosaicStrokes +
+                                                                StrokeData(
+                                                                    pts,
+                                                                    Color.Gray,
+                                                                    mosaicWidthFrac
+                                                                )
+                                                    } else {
+                                                        strokes = strokes +
+                                                            StrokeData(
+                                                                pts,
+                                                                drawColor,
+                                                                drawWidthFrac
+                                                            )
+                                                    }
                                                 }
                                             }
                                             currentStroke = null
@@ -588,6 +708,10 @@ fun PhotoEditorScreen(
                                     // not composed in TEXT mode);
                                     // kept for exhaustiveness.
                                     EditMode.TEXT -> Unit
+                                    // Adjust mode has no image
+                                    // gestures; sliders live in
+                                    // its control row.
+                                    EditMode.ADJUST -> Unit
                                     EditMode.CROP -> {
                                         var dragCorner = -1
                                         var moveStart: Offset? = null
@@ -705,7 +829,8 @@ fun PhotoEditorScreen(
             for ((m, label) in listOf(
                 EditMode.CROP to "裁剪",
                 EditMode.DRAW to "涂鸦",
-                EditMode.TEXT to "文字"
+                EditMode.TEXT to "文字",
+                EditMode.ADJUST to "调色"
             )) {
                 Box(
                     modifier = Modifier
@@ -798,69 +923,37 @@ fun PhotoEditorScreen(
                     .padding(horizontal = 12.dp)
                     .padding(bottom = 10.dp)
             ) {
+                // Tool toggle (v0.9.31, X1): doodle pen /
+                // mosaic pen. Undo and clear act on the
+                // ACTIVE tool's stroke list.
+                val activeIsMosaic = drawTool == DrawTool.MOSAIC
+                val activeStrokes =
+                    if (activeIsMosaic) mosaicStrokes else strokes
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    for (color in editorPalette) {
-                        Box(
-                            modifier = Modifier
-                                .size(26.dp)
-                                .background(color, CircleShape)
-                                .then(
-                                    if (drawColor == color) {
-                                        Modifier.border(
-                                            2.dp,
-                                            MaterialTheme.colorScheme
-                                                .primary,
-                                            CircleShape
-                                        )
-                                    } else {
-                                        Modifier.border(
-                                            1.dp, Color.Gray, CircleShape
-                                        )
-                                    }
-                                )
-                                .clickable { drawColor = color }
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(
-                        onClick = {
-                            if (strokes.isNotEmpty()) {
-                                strokes = strokes.dropLast(1)
-                            }
-                        },
-                        enabled = strokes.isNotEmpty()
-                    ) { Text("撤销") }
-                    TextButton(
-                        onClick = { strokes = emptyList() },
-                        enabled = strokes.isNotEmpty()
-                    ) { Text("清空") }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("粗细", fontSize = 13.5.sp)
-                    Spacer(Modifier.width(8.dp))
-                    for ((label, wf) in listOf(
-                        "细" to 0.006f, "中" to 0.012f, "粗" to 0.024f
+                    for ((tool, label) in listOf(
+                        DrawTool.PEN to "画笔",
+                        DrawTool.MOSAIC to "打码"
                     )) {
                         Box(
                             modifier = Modifier
                                 .background(
-                                    if (drawWidthFrac == wf) {
-                                        MaterialTheme.colorScheme.primary
+                                    if (drawTool == tool) {
+                                        MaterialTheme.colorScheme
+                                            .primary
                                     } else {
                                         MaterialTheme.colorScheme
                                             .surfaceVariant
                                     },
                                     RoundedCornerShape(50)
                                 )
-                                .clickable { drawWidthFrac = wf }
+                                .clickable { drawTool = tool }
                                 .padding(
-                                    horizontal = 12.dp, vertical = 6.dp
+                                    horizontal = 14.dp, vertical = 6.dp
                                 )
                         ) {
                             Text(
                                 label, fontSize = 13.sp,
-                                color = if (drawWidthFrac == wf) {
+                                color = if (drawTool == tool) {
                                     MaterialTheme.colorScheme.onPrimary
                                 } else {
                                     MaterialTheme.colorScheme
@@ -869,6 +962,207 @@ fun PhotoEditorScreen(
                             )
                         }
                         Spacer(Modifier.width(6.dp))
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = {
+                            if (activeIsMosaic) {
+                                mosaicStrokes =
+                                    mosaicStrokes.dropLast(1)
+                            } else {
+                                strokes = strokes.dropLast(1)
+                            }
+                        },
+                        enabled = activeStrokes.isNotEmpty()
+                    ) { Text("撤销") }
+                    TextButton(
+                        onClick = {
+                            if (activeIsMosaic) {
+                                mosaicStrokes = emptyList()
+                            } else {
+                                strokes = emptyList()
+                            }
+                        },
+                        enabled = activeStrokes.isNotEmpty()
+                    ) { Text("清空") }
+                }
+                if (activeIsMosaic) {
+                    Text(
+                        "涂抹要遮住的地方，导出时这些区域会变成马赛克",
+                        fontSize = 12.5.sp, color = Color.Gray,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    ) {
+                        for (color in editorPalette) {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .background(color, CircleShape)
+                                    .then(
+                                        if (drawColor == color) {
+                                            Modifier.border(
+                                                2.dp,
+                                                MaterialTheme.colorScheme
+                                                    .primary,
+                                                CircleShape
+                                            )
+                                        } else {
+                                            Modifier.border(
+                                                1.dp, Color.Gray,
+                                                CircleShape
+                                            )
+                                        }
+                                    )
+                                    .clickable { drawColor = color }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("粗细", fontSize = 13.5.sp)
+                    Spacer(Modifier.width(8.dp))
+                    val widths = if (activeIsMosaic) {
+                        listOf(
+                            "细" to 0.03f, "中" to 0.05f, "粗" to 0.08f
+                        )
+                    } else {
+                        listOf(
+                            "细" to 0.006f, "中" to 0.012f, "粗" to 0.024f
+                        )
+                    }
+                    val activeWidth =
+                        if (activeIsMosaic) {
+                            mosaicWidthFrac
+                        } else {
+                            drawWidthFrac
+                        }
+                    for ((label, wf) in widths) {
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (activeWidth == wf) {
+                                        MaterialTheme.colorScheme
+                                            .primary
+                                    } else {
+                                        MaterialTheme.colorScheme
+                                            .surfaceVariant
+                                    },
+                                    RoundedCornerShape(50)
+                                )
+                                .clickable {
+                                    if (activeIsMosaic) {
+                                        mosaicWidthFrac = wf
+                                    } else {
+                                        drawWidthFrac = wf
+                                    }
+                                }
+                                .padding(
+                                    horizontal = 12.dp, vertical = 6.dp
+                                )
+                        ) {
+                            Text(
+                                label, fontSize = 13.sp,
+                                color = if (activeWidth == wf) {
+                                    MaterialTheme.colorScheme.onPrimary
+                                } else {
+                                    MaterialTheme.colorScheme
+                                        .onSurfaceVariant
+                                }
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+                }
+            }
+            EditMode.ADJUST -> Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = 10.dp)
+            ) {
+                // Filter presets (v0.9.31, X1): one tap
+                // applies the preset matrix; the sliders
+                // below compose after it (fixed order, see
+                // editorColorMatrix).
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("滤镜", fontSize = 13.5.sp)
+                    Spacer(Modifier.width(8.dp))
+                    for ((key, label) in filterPresets) {
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (filterKey == key) {
+                                        MaterialTheme.colorScheme
+                                            .primary
+                                    } else {
+                                        MaterialTheme.colorScheme
+                                            .surfaceVariant
+                                    },
+                                    RoundedCornerShape(50)
+                                )
+                                .clickable { filterKey = key }
+                                .padding(
+                                    horizontal = 11.dp, vertical = 6.dp
+                                )
+                        ) {
+                            Text(
+                                label, fontSize = 13.sp,
+                                color = if (filterKey == key) {
+                                    MaterialTheme.colorScheme.onPrimary
+                                } else {
+                                    MaterialTheme.colorScheme
+                                        .onSurfaceVariant
+                                }
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+                }
+                for ((label, value, range, onChange) in listOf(
+                    AdjustSlider(
+                        "亮度", brightness, -0.25f..0.25f
+                    ) { brightness = it },
+                    AdjustSlider(
+                        "对比度", contrast, 0.5f..1.5f
+                    ) { contrast = it },
+                    AdjustSlider(
+                        "饱和度", saturation, 0f..2f
+                    ) { saturation = it }
+                )) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            label, fontSize = 13.5.sp,
+                            modifier = Modifier.width(52.dp)
+                        )
+                        Slider(
+                            value = value,
+                            onValueChange = onChange,
+                            valueRange = range,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${(value * 100).roundToInt()}",
+                            fontSize = 12.sp, color = Color.Gray,
+                            modifier = Modifier.width(36.dp)
+                        )
+                    }
+                }
+                Row {
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = {
+                        filterKey = "none"
+                        brightness = 0f
+                        contrast = 1f
+                        saturation = 1f
+                    }) {
+                        Text("重置调色")
                     }
                 }
             }
@@ -1030,15 +1324,165 @@ private fun dragCropCorner(
     )
 }
 
+/** Compose the editor's color matrix (v0.9.31, X1) in a
+ *  FIXED order: the filter preset first, then the
+ *  saturation slider, then contrast + brightness. Preview
+ *  and export share this builder, so the order can never
+ *  drift between what is shown and what is sent. */
+private fun editorColorMatrix(
+    filterKey: String,
+    brightness: Float,
+    contrast: Float,
+    saturation: Float
+): ColorMatrix {
+    val m = ColorMatrix()
+    when (filterKey) {
+        "mono" -> m.setSaturation(0f)
+        "sepia" -> m.set(
+            floatArrayOf(
+                0.393f, 0.769f, 0.189f, 0f, 0f,
+                0.349f, 0.686f, 0.168f, 0f, 0f,
+                0.272f, 0.534f, 0.131f, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+        "vivid" -> m.setSaturation(1.6f)
+        "cool" -> m.set(
+            floatArrayOf(
+                0.90f, 0f, 0f, 0f, 0f,
+                0f, 1.0f, 0f, 0f, 0f,
+                0f, 0f, 1.15f, 0f, 6f,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+        "warm" -> m.set(
+            floatArrayOf(
+                1.12f, 0f, 0f, 0f, 6f,
+                0f, 1.02f, 0f, 0f, 0f,
+                0f, 0f, 0.88f, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+    }
+    val sat = ColorMatrix()
+    sat.setSaturation(saturation)
+    m.postConcat(sat)
+    val t = brightness * 255f
+    val cb = ColorMatrix(
+        floatArrayOf(
+            contrast, 0f, 0f, 0f, t,
+            0f, contrast, 0f, 0f, t,
+            0f, 0f, contrast, 0f, t,
+            0f, 0f, 0f, 1f, 0f
+        )
+    )
+    m.postConcat(cb)
+    return m
+}
+
+/** Bake the color grade and the mosaic onto a copy of
+ *  [src] (v0.9.31, X1): the preview's bitmap. The export
+ *  runs the same two steps on the cropped region. */
+private fun bakeColorAndMosaic(
+    src: Bitmap,
+    matrix: ColorMatrix,
+    mosaicStrokes: List<StrokeData>
+): Bitmap {
+    val out = Bitmap.createBitmap(
+        src.width, src.height, Bitmap.Config.ARGB_8888
+    )
+    val canvas = AndroidCanvas(out)
+    canvas.drawBitmap(
+        src, 0f, 0f,
+        Paint().apply {
+            colorFilter = ColorMatrixColorFilter(matrix)
+        }
+    )
+    applyMosaicInPlace(out, mosaicStrokes, src.width, src.height, 0, 0)
+    return out
+}
+
+/** Pixelate the regions [strokes] cover, in place
+ *  (v0.9.31, X1). Stroke points are normalized to the
+ *  FULL image ([fullW] x [fullH]); [offX]/[offY] shift
+ *  them into the target bitmap's frame (the crop offset
+ *  at export, 0 in the preview bake). Method: rasterize
+ *  the strokes into an alpha mask, build a blocky
+ *  downscale/upscale copy of the image, and stamp it
+ *  back through the mask (DST_IN). Cell size follows the
+ *  widest stroke, so a thicker pen makes bigger blocks. */
+private fun applyMosaicInPlace(
+    img: Bitmap,
+    strokes: List<StrokeData>,
+    fullW: Int,
+    fullH: Int,
+    offX: Int,
+    offY: Int
+) {
+    if (strokes.isEmpty()) return
+    val w = img.width
+    val h = img.height
+    val mask = Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8)
+    val maskCanvas = AndroidCanvas(mask)
+    for (stroke in strokes) {
+        if (stroke.points.isEmpty()) continue
+        val paint = Paint().apply {
+            color = android.graphics.Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = stroke.widthFrac * fullW
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            isAntiAlias = true
+        }
+        if (stroke.points.size == 1) {
+            paint.style = Paint.Style.FILL
+            maskCanvas.drawCircle(
+                stroke.points[0].x * fullW - offX,
+                stroke.points[0].y * fullH - offY,
+                paint.strokeWidth / 2f, paint
+            )
+        } else {
+            val path = android.graphics.Path()
+            path.moveTo(
+                stroke.points[0].x * fullW - offX,
+                stroke.points[0].y * fullH - offY
+            )
+            for (pt in stroke.points.drop(1)) {
+                path.lineTo(pt.x * fullW - offX, pt.y * fullH - offY)
+            }
+            maskCanvas.drawPath(path, paint)
+        }
+    }
+    val cell = (strokes.maxOf { it.widthFrac } * fullW * 0.8f)
+        .toInt().coerceIn(6, 80)
+    val small = Bitmap.createScaledBitmap(
+        img, max(1, w / cell), max(1, h / cell), false
+    )
+    val blocky = Bitmap.createScaledBitmap(small, w, h, false)
+    val tmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val tmpCanvas = AndroidCanvas(tmp)
+    tmpCanvas.drawBitmap(blocky, 0f, 0f, null)
+    tmpCanvas.drawBitmap(
+        mask, 0f, 0f,
+        Paint().apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+        }
+    )
+    AndroidCanvas(img).drawBitmap(tmp, 0f, 0f, null)
+}
+
 /** Render the edit onto a fresh bitmap: crop the rotated
- *  base, paint the strokes, paint the texts, save JPEG.
- *  Returns the output path, or null on any failure (the
- *  caller then keeps the user in the editor). */
+ *  base, apply the color grade, stamp the mosaic, paint
+ *  the strokes, paint the texts, save JPEG. Returns the
+ *  output path, or null on any failure (the caller then
+ *  keeps the user in the editor). */
 private fun exportEdited(
     base: Bitmap,
     crop: CropRect,
     strokes: List<StrokeData>,
     texts: List<TextData>,
+    matrix: ColorMatrix,
+    mosaicStrokes: List<StrokeData>,
     outFile: File
 ): String? {
     val w = base.width
@@ -1048,8 +1492,17 @@ private fun exportEdited(
     val r = (crop.r * w).toInt().coerceIn(l + 1, w)
     val b = (crop.b * h).toInt().coerceIn(t + 1, h)
     val cropped = Bitmap.createBitmap(base, l, t, r - l, b - t)
-    val out = cropped.copy(Bitmap.Config.ARGB_8888, true)
+    val out = Bitmap.createBitmap(
+        r - l, b - t, Bitmap.Config.ARGB_8888
+    )
     val canvas = AndroidCanvas(out)
+    canvas.drawBitmap(
+        cropped, 0f, 0f,
+        Paint().apply {
+            colorFilter = ColorMatrixColorFilter(matrix)
+        }
+    )
+    applyMosaicInPlace(out, mosaicStrokes, w, h, l, t)
     for (stroke in strokes) {
         if (stroke.points.isEmpty()) continue
         val paint = Paint().apply {
