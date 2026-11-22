@@ -571,6 +571,16 @@ object MessageStore {
     @Volatile
     private var lastReadOutbox = 0L
 
+    /** Newest incoming message already read when this chat
+     *  was opened (last_read_inbox_message_id from the
+     *  open-time getChat; v0.9.11, A2). The chat screen draws
+     *  the "unread messages" divider above the first message
+     *  past it. Captured once per open on purpose: messages
+     *  read live while the chat is open must not move it. */
+    @Volatile
+    var lastReadInboxAtOpen = 0L
+        private set
+
     @Volatile
     private var allHistoryLoaded = false
 
@@ -616,6 +626,7 @@ object MessageStore {
         allHistoryLoaded = false
         firstPageRetried = false
         lastReadOutbox = 0L
+        lastReadInboxAtOpen = 0L
         _draftText.value = ""
         _draftLoaded.value = false
         lastSavedDraft = null
@@ -634,6 +645,8 @@ object MessageStore {
         }) { response ->
             if (!TdClient.isError(response) && currentChatId == chatId) {
                 lastReadOutbox = response.optLong("last_read_outbox_message_id")
+                lastReadInboxAtOpen =
+                    response.optLong("last_read_inbox_message_id")
                 val draftContent = response.optJSONObject("draft_message")
                     ?.optJSONObject("content")
                 if (draftContent != null &&

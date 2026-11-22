@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -877,6 +878,19 @@ fun ChatScreen(
                 }
             }
         }
+        // Unread divider (v0.9.11, A2): the first incoming
+        // message past the read position captured when this
+        // chat was opened gets the "unread messages" capsule
+        // above it. Computed per composition (the read
+        // position lands asynchronously after open).
+        val unreadCut = MessageStore.lastReadInboxAtOpen
+        val unreadFirstId = if (unreadCut == 0L) {
+            0L
+        } else {
+            messages.firstOrNull {
+                it.id > unreadCut && !it.outgoing
+            }?.id ?: 0L
+        }
         // Sender-avatar runs (v0.9.9, W0): in a group, an
         // incoming message carries its sender's avatar only
         // when it opens a run — the chronologically previous
@@ -1110,11 +1124,41 @@ fun ChatScreen(
                         ) {
                             Text(
                                 formatDayLabel(msg.dateSeconds),
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme
+                                    .onSurfaceVariant,
                                 fontSize = 11.sp,
                                 modifier = Modifier
                                     .background(
-                                        Color(0x99000000),
+                                        MaterialTheme.colorScheme
+                                            .surfaceVariant,
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        MaterialTheme.colorScheme
+                                            .outlineVariant,
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                    if (unreadFirstId != 0L && msg.id == unreadFirstId) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "未读消息",
+                                color = MaterialTheme.colorScheme
+                                    .onPrimaryContainer,
+                                fontSize = 11.sp,
+                                modifier = Modifier
+                                    .background(
+                                        MaterialTheme.colorScheme
+                                            .primaryContainer,
                                         RoundedCornerShape(10.dp)
                                     )
                                     .padding(horizontal = 10.dp, vertical = 3.dp)

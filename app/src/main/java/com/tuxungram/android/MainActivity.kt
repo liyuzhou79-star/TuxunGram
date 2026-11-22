@@ -85,6 +85,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
@@ -345,6 +346,21 @@ private fun AuthHost() {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // Soft gradient wash behind the whole auth flow
+            // (v0.9.11, A2): seed colour at the top fading
+            // through the background to a tertiary hint at the
+            // bottom — program-drawn, no image assets.
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.primary
+                            .copy(alpha = 0.10f),
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.tertiary
+                            .copy(alpha = 0.08f)
+                    )
+                )
+            )
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
         // Auth-flow transitions (v0.9.11, A1): splash -> phone

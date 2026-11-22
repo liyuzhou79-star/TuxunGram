@@ -304,6 +304,29 @@ fun decodeCached(path: String, maxDim: Int = 0): android.graphics.Bitmap? {
 /** Round avatar from a downloaded TDLib photo file; the small
  *  renditions are tiny, so a plain decode is fine. */
 @Composable
+/** Small rounded media thumbnail for list rows (v0.9.11,
+ *  A2): the chat list's last-message media chip. Decodes
+ *  through the same cache as avatars; renders nothing
+ *  while the file is not on disk yet. */
+@Composable
+fun MediaThumbChip(path: String, sizeDp: Int = 22) {
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = withContext(Dispatchers.IO) { decodeCached(path) }
+    }
+    val bmp = bitmap ?: return
+    Image(
+        bitmap = bmp.asImageBitmap(),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .size(sizeDp.dp)
+            .clip(RoundedCornerShape(5.dp))
+    )
+}
+
+@Composable
 fun AvatarImage(path: String, sizeDp: Int) {
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path

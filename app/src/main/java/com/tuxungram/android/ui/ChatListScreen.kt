@@ -1106,6 +1106,10 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
             }
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (chat.previewThumbPath != null) {
+                    MediaThumbChip(chat.previewThumbPath)
+                    Spacer(Modifier.width(6.dp))
+                }
                 Text(
                     chat.preview,
                     color = Color.Gray,
@@ -1338,12 +1342,20 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                                     )
                                 }
                             }
-                            Text(
-                                chat.preview,
-                                color = Color.Gray,
-                                fontSize = 14.sp,
-                                maxLines = 1
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (chat.previewThumbPath != null) {
+                                    MediaThumbChip(chat.previewThumbPath)
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text(
+                                    chat.preview,
+                                    color = Color.Gray,
+                                    fontSize = 14.sp,
+                                    maxLines = 1
+                                )
+                            }
                         }
                         if (chat.unreadCount > 0) {
                             val cap by UiSettings.unreadCap.collectAsState()

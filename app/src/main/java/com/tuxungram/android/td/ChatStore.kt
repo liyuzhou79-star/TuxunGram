@@ -38,7 +38,13 @@ data class ChatItem(
     // (chatAvailableReactionsAll or unknown), empty = reactions
     // are off here, otherwise only these emojis may be added.
     // The server answers 400 for anything outside this list.
-    val allowedReactions: List<String>? = null
+    val allowedReactions: List<String>? = null,
+    // Local path of the last message's media thumbnail
+    // (v0.9.11, A2): photo / video / animation / sticker
+    // previews render as a small image chip in the row
+    // instead of text only. Null while downloading or for
+    // text-only last messages.
+    val previewThumbPath: String? = null
 )
 
 /**
@@ -617,8 +623,37 @@ object ChatStore {
             photoFileId = avatarFileId(chat),
             photoPath = avatarPath(chat),
             isOnline = onlineByChat[chat.optLong("id")] == true,
-            allowedReactions = allowedReactionsOf(chat)
+            allowedReactions = allowedReactionsOf(chat),
+            previewThumbPath = AvatarStore.pathForFileObj(
+                previewThumbFile(last)
+            )
         )
+    }
+
+    /** The last message's media thumbnail file, if any
+     *  (v0.9.11, A2; field shapes per td_api.tl): photo ->
+     *  the smallest size's file, video / animation -> their
+     *  thumbnail file, sticker -> its thumbnail or the
+     *  sticker file itself. Resolved through AvatarStore
+     *  exactly like avatars (note + download + path). */
+    private fun previewThumbFile(message: JSONObject?): JSONObject? {
+        val content = message?.optJSONObject("content") ?: return null
+        return when (content.optString("@type")) {
+            "messagePhoto" -> content.optJSONObject("photo")
+                ?.optJSONArray("sizes")?.optJSONObject(0)
+                ?.optJSONObject("photo")
+            "messageVideo" -> content.optJSONObject("video")
+                ?.optJSONObject("thumbnail")?.optJSONObject("file")
+            "messageAnimation" -> content.optJSONObject("animation")
+                ?.optJSONObject("thumbnail")?.optJSONObject("file")
+            "messageSticker" -> {
+                val sticker = content.optJSONObject("sticker")
+                sticker?.optJSONObject("thumbnail")
+                    ?.optJSONObject("file")
+                    ?: sticker?.optJSONObject("sticker")
+            }
+            else -> null
+        }
     }
 
     /** Parse chat.available_reactions: All (or a missing field)
