@@ -1608,7 +1608,10 @@ fun FolderTab(
             modifier = Modifier.padding(vertical = 10.dp)
         )
         Box(modifier = Modifier.fillMaxWidth().height(3.dp)) {
-            AnimatedVisibility(
+            // Fully qualified: inside a Column the name
+            // otherwise resolves to ColumnScope's member
+            // AnimatedVisibility, which needs its receiver.
+            androidx.compose.animation.AnimatedVisibility(
                 visible = selected,
                 enter = expandHorizontally(Motion.tween(200)) +
                     fadeIn(Motion.tween(200)),
