@@ -377,6 +377,27 @@ object ChatStore {
     fun chatIdOfUser(userId: Long): Long =
         chatIdByUserId[userId] ?: 0L
 
+    /** Coarse kind of a cached chat straight from its
+     *  type object — "user", "group" or "channel"; null
+     *  when the chat is not cached. Works for chats that
+     *  sit in no list (public search results, v0.9.36,
+     *  C4), where itemOf has no position to flatten. */
+    fun kindOfChat(chatId: Long): String? {
+        val type = cache[chatId]?.optJSONObject("type")
+            ?: return null
+        return when (type.optString("@type")) {
+            "chatTypePrivate", "chatTypeSecret" -> "user"
+            "chatTypeBasicGroup" -> "group"
+            "chatTypeSupergroup" ->
+                if (type.optBoolean("is_channel")) {
+                    "channel"
+                } else {
+                    "group"
+                }
+            else -> null
+        }
+    }
+
     /** A flattened item for any cached chat, whatever list it is
      *  on; used when navigating somewhere from a folder/search. */
     fun itemOf(chatId: Long): ChatItem? {
