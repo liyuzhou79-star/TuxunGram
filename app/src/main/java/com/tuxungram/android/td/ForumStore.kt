@@ -17,7 +17,12 @@ data class ForumTopicUi(
     val isPinned: Boolean,
     val lastText: String,
     val lastDate: Int,
-    val iconColor: Int = 0
+    val iconColor: Int = 0,
+    /** The topic creator's user id (forumTopicInfo.creator_id,
+     *  v0.9.15 V5) — a topic can be managed by its creator or
+     *  by an admin holding can_manage_topics. 0 when the
+     *  sender was not a user (channel-created topics). */
+    val creatorId: Long = 0L
 )
 
 /**
@@ -171,14 +176,28 @@ object ForumStore {
         } else {
             ""
         }
+        // forumTopicIcon is FLAT in this tl (color +
+        // custom_emoji_id, no nested "type" object) — the
+        // pre-v0.9.15 code looked for a forumTopicIconGeneric
+        // wrapper that does not exist here, so the color was
+        // always 0. The stored color gets an opaque alpha so
+        // Color(iconColor) renders it directly; the wire value
+        // is plain RGB.
         val icon = info.optJSONObject("icon")
-        val iconType = icon?.optJSONObject("type")
-        val color = if (
-            iconType?.optString("@type") == "forumTopicIconGeneric"
+        val rawColor = if (
+            icon != null && icon.optLong("custom_emoji_id") == 0L
         ) {
-            iconType.optInt("color")
+            icon.optInt("color")
         } else {
             0
+        }
+        val creator = info.optJSONObject("creator_id")
+        val creatorId = if (
+            creator?.optString("@type") == "messageSenderUser"
+        ) {
+            creator.optLong("user_id")
+        } else {
+            0L
         }
         return ForumTopicUi(
             topicId = info.optInt("forum_topic_id"),
@@ -191,8 +210,213 @@ object ForumStore {
             isPinned = topic.optBoolean("is_pinned"),
             lastText = lastText,
             lastDate = lastMsg?.optInt("date") ?: info.optInt("creation_date"),
-            iconColor = color
+            iconColor = if (rawColor != 0) {
+                rawColor or (0xFF shl 24)
+            } else {
+                0
+            },
+            creatorId = creatorId
         )
+    }
+
+    // ---- Topic management (v0.9.15, V5) ----
+    // Interfaces verified in td_api.tl: createForumTopic
+    // (needs the can_create_topics member right or
+    // can_manage_topics admin right), editForumTopic,
+    // toggleForumTopicIsClosed (both directions — there is
+    // no separate reopen call) and deleteForumTopic.
+    // forumTopicInfo carries NO per-topic rights, so the
+    // gates are composed from the viewer's chat rights plus
+    // topic ownership, and every server refusal is mapped to
+    // a plain sentence on manageError.
+
+    private val _canCreateTopics = MutableStateFlow(false)
+    val canCreateTopics: StateFlow<Boolean> = _canCreateTopics
+
+    private val _canManageTopics = MutableStateFlow(false)
+    val canManageTopics: StateFlow<Boolean> = _canManageTopics
+
+    private val _myUserId = MutableStateFlow(0L)
+    val myUserId: StateFlow<Long> = _myUserId
+
+    private val _manageError = MutableStateFlow<String?>(null)
+    val manageError: StateFlow<String?> = _manageError
+
+    @Volatile
+    private var rightsChatId = 0L
+
+    fun clearManageError() {
+        _manageError.value = null
+    }
+
+    fun loadViewerRights(chatId: Long) {
+        if (rightsChatId == chatId) return
+        rightsChatId = chatId
+        _canCreateTopics.value = false
+        _canManageTopics.value = false
+        TdRepository.sendRaw(TdClient.request("getMe")) { me ->
+            if (TdClient.isError(me)) return@sendRaw
+            val myId = me.optLong("id")
+            if (myId == 0L) return@sendRaw
+            _myUserId.value = myId
+            TdRepository.sendRaw(TdClient.request("getChat").apply {
+                put("chat_id", chatId)
+            }) { chat ->
+                if (!TdClient.isError(chat) &&
+                    chat.optJSONObject("permissions")
+                        ?.optBoolean("can_create_topics") == true
+                ) {
+                    _canCreateTopics.value = true
+                }
+            }
+            val memberQuery = TdClient.request("getChatMember").apply {
+                put("chat_id", chatId)
+                put("member_id", JSONObject().apply {
+                    put("@type", "messageSenderUser")
+                    put("user_id", myId)
+                })
+            }
+            TdRepository.sendRaw(memberQuery) { member ->
+                if (TdClient.isError(member)) return@sendRaw
+                val status = member.optJSONObject("status")
+                    ?: return@sendRaw
+                when (status.optString("@type")) {
+                    "chatMemberStatusCreator" -> {
+                        _canManageTopics.value = true
+                        _canCreateTopics.value = true
+                    }
+                    "chatMemberStatusAdministrator" -> {
+                        if (status.optJSONObject("rights")
+                                ?.optBoolean("can_manage_topics") == true
+                        ) {
+                            _canManageTopics.value = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Whether the viewer may manage [topic]: an admin with
+     *  can_manage_topics, or the topic's own creator. The
+     *  General topic is never manageable (the server pins its
+     *  name and keeps it undeletable). */
+    fun canManageTopic(topic: ForumTopicUi): Boolean {
+        if (topic.isGeneral) return false
+        if (_canManageTopics.value) return true
+        val me = _myUserId.value
+        return me != 0L && topic.creatorId == me
+    }
+
+    private fun reloadTopicsFromTop() {
+        topicsExhausted = false
+        offDate = 0
+        offMessageId = 0L
+        offTopicId = 0
+        _topics.value = emptyList()
+        pageTopics()
+    }
+
+    private fun patchTopic(topicId: Int, change: (ForumTopicUi) -> ForumTopicUi) {
+        _topics.value = _topics.value.map {
+            if (it.topicId == topicId) change(it) else it
+        }
+    }
+
+    fun createTopic(name: String) {
+        val chatId = topicsChatId
+        val trimmed = name.trim()
+        if (chatId == 0L || trimmed.isEmpty()) return
+        // Telegram's generic topic colors (RGB), picked
+        // deterministically from the name so retries agree.
+        val palette = intArrayOf(
+            0x6FB9F0, 0xFFD67E, 0xCB86DB,
+            0x8EEE98, 0xFF93B2, 0xFB6F5F
+        )
+        val color = palette[
+            (trimmed.hashCode() and Int.MAX_VALUE) % palette.size
+        ]
+        val query = TdClient.request("createForumTopic").apply {
+            put("chat_id", chatId)
+            put("name", trimmed)
+            put("is_name_implicit", false)
+            put("icon", JSONObject().apply {
+                put("@type", "forumTopicIcon")
+                put("color", color)
+                put("custom_emoji_id", 0L)
+            })
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _manageError.value =
+                    "话题没建好：可能是权限不够，或者名字不合要求。"
+            } else {
+                reloadTopicsFromTop()
+            }
+        }
+    }
+
+    fun renameTopic(topic: ForumTopicUi, name: String) {
+        val chatId = topicsChatId
+        val trimmed = name.trim()
+        if (chatId == 0L || trimmed.isEmpty()) return
+        val query = TdClient.request("editForumTopic").apply {
+            put("chat_id", chatId)
+            put("forum_topic_id", topic.topicId)
+            put("name", trimmed)
+            put("edit_icon_custom_emoji", false)
+            put("icon_custom_emoji_id", 0L)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _manageError.value =
+                    "改名没成功：可能是权限不够，或服务器拒绝了。"
+            } else {
+                patchTopic(topic.topicId) { it.copy(name = trimmed) }
+            }
+        }
+    }
+
+    fun setTopicClosed(topic: ForumTopicUi, closed: Boolean) {
+        val chatId = topicsChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("toggleForumTopicIsClosed").apply {
+            put("chat_id", chatId)
+            put("forum_topic_id", topic.topicId)
+            put("is_closed", closed)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _manageError.value = if (closed) {
+                    "关闭没成功：可能是权限不够，或服务器拒绝了。"
+                } else {
+                    "重新打开没成功：可能是权限不够，或服务器拒绝了。"
+                }
+            } else {
+                patchTopic(topic.topicId) {
+                    it.copy(isClosed = closed)
+                }
+            }
+        }
+    }
+
+    fun deleteTopic(topic: ForumTopicUi) {
+        val chatId = topicsChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("deleteForumTopic").apply {
+            put("chat_id", chatId)
+            put("forum_topic_id", topic.topicId)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _manageError.value =
+                    "删除没成功：可能是权限不够，或服务器拒绝了。"
+            } else {
+                _topics.value = _topics.value.filter {
+                    it.topicId != topic.topicId
+                }
+            }
+        }
     }
 
     // ---- One topic's messages ----
