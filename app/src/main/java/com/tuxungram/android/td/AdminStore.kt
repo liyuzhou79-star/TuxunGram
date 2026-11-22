@@ -428,6 +428,70 @@ object AdminStore {
         }
     }
 
+    /** Aggressive anti-spam (v0.9.13, T6):
+     *  toggleSupergroupHasAggressiveAntiSpamEnabled takes the
+     *  SUPERGROUP id (td_api.tl), unlike the chat-id calls
+     *  above; chatId rides along only to reload the profile. */
+    fun setAntiSpam(
+        supergroupId: Long,
+        chatId: Long,
+        on: Boolean,
+        done: (Boolean, String) -> Unit
+    ) {
+        val query = TdClient.request(
+            "toggleSupergroupHasAggressiveAntiSpamEnabled"
+        ).apply {
+            put("supergroup_id", supergroupId)
+            put("has_aggressive_anti_spam_enabled", on)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                done(false, settingsErrorText(response))
+            } else {
+                done(
+                    true,
+                    if (on) {
+                        "反垃圾已开启：服务器会自动删掉疑似广告的消息。"
+                    } else {
+                        "反垃圾已关闭。"
+                    }
+                )
+                ProfileStore.load(chatId)
+            }
+        }
+    }
+
+    /** Hidden member list (v0.9.13, T6):
+     *  toggleSupergroupHasHiddenMembers, supergroup id again. */
+    fun setHiddenMembers(
+        supergroupId: Long,
+        chatId: Long,
+        on: Boolean,
+        done: (Boolean, String) -> Unit
+    ) {
+        val query = TdClient.request(
+            "toggleSupergroupHasHiddenMembers"
+        ).apply {
+            put("supergroup_id", supergroupId)
+            put("has_hidden_members", on)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                done(false, settingsErrorText(response))
+            } else {
+                done(
+                    true,
+                    if (on) {
+                        "成员名单已隐藏：普通成员看不到完整名单（管理员照常可见）。"
+                    } else {
+                        "成员名单已公开。"
+                    }
+                )
+                ProfileStore.load(chatId)
+            }
+        }
+    }
+
     private fun settingsErrorText(error: JSONObject): String {
         val message = error.optString("message")
         return when {

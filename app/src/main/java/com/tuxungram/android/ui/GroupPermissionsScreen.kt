@@ -58,17 +58,24 @@ fun GroupPermissionsScreen(chatId: Long, onBack: () -> Unit) {
     var perms by remember(chatId) { mutableStateOf<GroupPerms?>(null) }
     var slowMode by remember(chatId) { mutableStateOf<Int?>(null) }
     var protectedOn by remember(chatId) { mutableStateOf<Boolean?>(null) }
+    var antiSpamOn by remember(chatId) { mutableStateOf<Boolean?>(null) }
+    var membersHiddenOn by remember(chatId) { mutableStateOf<Boolean?>(null) }
     var busy by remember(chatId) { mutableStateOf(false) }
     var notice by remember(chatId) { mutableStateOf<String?>(null) }
 
     // Follow the server values whenever no change is in
     // flight; a failed change snaps back through the same
     // path once [busy] clears.
-    LaunchedEffect(p?.groupPerms, p?.slowModeDelay, p?.hasProtectedContent, busy) {
+    LaunchedEffect(
+        p?.groupPerms, p?.slowModeDelay, p?.hasProtectedContent,
+        p?.antiSpamEnabled, p?.membersHidden, busy
+    ) {
         if (!busy && p != null) {
             perms = p.groupPerms
             slowMode = p.slowModeDelay
             protectedOn = p.hasProtectedContent
+            antiSpamOn = p.antiSpamEnabled
+            membersHiddenOn = p.membersHidden
         }
     }
 
@@ -97,6 +104,28 @@ fun GroupPermissionsScreen(chatId: Long, onBack: () -> Unit) {
             notice = text
             busy = false
             if (!ok && p != null) protectedOn = p.hasProtectedContent
+        }
+    }
+    fun applyAntiSpam(next: Boolean) {
+        antiSpamOn = next
+        busy = true
+        AdminStore.setAntiSpam(
+            p?.supergroupId ?: 0L, chatId, next
+        ) { ok, text ->
+            notice = text
+            busy = false
+            if (!ok && p != null) antiSpamOn = p.antiSpamEnabled
+        }
+    }
+    fun applyHiddenMembers(next: Boolean) {
+        membersHiddenOn = next
+        busy = true
+        AdminStore.setHiddenMembers(
+            p?.supergroupId ?: 0L, chatId, next
+        ) { ok, text ->
+            notice = text
+            busy = false
+            if (!ok && p != null) membersHiddenOn = p.membersHidden
         }
     }
 
@@ -229,7 +258,46 @@ fun GroupPermissionsScreen(chatId: Long, onBack: () -> Unit) {
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
-            if (!caps.canRestrict && !caps.isCreator) {
+            // Group hygiene (v0.9.13, T6): the two supergroup
+            // toggles, each shown only when supergroupFullInfo
+            // says this admin may flip it.
+            val spam = antiSpamOn
+            val hidden = membersHiddenOn
+            if (p.isSupergroup &&
+                (p.canToggleAntiSpam || p.canHideMembers) &&
+                spam != null && hidden != null
+            ) {
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    "群管理",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.Gray
+                )
+                if (p.canToggleAntiSpam) {
+                    PermSwitch("反垃圾（自动删广告）", spam) {
+                        applyAntiSpam(it)
+                    }
+                    Text(
+                        "开启后，Telegram 服务器会自动删掉疑似广告和垃圾的消息。",
+                        fontSize = 12.sp, color = Color.Gray,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                if (p.canHideMembers) {
+                    PermSwitch("隐藏成员名单", hidden) {
+                        applyHiddenMembers(it)
+                    }
+                    Text(
+                        "开启后，普通成员看不到完整成员名单；管理员不受影响。",
+                        fontSize = 12.sp, color = Color.Gray,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+            if (!caps.canRestrict && !caps.isCreator &&
+                !p.canToggleAntiSpam && !p.canHideMembers
+            ) {
                 Text(
                     "你在这个群里没有改这些设置的权限。",
                     color = Color.Gray, fontSize = 14.sp,

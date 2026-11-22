@@ -126,7 +126,11 @@ import com.tuxungram.android.td.TdClient
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.ThreadStore
 import com.tuxungram.android.td.UiSettings
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
@@ -583,7 +587,25 @@ fun ChatScreen(
             // from ReadyHost's systemBars padding.
             .imePadding()
     ) {
-        if (selectionMode) {
+        // Header swap animation (v0.9.13, T6; 0.9.11 debt):
+        // the normal top bar and the selection-mode bar
+        // cross-fade with a slight vertical slide through
+        // Motion instead of cutting.
+        AnimatedContent(
+            targetState = selectionMode,
+            transitionSpec = {
+                (fadeIn(Motion.tween()) +
+                    slideInVertically(Motion.tween()) {
+                        if (targetState) it / 3 else -it / 3
+                    }) togetherWith
+                    (fadeOut(Motion.tween()) +
+                        slideOutVertically(Motion.tween()) {
+                            if (targetState) -it / 3 else it / 3
+                        })
+            },
+            label = "chatHeader"
+        ) { selecting ->
+        if (selecting) {
             // Selection-mode header (v0.7.0, F1): count + exit.
             Row(
                 modifier = Modifier
@@ -657,6 +679,7 @@ fun ChatScreen(
             IconButton(onClick = { chatSearchOpen = !chatSearchOpen }) {
                 Icon(Icons.Filled.Search, contentDescription = "搜索聊天记录")
             }
+        }
         }
         }
 

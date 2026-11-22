@@ -86,7 +86,20 @@ data class ProfileUi(
     /** supergroupFullInfo.can_get_statistics (v0.9.13, T2):
      *  TDLib's own signal that getChatStatistics can answer
      *  for this chat; gates the profile page's 统计 entry. */
-    val canGetStatistics: Boolean = false
+    val canGetStatistics: Boolean = false,
+    /** The supergroup_id out of chat.type (v0.9.13, T6): the
+     *  supergroup toggles address the group by this id, not
+     *  by chat_id. 0 for non-supergroups. */
+    val supergroupId: Long = 0,
+    /** supergroupFullInfo.has_aggressive_anti_spam_enabled
+     *  and its gate can_toggle_aggressive_anti_spam
+     *  (v0.9.13, T6). */
+    val antiSpamEnabled: Boolean = false,
+    val canToggleAntiSpam: Boolean = false,
+    /** supergroupFullInfo.has_hidden_members and its gate
+     *  can_hide_members (v0.9.13, T6). */
+    val membersHidden: Boolean = false,
+    val canHideMembers: Boolean = false
 )
 
 /**
@@ -117,6 +130,10 @@ object ProfileStore {
     private var currentThemeName = ""
     private var currentThemeIsGift = false
     private var currentCanStats = false
+    private var currentAntiSpam = false
+    private var currentCanAntiSpam = false
+    private var currentMembersHidden = false
+    private var currentCanHideMembers = false
     private var supergroupId = 0L
     private var memberOffset = 0
     private var membersLoading = false
@@ -146,6 +163,10 @@ object ProfileStore {
         currentThemeName = ""
         currentThemeIsGift = false
         currentCanStats = false
+        currentAntiSpam = false
+        currentCanAntiSpam = false
+        currentMembersHidden = false
+        currentCanHideMembers = false
         supergroupId = 0L
         memberOffset = 0
         membersLoading = false
@@ -234,7 +255,12 @@ object ProfileStore {
             isSupergroup = currentIsSupergroup,
             themeName = currentThemeName,
             themeIsGift = currentThemeIsGift,
-            canGetStatistics = currentCanStats
+            canGetStatistics = currentCanStats,
+            supergroupId = supergroupId,
+            antiSpamEnabled = currentAntiSpam,
+            canToggleAntiSpam = currentCanAntiSpam,
+            membersHidden = currentMembersHidden,
+            canHideMembers = currentCanHideMembers
         )
     }
 
@@ -332,6 +358,18 @@ object ProfileStore {
                 ?.optString("invite_link") ?: ""
             currentIsSupergroup = true
             currentCanStats = full.optBoolean("can_get_statistics")
+            currentAntiSpam = full.optBoolean(
+                "has_aggressive_anti_spam_enabled"
+            )
+            currentCanAntiSpam = full.optBoolean(
+                "can_toggle_aggressive_anti_spam"
+            )
+            currentMembersHidden = full.optBoolean(
+                "has_hidden_members"
+            )
+            currentCanHideMembers = full.optBoolean(
+                "can_hide_members"
+            )
             currentSlowMode = full.optInt("slow_mode_delay")
             val memberCount = full.optInt("member_count")
             val adminCount = full.optInt("administrator_count")

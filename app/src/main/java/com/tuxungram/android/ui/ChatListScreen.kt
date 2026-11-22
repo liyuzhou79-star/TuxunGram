@@ -1202,6 +1202,7 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
  *  from the main list live here; tapping opens the chat, and
  *  each row can move its chat back to the main list. */
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
     BackHandler { onBack() }
     val archived by ChatStore.archivedChats.collectAsState()
@@ -1240,6 +1241,15 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                     .lazyListScrollbar(archiveListState)
             ) {
                 items(items = archived, key = { it.id }) { chat ->
+                    // Placement animation, matching the main
+                    // list (v0.9.13, T6; 0.9.11 debt): the
+                    // swipe container rides inside the same
+                    // animating Box the main list uses.
+                    Box(
+                        modifier = Modifier.animateItemPlacement(
+                            Motion.tween(250)
+                        )
+                    ) {
                     SwipeActionsContainer(
                         leftActions = listOf(
                             SwipeAction("取消归档", ArchiveIcon, Color(0xFF78909C)) {
@@ -1388,6 +1398,7 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                         TextButton(onClick = { ChatStore.unarchive(chat) }) {
                             Text("取消归档")
                         }
+                    }
                     }
                     }
                 }
