@@ -38,6 +38,12 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: Assemble debug APK
+        env:
+          # When the project's own API secrets are configured they
+          # win over the build script's temporary fallback pair;
+          # empty values are ignored by the build script.
+          TUXUNGRAM_API_ID: ${{ secrets.TUXUNGRAM_API_ID }}
+          TUXUNGRAM_API_HASH: ${{ secrets.TUXUNGRAM_API_HASH }}
         run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: Verify pinned test signing certificate

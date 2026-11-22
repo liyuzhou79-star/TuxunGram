@@ -3,10 +3,29 @@ name: Build Release
 # Slim package workflow (v0.9.0, H3): builds the release
 # variant (R8 + resource shrinking + compressed native
 # library). Dispatched manually so the per-push debug builds
-# stay as they are. Until the formal signing secrets are
-# configured, the release variant falls back to the pinned
-# test certificate (see app/build.gradle.kts), and the verify
-# step below asserts exactly that certificate.
+# stay as they are.
+#
+# Signing modes (v0.9.7, Q1) — the "Prepare signing" step
+# decides from which repository secrets are configured:
+#   formal : all four signing secrets are set
+#            (TUXUNGRAM_KEYSTORE_BASE64,
+#            TUXUNGRAM_KEYSTORE_PASSWORD, TUXUNGRAM_KEY_ALIAS,
+#            TUXUNGRAM_KEY_PASSWORD) AND both API secrets
+#            (TUXUNGRAM_API_ID / TUXUNGRAM_API_HASH). The
+#            keystore is decoded to a temp path, the build
+#            signs with the formal release key, and the verify
+#            step asserts the formal certificate fingerprint
+#            B7:3A:20:80:...:45:13. This is the v1.0.0 route.
+#   test   : none of the four signing secrets is set. The
+#            build falls back to the pinned test certificate
+#            and the verify step asserts it (06ffef1e...).
+#            This is how the slim test packages are produced.
+#   partial: some but not all signing secrets are set -> the
+#            run FAILS immediately, listing the missing ones.
+#            A package must never silently come out signed
+#            differently from what the operator intended.
+# The run summary states the mode and the certificate
+# fingerprint in plain language.
 
 on:
   workflow_dispatch:
@@ -40,16 +59,65 @@ jobs:
             echo "TDLib not cached yet; building the shell without it"
           fi
 
+      - name: Prepare signing
+        env:
+          KS_B64: ${{ secrets.TUXUNGRAM_KEYSTORE_BASE64 }}
+          KS_PW: ${{ secrets.TUXUNGRAM_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.TUXUNGRAM_KEY_ALIAS }}
+          KEY_PW: ${{ secrets.TUXUNGRAM_KEY_PASSWORD }}
+          API_ID: ${{ secrets.TUXUNGRAM_API_ID }}
+          API_HASH: ${{ secrets.TUXUNGRAM_API_HASH }}
+        run: |
+          missing=""
+          [ -z "$KS_B64" ] && missing="$missing TUXUNGRAM_KEYSTORE_BASE64"
+          [ -z "$KS_PW" ] && missing="$missing TUXUNGRAM_KEYSTORE_PASSWORD"
+          [ -z "$KEY_ALIAS" ] && missing="$missing TUXUNGRAM_KEY_ALIAS"
+          [ -z "$KEY_PW" ] && missing="$missing TUXUNGRAM_KEY_PASSWORD"
+          if [ -z "$missing" ]; then
+            api_missing=""
+            [ -z "$API_ID" ] && api_missing="$api_missing TUXUNGRAM_API_ID"
+            [ -z "$API_HASH" ] && api_missing="$api_missing TUXUNGRAM_API_HASH"
+            if [ -n "$api_missing" ]; then
+              echo "::error::Formal signing secrets are configured but the API credential secrets are missing:$api_missing. A formally signed package must not ship with the temporary fallback API credentials. Fill the missing secrets and re-run."
+              exit 1
+            fi
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/tuxungram-release.keystore"
+            test -s "$RUNNER_TEMP/tuxungram-release.keystore"
+            {
+              echo "SIGNING_MODE=formal"
+              echo "TUXUNGRAM_KEYSTORE_PATH=$RUNNER_TEMP/tuxungram-release.keystore"
+              echo "TUXUNGRAM_STORE_PASSWORD=$KS_PW"
+              echo "TUXUNGRAM_KEY_ALIAS=$KEY_ALIAS"
+              echo "TUXUNGRAM_KEY_PASSWORD=$KEY_PW"
+              echo "TUXUNGRAM_API_ID=$API_ID"
+              echo "TUXUNGRAM_API_HASH=$API_HASH"
+            } >> "$GITHUB_ENV"
+            echo "Signing mode: FORMAL (repository release key + project API credentials)"
+          elif [ "$missing" = " TUXUNGRAM_KEYSTORE_BASE64 TUXUNGRAM_KEYSTORE_PASSWORD TUXUNGRAM_KEY_ALIAS TUXUNGRAM_KEY_PASSWORD" ]; then
+            echo "SIGNING_MODE=test" >> "$GITHUB_ENV"
+            if [ -n "$API_ID" ]; then echo "TUXUNGRAM_API_ID=$API_ID" >> "$GITHUB_ENV"; fi
+            if [ -n "$API_HASH" ]; then echo "TUXUNGRAM_API_HASH=$API_HASH" >> "$GITHUB_ENV"; fi
+            echo "Signing mode: TEST (pinned test certificate; no signing secrets configured)"
+          else
+            echo "::error::Signing secrets are only partially configured. Missing:$missing. Fill all four signing secrets for a formal package, or remove all four for a test package."
+            exit 1
+          fi
+
       - name: Run unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: Assemble release APK
         run: ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Verify pinned test signing certificate
+      - name: Verify signing certificate
         run: |
           python3 - <<'EOF'
-          import zipfile, struct, hashlib, sys
+          import os, zipfile, struct, hashlib, sys
+          mode = os.environ.get("SIGNING_MODE", "test")
+          expected = {
+              "formal": "b73a2080f93b8433f4ade626082b0902f0564e260da28ea070bc3433ca5b4513",
+              "test": "06ffef1ef532d569ec2f9a178c5638ab7cdf57309d98783b91946c79ed87a6a6",
+          }[mode]
           path = "app/build/outputs/apk/release/app-release.apk"
           data = open(path, "rb").read()
           # APK Signing Block lives just before the ZIP central directory.
@@ -78,10 +146,25 @@ jobs:
                   cert, _ = field(cert_field, 0)
                   certs.append(hashlib.sha256(cert).hexdigest())
               pos += 8 + pair_len
+          print("signing mode:", mode)
           print("certs:", certs)
-          assert certs == ["06ffef1ef532d569ec2f9a178c5638ab7cdf57309d98783b91946c79ed87a6a6"], certs
-          print("test signing certificate OK")
+          assert certs == [expected], certs
+          print(mode + " signing certificate OK")
           EOF
+
+      - name: Signing summary
+        run: |
+          {
+            echo "## Signing"
+            if [ "$SIGNING_MODE" = "formal" ]; then
+              echo "- Mode: **formal** — signed with the repository release key."
+              echo "- Certificate SHA-256: B7:3A:20:80:F9:3B:84:33:F4:AD:E6:26:08:2B:09:02:F0:56:4E:26:0D:A2:8E:A0:70:BC:34:33:CA:5B:45:13 (asserted by the verify step)."
+              echo "- API credentials: the project's own TUXUNGRAM_API_ID / TUXUNGRAM_API_HASH."
+            else
+              echo "- Mode: **test** — signed with the pinned TEST certificate. This package is NOT a formal release."
+              echo "- Certificate SHA-256: 06:FF:EF:1E:F5:32:D5:69:EC:2F:9A:17:8C:56:38:AB:7C:DF:57:30:9D:98:78:3B:91:94:6C:79:ED:87:A6:A6 (asserted by the verify step)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4

@@ -30,16 +30,23 @@ android {
         // TEMPORARILY for development until the project's own api
         // application is approved; swapping means filling the Secrets,
         // nothing else in the app depends on these values.
-        val apiId = System.getenv("TUXUNGRAM_API_ID") ?: "2040"
-        val apiHash = System.getenv("TUXUNGRAM_API_HASH") ?: "b18441a1ff607e10a989891a5462e627"
+        val apiId = System.getenv("TUXUNGRAM_API_ID")
+            ?.takeIf { it.isNotBlank() } ?: "2040"
+        val apiHash = System.getenv("TUXUNGRAM_API_HASH")
+            ?.takeIf { it.isNotBlank() } ?: "b18441a1ff607e10a989891a5462e627"
         buildConfigField("int", "API_ID", apiId)
         buildConfigField("String", "API_HASH", "\"$apiHash\"")
     }
 
     // Release signing is injected by CI from repository secrets (the
     // keystore is restored to a temp path and passed via environment).
-    // Without those variables the release build stays unsigned and local
-    // debug builds are unaffected.
+    // Without those variables the release build falls back to the
+    // pinned test certificate below, so slim test packages install
+    // over each other; build-release.yaml decides which mode a run
+    // is in (formal / test / partial=fail) and asserts the matching
+    // certificate after the build.
+    val releaseKeystorePath = System.getenv("TUXUNGRAM_KEYSTORE_PATH")
+        ?.takeIf { it.isNotBlank() }
     signingConfigs {
         // Pinned TEST signing: without this, every CI runner generates
         // a fresh debug keystore and test builds can never be installed
@@ -51,9 +58,9 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
-        if (System.getenv("TUXUNGRAM_KEYSTORE_PATH") != null) {
+        if (releaseKeystorePath != null) {
             create("release") {
-                storeFile = file(System.getenv("TUXUNGRAM_KEYSTORE_PATH"))
+                storeFile = file(releaseKeystorePath)
                 storePassword = System.getenv("TUXUNGRAM_STORE_PASSWORD")
                 keyAlias = System.getenv("TUXUNGRAM_KEY_ALIAS")
                 keyPassword = System.getenv("TUXUNGRAM_KEY_PASSWORD")
@@ -75,7 +82,7 @@ android {
             // secrets are configured; otherwise the pinned test
             // certificate, so slim test packages install over
             // the existing debug test packages.
-            signingConfig = if (System.getenv("TUXUNGRAM_KEYSTORE_PATH") != null) {
+            signingConfig = if (releaseKeystorePath != null) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("testPin")
