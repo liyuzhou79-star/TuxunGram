@@ -2197,8 +2197,15 @@ fun ChatScreen(
                 // @ / # suggestion panel (v0.9.15, V6): the
                 // same above-input slot as the inline and slash
                 // panels; all of them plus this reply keyboard
-                // stay mutually exclusive.
-                if (suggestActive && slashMatches.isEmpty()) {
+                // stay mutually exclusive. The inline exclusion
+                // was missing in V6 and is restored by the
+                // v0.9.16 W6 audit: an input like
+                // "@bot query @name" matches the inline shape
+                // AND ends in a mention fragment, so both
+                // panels could stack.
+                if (suggestActive && slashMatches.isEmpty() &&
+                    !inlineActive
+                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()

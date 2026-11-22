@@ -45,6 +45,10 @@ object SettingsBackup {
             // Wallpaper paths only — never the picture files
             // (see the header note).
             put("chat_bg_image", UiSettings.chatBgImage.value)
+            // Background keep-alive (v0.9.16, W6 audit: a
+            // local setting older than the backup itself
+            // that was never included).
+            put("keep_alive", UiSettings.keepAlive.value)
         }
         val chatWallpapers = JSONObject()
         for ((chatId, path) in UiSettings.chatWallpapers.value) {
@@ -76,6 +80,12 @@ object SettingsBackup {
             put("chat_wallpapers", chatWallpapers)
             put("proxies", proxies)
             put("active_proxy", activeIndex)
+            // Proxy auto-failover switch (v0.9.16, W6 audit:
+            // added in 0.9.14 but never included here).
+            put(
+                "proxy_auto_failover",
+                ProxyStore.autoFailover.value
+            )
         }.toString(2)
     }
 
@@ -111,6 +121,8 @@ object SettingsBackup {
         var voiceSpeed: Float? = null
         var chatBgImage: String? = null
         var chatWallpapers: Map<Long, String>? = null
+        var keepAlive: Boolean? = null
+        var proxyAutoFailover: Boolean? = null
         val uiObj = root.optJSONObject("ui")
         if (uiObj != null) {
             try {
@@ -166,6 +178,9 @@ object SettingsBackup {
                 if (uiObj.has("chat_bg_image")) {
                     chatBgImage = uiObj.getString("chat_bg_image")
                 }
+                if (uiObj.has("keep_alive")) {
+                    keepAlive = uiObj.getBoolean("keep_alive")
+                }
             } catch (t: Throwable) {
                 return "备份里的设置部分格式不对，设置没有改动。"
             }
@@ -190,6 +205,13 @@ object SettingsBackup {
                 return "备份里的专属壁纸部分格式不对，设置没有改动。"
             }
             chatWallpapers = staged
+        }
+        if (root.has("proxy_auto_failover")) {
+            proxyAutoFailover = try {
+                root.getBoolean("proxy_auto_failover")
+            } catch (t: Throwable) {
+                return "备份里的代理设置部分格式不对，设置没有改动。"
+            }
         }
 
         var stagedProxies: List<StagedProxy>? = null
@@ -260,6 +282,8 @@ object SettingsBackup {
             }
         }
         chatWallpapers?.let { UiSettings.replaceChatWallpapers(it) }
+        keepAlive?.let { UiSettings.setKeepAlive(it) }
+        proxyAutoFailover?.let { ProxyStore.setAutoFailover(it) }
 
         val proxies = stagedProxies
         if (proxies != null) {
