@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,10 +14,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -95,6 +101,12 @@ fun SessionsScreen(onBack: () -> Unit) {
                         .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.Phone, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(21.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
                         Text(
                             sessionTitle(session),
                             fontSize = 15.sp,
@@ -102,6 +114,13 @@ fun SessionsScreen(onBack: () -> Unit) {
                             modifier = Modifier.weight(1f)
                         )
                         if (session.isCurrent) {
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF2E7D32),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
                             Text(
                                 "当前设备",
                                 color = Color(0xFF2E7D32),
@@ -115,10 +134,19 @@ fun SessionsScreen(onBack: () -> Unit) {
                         color = Color.Gray, fontSize = 12.sp
                     )
                     if (session.isUnconfirmed) {
-                        Text(
-                            "⚠ 这个会话还没确认过，留意是不是你本人登的",
-                            color = Color(0xFFC62828), fontSize = 12.sp
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.Warning,
+                                contentDescription = null,
+                                tint = Color(0xFFC62828),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                "这个会话还没确认过，留意是不是你本人登的",
+                                color = Color(0xFFC62828), fontSize = 12.sp
+                            )
+                        }
                     }
                     if (!session.isCurrent) {
                         TextButton(onClick = { terminateTarget = session }) {
@@ -135,6 +163,11 @@ fun SessionsScreen(onBack: () -> Unit) {
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
+                        Icon(
+                            Icons.Filled.ExitToApp, contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text("退出全部其他设备")
                     }
                 }

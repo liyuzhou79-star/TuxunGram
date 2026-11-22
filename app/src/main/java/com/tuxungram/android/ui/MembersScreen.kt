@@ -19,6 +19,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -115,6 +117,9 @@ fun MembersScreen(chatId: Long, onBack: () -> Unit) {
             value = query,
             onValueChange = { query = it },
             placeholder = { Text("搜索成员") },
+            leadingIcon = {
+                Icon(Icons.Filled.Search, contentDescription = null)
+            },
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
@@ -357,6 +362,19 @@ private fun MemberRow(
             maxLines = 1
         )
         if (member.statusText.isNotEmpty() && member.statusText != "成员") {
+            if (member.statusKind == "creator") {
+                Icon(
+                    Icons.Filled.Star, contentDescription = "群主",
+                    tint = Color(0xFFF9A825), modifier = Modifier.size(15.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+            } else if (member.statusKind == "administrator") {
+                Icon(
+                    ShieldIcon, contentDescription = "管理员",
+                    tint = Color(0xFF5B7C99), modifier = Modifier.size(14.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+            }
             Text(member.statusText, color = Color.Gray, fontSize = 12.sp)
         }
     }

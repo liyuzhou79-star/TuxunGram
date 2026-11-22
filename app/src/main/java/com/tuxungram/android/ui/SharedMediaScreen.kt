@@ -28,8 +28,10 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -109,8 +111,24 @@ fun SharedMediaScreen(chatId: Long, onBack: () -> Unit) {
                         onClick = { tab = candidate },
                         enabled = tab != candidate
                     ) {
+                        Icon(
+                            when (candidate) {
+                                MediaTab.PHOTO -> ImageIcon
+                                MediaTab.VIDEO -> Icons.Filled.PlayArrow
+                                MediaTab.FILE -> ClipIcon
+                                MediaTab.LINK -> LinkIcon
+                            },
+                            contentDescription = null,
+                            tint = if (tab == candidate) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                Color.Gray
+                            },
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(Modifier.width(5.dp))
                         Text(
-                            (if (tab == candidate) "● " else "") + candidate.label,
+                            candidate.label,
                             fontWeight = if (tab == candidate) {
                                 FontWeight.SemiBold
                             } else {
@@ -290,10 +308,18 @@ private fun EmptyOrLoading(exhausted: Boolean) {
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            if (exhausted) "这一类还没有内容。" else "正在加载…",
-            color = Color.Gray
-        )
+        if (exhausted) {
+            EmptyState(
+                ImageIcon, "这一类还没有内容",
+                "这个对话里还没有这一类的消息。"
+            )
+        } else {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(12.dp))
+                Text("正在加载…", color = Color.Gray)
+            }
+        }
     }
 }
 

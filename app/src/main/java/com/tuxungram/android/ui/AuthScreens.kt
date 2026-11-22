@@ -39,6 +39,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MailOutline
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -99,6 +103,8 @@ fun SplashScreen() {
         slow = true
     }
     CenterColumn {
+        PlaneBadge(84)
+        Spacer(Modifier.height(16.dp))
         Text("TuxunGram", fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(16.dp))
         CircularProgressIndicator()
@@ -164,6 +170,9 @@ fun PhoneScreen(onSubmit: (String) -> Unit) {
                 value = number,
                 onValueChange = { number = it.filter { ch -> ch.isDigit() || ch == ' ' } },
                 label = { Text("手机号") },
+                leadingIcon = {
+                    Icon(Icons.Filled.Phone, contentDescription = null)
+                },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
@@ -224,6 +233,9 @@ fun CodeScreen(phone: String, onChangePhone: () -> Unit) {
             value = code,
             onValueChange = { code = it.filter { ch -> ch.isDigit() } },
             label = { Text("验证码") },
+            leadingIcon = {
+                Icon(Icons.Filled.MailOutline, contentDescription = null)
+            },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
@@ -275,6 +287,9 @@ fun PasswordScreen(hint: String) {
             value = password,
             onValueChange = { password = it },
             label = { Text("密码") },
+            leadingIcon = {
+                Icon(Icons.Filled.Lock, contentDescription = null)
+            },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
@@ -320,6 +335,9 @@ fun RegistrationScreen() {
             value = first,
             onValueChange = { first = it },
             label = { Text("名字") },
+            leadingIcon = {
+                Icon(Icons.Filled.Person, contentDescription = null)
+            },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )

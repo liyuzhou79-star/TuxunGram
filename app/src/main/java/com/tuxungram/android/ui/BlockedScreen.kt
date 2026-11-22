@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -83,10 +84,16 @@ fun BlockedScreen(onBack: () -> Unit) {
         }
         if (blocked.isEmpty() && loadError == null) {
             CenterColumn {
-                Text(
-                    if (exhausted) "没有拉黑任何人。" else "正在加载…",
-                    color = Color.Gray
-                )
+                if (exhausted) {
+                    EmptyState(
+                        BlockIcon, "没有拉黑任何人",
+                        "在某个人的资料页可以拉黑他，拉黑后他发来的消息你收不到。"
+                    )
+                } else {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text("正在加载…", color = Color.Gray)
+                }
             }
             return@Column
         }

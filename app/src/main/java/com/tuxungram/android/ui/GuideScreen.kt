@@ -25,6 +25,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,33 +45,33 @@ import com.tuxungram.android.BuildConfig
 import com.tuxungram.android.td.Changelog
 import kotlinx.coroutines.launch
 
-/** One onboarding page: a big indicative glyph, a title and
+/** One onboarding page: a big indicative icon, a title and
  *  one plain sentence. */
 private data class GuidePage(
-    val icon: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val title: String,
     val body: String
 )
 
 private val GUIDE_PAGES = listOf(
     GuidePage(
-        "✈️", "欢迎使用 TuxunGram",
+        Icons.AutoMirrored.Filled.Send, "欢迎使用 TuxunGram",
         "一个免费、开源的第三方 Telegram 客户端，日常功能尽量向官方版看齐。"
     ),
     GuidePage(
-        "🌐", "连不上？先看代理",
+        GlobeIcon, "连不上？先看代理",
         "连不上 Telegram 时，先去「设置 → 代理」填一个代理，填好就能连，不用开系统 VPN。"
     ),
     GuidePage(
-        "🔄", "登录后会自动同步",
+        Icons.Filled.Refresh, "登录后会自动同步",
         "新登录会把全部对话、群组、频道和历史消息同步下来，内容多时要等一会儿；同步完就和官方版一样全，往上滑能一直翻到最早的消息。"
     ),
     GuidePage(
-        "🔒", "隐私三件套",
+        Icons.Filled.Lock, "隐私三件套",
         "秘密聊天（端到端加密）、应用锁（PIN / 指纹）、已登录设备管理都在设置里，重要的账号建议全开。"
     ),
     GuidePage(
-        "😀", "聊天不只是文字",
+        Icons.Filled.Face, "聊天不只是文字",
         "输入框左边是表情 / 贴纸 / GIF 面板，点一下就能发贴纸；长按消息可以回复、翻译、置顶，滑动消息也能回复。"
     )
 )
@@ -99,7 +103,19 @@ fun GuideScreen(onDone: () -> Unit) {
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(p.icon, fontSize = 72.sp)
+                Box(
+                    modifier = Modifier
+                        .size(124.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        p.icon, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(58.dp)
+                    )
+                }
                 Spacer(Modifier.height(24.dp))
                 Text(
                     p.title,
@@ -209,7 +225,15 @@ fun WhatsNewScreen(onClose: () -> Unit) {
             ) {
                 items(notes.items) { item ->
                     Row(modifier = Modifier.padding(vertical = 5.dp)) {
-                        Text("• ", fontSize = 14.sp, color = Color.Gray)
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 6.dp, end = 8.dp)
+                                .size(6.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.primary,
+                                    CircleShape
+                                )
+                        )
                         Text(item, fontSize = 14.sp)
                     }
                 }
@@ -259,16 +283,33 @@ fun ChangelogScreen(onBack: () -> Unit) {
                 item(key = "head-${release.version}") {
                     Column {
                         Spacer(Modifier.height(14.dp))
-                        Text(
-                            "${release.version} · ${release.title}",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.DateRange,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "${release.version} · ${release.title}",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
                 items(release.items) { line ->
                     Row(modifier = Modifier.padding(vertical = 3.dp)) {
-                        Text("• ", fontSize = 14.sp, color = Color.Gray)
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 6.dp, end = 8.dp)
+                                .size(6.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.primary,
+                                    CircleShape
+                                )
+                        )
                         Text(line, fontSize = 14.sp)
                     }
                 }

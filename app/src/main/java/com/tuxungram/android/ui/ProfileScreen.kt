@@ -19,10 +19,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -200,12 +206,19 @@ fun ProfileScreen(
             if (p.description.isNotEmpty()) {
                 item(key = "desc") {
                     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-                        Text(
-                            "简介",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.Gray
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.Info, contentDescription = null,
+                                tint = Color.Gray, modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "简介",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.Gray
+                            )
+                        }
                         Spacer(Modifier.height(4.dp))
                         Text(p.description, fontSize = 15.sp)
                         Spacer(Modifier.height(16.dp))
@@ -222,6 +235,12 @@ fun ProfileScreen(
                         .padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Icon(
+                        ImageIcon, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(21.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
                     Text(
                         "共享媒体",
                         fontSize = 15.sp,
@@ -229,8 +248,13 @@ fun ProfileScreen(
                         modifier = Modifier.weight(1f)
                     )
                     Text(
-                        "图片 · 视频 · 文件 · 链接 ›",
+                        "图片 · 视频 · 文件 · 链接",
                         color = Color.Gray, fontSize = 13.sp
+                    )
+                    Icon(
+                        Icons.Filled.KeyboardArrowRight,
+                        contentDescription = null, tint = Color.Gray,
+                        modifier = Modifier.size(19.dp)
                     )
                 }
             }
@@ -245,7 +269,12 @@ fun ProfileScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("🔒 发起秘密聊天")
+                            Icon(
+                                Icons.Filled.Lock, contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("发起秘密聊天")
                         }
                         Text(
                             "端到端加密，只有你们两台设备能看到内容。",
@@ -395,12 +424,19 @@ fun ProfileScreen(
             if (caps.canManage) {
                 item(key = "admin") {
                     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-                        Text(
-                            "管理",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.Gray
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.Build, contentDescription = null,
+                                tint = Color.Gray, modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "管理",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.Gray
+                            )
+                        }
                         if (adminNotice != null) {
                             Text(
                                 adminNotice!!,
@@ -412,15 +448,30 @@ fun ProfileScreen(
                         if (caps.canChangeInfo) {
                             Row {
                                 TextButton(onClick = { titleEditOpen = true }) {
+                                    Icon(
+                                        Icons.Filled.Edit, contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(5.dp))
                                     Text("改名")
                                 }
                                 TextButton(onClick = { descEditOpen = true }) {
+                                    Icon(
+                                        Icons.Filled.Edit, contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(5.dp))
                                     Text("改简介")
                                 }
                                 TextButton(onClick = {
                                     AppLock.noteExternalLaunch()
                                     groupPhotoPicker.launch("image/*")
                                 }) {
+                                    Icon(
+                                        ImageIcon, contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(5.dp))
                                     Text("设置群头像")
                                 }
                             }
@@ -442,6 +493,11 @@ fun ProfileScreen(
                             // permissions / slow mode / content
                             // protection, each row gated there.
                             TextButton(onClick = { onOpenGroupSettings() }) {
+                                Icon(
+                                    ShieldIcon, contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(5.dp))
                                 Text("群权限与慢速模式")
                             }
                         }
@@ -455,12 +511,19 @@ fun ProfileScreen(
                 // active and revoked.
                 item(key = "invite") {
                     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-                        Text(
-                            "邀请链接",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.Gray
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                LinkIcon, contentDescription = null,
+                                tint = Color.Gray, modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "邀请链接",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.Gray
+                            )
+                        }
                         if (p.primaryInviteLink.isNotEmpty()) {
                             Text(
                                 "主邀请链接",
@@ -576,6 +639,12 @@ fun ProfileScreen(
                             .padding(horizontal = 20.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Icon(
+                            PeopleIcon, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(21.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
                         Text(
                             "成员",
                             fontSize = 15.sp,
@@ -583,8 +652,13 @@ fun ProfileScreen(
                             modifier = Modifier.weight(1f)
                         )
                         Text(
-                            "查看全部 ›",
+                            "查看全部",
                             color = Color.Gray, fontSize = 13.sp
+                        )
+                        Icon(
+                            Icons.Filled.KeyboardArrowRight,
+                            contentDescription = null, tint = Color.Gray,
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }
