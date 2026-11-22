@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -93,7 +94,9 @@ fun ProfileScreen(
     onOpenMembers: () -> Unit = {},
     onOpenSharedMedia: () -> Unit = {},
     onOpenGroupSettings: () -> Unit = {},
-    onOpenStats: () -> Unit = {}
+    onOpenStats: () -> Unit = {},
+    onOpenEventLog: () -> Unit = {},
+    onOpenJoinRequests: () -> Unit = {}
 ) {
     BackHandler { onBack() }
     val profile by ProfileStore.profile.collectAsState()
@@ -830,6 +833,47 @@ fun ProfileScreen(
                                 Spacer(Modifier.width(5.dp))
                                 Text("群权限与慢速模式")
                             }
+                        }
+                        // Administrator log (v0.9.14, U1): the
+                        // server's own event stream for this
+                        // chat, readable only by admins — the
+                        // entry lives in the admin section and
+                        // the page translates refusals.
+                        TextButton(onClick = { onOpenEventLog() }) {
+                            Icon(
+                                Icons.Filled.List,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("管理员日志")
+                        }
+                        // Join requests (v0.9.14, U2): the
+                        // count rides chat.pending_join_requests
+                        // (peeked by the store); the page
+                        // itself approves/declines.
+                        val pendingCounts by
+                            com.tuxungram.android.td.JoinRequestsStore
+                                .pendingByChat.collectAsState()
+                        val pendingCount = pendingCounts[chatId] ?: 0
+                        LaunchedEffect(chatId) {
+                            com.tuxungram.android.td.JoinRequestsStore
+                                .peekCount(chatId)
+                        }
+                        TextButton(onClick = { onOpenJoinRequests() }) {
+                            Icon(
+                                PeopleIcon,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                if (pendingCount > 0) {
+                                    "入群申请（$pendingCount 待处理）"
+                                } else {
+                                    "入群申请"
+                                }
+                            )
                         }
                         Spacer(Modifier.height(16.dp))
                     }

@@ -127,6 +127,8 @@ import kotlinx.coroutines.delay
 import com.tuxungram.android.ui.ArchiveScreen
 import com.tuxungram.android.ui.BlockedScreen
 import com.tuxungram.android.ui.DownloadsScreen
+import com.tuxungram.android.ui.EventLogScreen
+import com.tuxungram.android.ui.JoinRequestsScreen
 import com.tuxungram.android.ui.StatsScreen
 import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.GuideScreen
@@ -491,6 +493,14 @@ private sealed interface Route {
         override val depth = 2
     }
 
+    data class EventLog(val chatId: Long) : Route {
+        override val depth = 2
+    }
+
+    data class JoinRequests(val chatId: Long) : Route {
+        override val depth = 2
+    }
+
     data class Thread(val chatId: Long, val postId: Long) : Route {
         override val depth = 2
     }
@@ -566,6 +576,12 @@ private fun ReadyHost() {
     // Statistics page (v0.9.13, T2): opened from a group or
     // channel profile; Back returns to that profile.
     var statsChatId by remember { mutableStateOf<Long?>(null) }
+    // Administrator log page (v0.9.14, U1): opened from a
+    // group/channel profile's admin section; Back returns
+    // to that profile.
+    var eventLogChatId by remember { mutableStateOf<Long?>(null) }
+    // Join requests page (v0.9.14, U2): same pattern.
+    var joinRequestsChatId by remember { mutableStateOf<Long?>(null) }
     // Rich-text mention taps (v0.9.2, L1): a mentionName carries
     // the user id (resolve via createPrivateChat), a plain
     // @mention carries the username (resolve via
@@ -669,6 +685,10 @@ private fun ReadyHost() {
             Route.GroupSettings(groupSettingsChatId!!)
         statsChatId != null ->
             Route.Stats(statsChatId!!)
+        eventLogChatId != null ->
+            Route.EventLog(eventLogChatId!!)
+        joinRequestsChatId != null ->
+            Route.JoinRequests(joinRequestsChatId!!)
         sharedMediaChatId != null ->
             Route.SharedMedia(sharedMediaChatId!!)
         membersChatId != null -> Route.Members(membersChatId!!)
@@ -789,6 +809,17 @@ private fun ReadyHost() {
                     chatId = r.chatId,
                     onBack = { statsChatId = null }
                 )
+                is Route.EventLog -> EventLogScreen(
+                    chatId = r.chatId,
+                    onBack = { eventLogChatId = null }
+                )
+                is Route.JoinRequests -> JoinRequestsScreen(
+                    chatId = r.chatId,
+                    onBack = { joinRequestsChatId = null },
+                    onOpenUser = { userId ->
+                        DeepLink.pendingProfileUser.value = userId
+                    }
+                )
                 is Route.SharedMedia -> SharedMediaScreen(
                     chatId = r.chatId,
                     onBack = { sharedMediaChatId = null }
@@ -809,7 +840,11 @@ private fun ReadyHost() {
                     onOpenGroupSettings = {
                         groupSettingsChatId = r.chatId
                     },
-                    onOpenStats = { statsChatId = r.chatId }
+                    onOpenStats = { statsChatId = r.chatId },
+                    onOpenEventLog = { eventLogChatId = r.chatId },
+                    onOpenJoinRequests = {
+                        joinRequestsChatId = r.chatId
+                    }
                 )
                 is Route.Create -> CreateChatScreen(
                     onBack = { showCreate = false },
