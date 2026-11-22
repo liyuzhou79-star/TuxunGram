@@ -58,6 +58,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -95,6 +96,8 @@ import com.tuxungram.android.td.PrivacySettingDef
 import com.tuxungram.android.td.PrivacyStore
 import com.tuxungram.android.td.PrivacyTier
 import com.tuxungram.android.td.KeepAliveService
+import com.tuxungram.android.td.CrashLog
+import com.tuxungram.android.td.SettingsBackup
 import com.tuxungram.android.td.StorageStore
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
@@ -191,6 +194,157 @@ fun SettingsScreen(
                 // Copy failed: keep the previous wallpaper.
             }
         }
+    }
+
+    // Settings backup (v0.9.6, P4): export writes the
+    // SettingsBackup JSON into a document the user picks;
+    // import reads one back and applies it all-or-nothing.
+    // The export warning (proxy passwords are NOT in the
+    // file) is shown before the document picker opens.
+    var exportWarnOpen by remember { mutableStateOf(false) }
+    var backupResult by remember { mutableStateOf<String?>(null) }
+    val backupScope = rememberCoroutineScope()
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            backupScope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    try {
+                        settingsContext.contentResolver
+                            .openOutputStream(uri)?.use { out ->
+                                out.write(
+                                    SettingsBackup.exportJson(
+                                        BuildConfig.VERSION_NAME
+                                    ).toByteArray(Charsets.UTF_8)
+                                )
+                            }
+                        true
+                    } catch (t: Throwable) {
+                        false
+                    }
+                }
+                backupResult = if (ok) {
+                    "设置已导出。提醒一句：代理密码没有进备份文件，导入后需要重填一次。"
+                } else {
+                    "导出失败：文件没写成，再试一次。"
+                }
+            }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            backupScope.launch {
+                backupResult = withContext(Dispatchers.IO) {
+                    try {
+                        val text = settingsContext.contentResolver
+                            .openInputStream(uri)?.use { input ->
+                                input.readBytes()
+                                    .toString(Charsets.UTF_8)
+                            }
+                        if (text == null) {
+                            "这个文件读不出来，设置没有改动。"
+                        } else {
+                            SettingsBackup.importJson(text)
+                                ?: "设置已导入。备份里的代理没有密码，需要时会去代理列表里补上密码。"
+                        }
+                    } catch (t: Throwable) {
+                        "这个文件读不出来，设置没有改动。"
+                    }
+                }
+            }
+        }
+    }
+    if (exportWarnOpen) {
+        AlertDialog(
+            onDismissRequest = { exportWarnOpen = false },
+            title = { Text("导出设置") },
+            text = {
+                Text(
+                    "导出的文件包含主题、外观设置和代理列表。代理密码和 MTProto 密钥不会写进文件（留空），导入后需要重填一次。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    exportWarnOpen = false
+                    AppLock.noteExternalLaunch()
+                    exportLauncher.launch("tuxungram-settings.json")
+                }) { Text("继续导出") }
+            },
+            dismissButton = {
+                TextButton(onClick = { exportWarnOpen = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+    if (backupResult != null) {
+        AlertDialog(
+            onDismissRequest = { backupResult = null },
+            title = { Text("设置备份") },
+            text = { Text(backupResult!!) },
+            confirmButton = {
+                TextButton(onClick = { backupResult = null }) {
+                    Text("知道了")
+                }
+            }
+        )
+    }
+    // Crash records (v0.9.6, P5): the count is read once when
+    // the page opens (a record can only exist from a previous
+    // launch anyway); the dialog offers view / copy / clear.
+    var crashDialogOpen by remember { mutableStateOf(false) }
+    var crashCount by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        crashCount = CrashLog.files(settingsContext).size
+    }
+    val crashClipboard = LocalClipboardManager.current
+    if (crashDialogOpen) {
+        val newest = CrashLog.files(settingsContext).firstOrNull()
+        val crashScroll = rememberScrollState()
+        AlertDialog(
+            onDismissRequest = { crashDialogOpen = false },
+            title = { Text("崩溃记录") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .height(300.dp)
+                        .verticalScroll(crashScroll)
+                ) {
+                    Text(
+                        if (newest != null) {
+                            CrashLog.read(newest)
+                        } else {
+                            "没有记录。"
+                        },
+                        fontSize = 12.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (newest != null) {
+                        crashClipboard.setText(
+                            AnnotatedString(CrashLog.read(newest))
+                        )
+                    }
+                }) { Text("复制") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        CrashLog.clear(settingsContext)
+                        crashCount = 0
+                        crashDialogOpen = false
+                    }) { Text("清除") }
+                    TextButton(onClick = { crashDialogOpen = false }) {
+                        Text("关闭")
+                    }
+                }
+            }
+        )
     }
 
     val settingsScroll = rememberScrollState()
@@ -1220,11 +1374,33 @@ fun SettingsScreen(
         TextButton(onClick = onOpenGuide) {
             Text("新手引导（再看一遍）")
         }
+        // Settings backup (v0.9.6, P4).
+        TextButton(onClick = { exportWarnOpen = true }) {
+            Text("导出设置（备份）")
+        }
+        TextButton(onClick = {
+            AppLock.noteExternalLaunch()
+            importLauncher.launch("application/json")
+        }) {
+            Text("导入设置")
+        }
         Spacer(Modifier.height(12.dp))
         Text(
             "TuxunGram ${BuildConfig.VERSION_NAME}",
             color = Color.Gray, fontSize = 13.sp
         )
+        // Crash records (v0.9.6, P5): the entry only appears
+        // when a crash was recorded on this phone. Records
+        // live only on this device and are never uploaded.
+        if (crashCount > 0) {
+            TextButton(onClick = { crashDialogOpen = true }) {
+                Text("上次崩溃记录（$crashCount）")
+            }
+            Text(
+                "崩溃记录只保存在这台手机上，不会上传。",
+                color = Color.Gray, fontSize = 12.sp
+            )
+        }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = { TdRepository.logOut() }) {
             Text("退出登录", color = Color(0xFFC62828))
