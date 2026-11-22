@@ -20,6 +20,7 @@ object UiSettings {
     private const val KEY_SEED_INDEX = "seed_index"
     private const val KEY_CHAT_BG = "chat_bg"
     private const val KEY_CHAT_BG_IMAGE = "chat_bg_image"
+    private const val KEY_CHAT_BG_PER_CHAT = "chat_bg_per_chat"
     private const val KEY_BUBBLE_STYLE = "bubble_style"
     private const val KEY_FONT_SIZE = "font_size"
     private const val KEY_VOICE_SPEED = "voice_speed"
@@ -89,6 +90,19 @@ object UiSettings {
     private val _chatBgImage = MutableStateFlow("")
     val chatBgImage: StateFlow<String> = _chatBgImage
 
+    /** Per-chat wallpaper overrides (v0.9.16, W5): chat id
+     *  -> local picture path, persisted as one JSON object.
+     *  An override wins over the global picture and the
+     *  solid colors for that chat only. It takes effect
+     *  only while its file still exists — a settings backup
+     *  carries these paths, not the pictures, so a backup
+     *  restored on another phone leaves dangling paths that
+     *  must fall back to the global wallpaper instead of a
+     *  blank background (see effectiveWallpaperImage). */
+    private val _chatWallpapers =
+        MutableStateFlow<Map<Long, String>>(emptyMap())
+    val chatWallpapers: StateFlow<Map<Long, String>> = _chatWallpapers
+
     private val _bubbleStyle = MutableStateFlow(BUBBLE_MODERN)
     val bubbleStyle: StateFlow<Int> = _bubbleStyle
 
@@ -120,6 +134,9 @@ object UiSettings {
         val bg = prefs.getInt(KEY_CHAT_BG, 0)
         _chatBg.value = if (bg in CHAT_BG_COLORS.indices) bg else 0
         _chatBgImage.value = prefs.getString(KEY_CHAT_BG_IMAGE, "") ?: ""
+        _chatWallpapers.value = parseChatWallpapers(
+            prefs.getString(KEY_CHAT_BG_PER_CHAT, "") ?: ""
+        )
         val bubble = prefs.getInt(KEY_BUBBLE_STYLE, BUBBLE_MODERN)
         _bubbleStyle.value =
             if (bubble in BUBBLE_MODERN..BUBBLE_CLASSIC) bubble else BUBBLE_MODERN
@@ -146,6 +163,64 @@ object UiSettings {
     fun setChatBgImage(path: String) {
         _chatBgImage.value = path
         persist { it.putString(KEY_CHAT_BG_IMAGE, path) }
+    }
+
+    /** The wallpaper picture one chat actually shows
+     *  (v0.9.16, W5): its override when one is set and the
+     *  file is still there, else the global picture
+     *  ("" = no picture; the solid colors apply). */
+    fun effectiveWallpaperImage(chatId: Long): String {
+        val override = _chatWallpapers.value[chatId]
+        if (override != null && java.io.File(override).exists()) {
+            return override
+        }
+        return _chatBgImage.value
+    }
+
+    fun setChatWallpaper(chatId: Long, path: String) {
+        val next = _chatWallpapers.value + (chatId to path)
+        _chatWallpapers.value = next
+        persistChatWallpapers(next)
+    }
+
+    fun clearChatWallpaper(chatId: Long) {
+        if (!_chatWallpapers.value.containsKey(chatId)) return
+        val next = _chatWallpapers.value - chatId
+        _chatWallpapers.value = next
+        persistChatWallpapers(next)
+    }
+
+    /** Replace the whole override map (settings import,
+     *  v0.9.16, W5). Entries whose files do not exist on
+     *  this phone stay in the map but never take effect —
+     *  effectiveWallpaperImage checks existence per chat. */
+    fun replaceChatWallpapers(map: Map<Long, String>) {
+        _chatWallpapers.value = map
+        persistChatWallpapers(map)
+    }
+
+    private fun persistChatWallpapers(map: Map<Long, String>) {
+        val obj = org.json.JSONObject()
+        for ((id, path) in map) obj.put(id.toString(), path)
+        persist { it.putString(KEY_CHAT_BG_PER_CHAT, obj.toString()) }
+    }
+
+    private fun parseChatWallpapers(raw: String): Map<Long, String> {
+        if (raw.isEmpty()) return emptyMap()
+        return try {
+            val obj = org.json.JSONObject(raw)
+            val out = HashMap<Long, String>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val id = key.toLongOrNull() ?: continue
+                val path = obj.optString(key)
+                if (path.isNotEmpty()) out[id] = path
+            }
+            out
+        } catch (t: Throwable) {
+            emptyMap()
+        }
     }
 
     fun setBubbleStyle(style: Int) {

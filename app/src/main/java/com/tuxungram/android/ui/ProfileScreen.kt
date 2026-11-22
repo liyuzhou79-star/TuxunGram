@@ -75,6 +75,7 @@ import com.tuxungram.android.td.ProfilePhotoUi
 import com.tuxungram.android.td.ProfilePhotosStore
 import com.tuxungram.android.td.TdClient
 import com.tuxungram.android.td.TdRepository
+import com.tuxungram.android.td.UiSettings
 import org.json.JSONObject
 import com.tuxungram.android.td.InviteLinkUi
 import com.tuxungram.android.td.ChatStore
@@ -174,6 +175,39 @@ fun ProfileScreen(
     // Message auto-delete for regular chats (v0.9.13, T3).
     var autoDeleteDialogOpen by remember { mutableStateOf(false) }
     var autoDeleteNotice by remember { mutableStateOf<String?>(null) }
+    // Per-chat wallpaper (v0.9.16, W5): a local picture that
+    // overrides the global chat wallpaper for this chat
+    // only. The pick is copied into filesDir under a stable
+    // per-chat name, so re-picking replaces the old picture.
+    val chatWallpapers by UiSettings.chatWallpapers.collectAsState()
+    val hasOwnWallpaper = chatWallpapers.containsKey(chatId)
+    var wallpaperDialogOpen by remember { mutableStateOf(false) }
+    var wallpaperNotice by remember { mutableStateOf<String?>(null) }
+    val chatWallpaperPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        Thread {
+            val path = try {
+                val file = File(
+                    context.filesDir,
+                    "chat_wallpaper_$chatId.jpg"
+                )
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    file.outputStream().use { output -> input.copyTo(output) }
+                }
+                file.absolutePath
+            } catch (t: Throwable) {
+                null
+            }
+            if (path == null) {
+                wallpaperNotice = "这张图片读不出来，换一张试试。"
+            } else {
+                UiSettings.setChatWallpaper(chatId, path)
+                wallpaperNotice = "已设为这个对话的专属壁纸。"
+            }
+        }.start()
+    }
     val applyTheme: (String?) -> Unit = { emoji ->
         themeDialogOpen = false
         val query = TdClient.request("setChatTheme").apply {
@@ -580,6 +614,59 @@ fun ProfileScreen(
                                 )
                             )
                         }
+                    }
+                }
+            }
+            item(key = "chat_wallpaper") {
+                // Per-chat wallpaper (v0.9.16, W5): a local
+                // override of the global wallpaper picture,
+                // for this chat only; purely local, nothing
+                // is sent to the server or the peer.
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { wallpaperDialogOpen = true }
+                            .padding(
+                                horizontal = 20.dp, vertical = 12.dp
+                            ),
+                        verticalAlignment =
+                            Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            ImageIcon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme
+                                .primary,
+                            modifier = Modifier.size(21.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "专属壁纸",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            if (hasOwnWallpaper) "已设置" else "跟随全局",
+                            color = Color.Gray, fontSize = 14.sp
+                        )
+                        Icon(
+                            Icons.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = Color.Gray,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                    if (wallpaperNotice != null) {
+                        Text(
+                            wallpaperNotice!!,
+                            color = Color.Gray, fontSize = 12.5.sp,
+                            modifier = Modifier.padding(
+                                start = 20.dp, end = 20.dp,
+                                bottom = 8.dp
+                            )
+                        )
                     }
                 }
             }
@@ -1300,6 +1387,48 @@ fun ProfileScreen(
                 TextButton(onClick = {
                     themeDialogOpen = false
                 }) { Text("取消") }
+            }
+        )
+    }
+    // Per-chat wallpaper dialog (v0.9.16, W5): pick a
+    // picture, or clear the override and fall back to the
+    // global wallpaper.
+    if (wallpaperDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { wallpaperDialogOpen = false },
+            title = { Text("专属壁纸") },
+            text = {
+                Text(
+                    if (hasOwnWallpaper) {
+                        "这个对话正在用自己的壁纸，不跟随全局设置。"
+                    } else {
+                        "给这个对话单独设一张壁纸，只在这个对话里生效；" +
+                            "不设就跟随全局壁纸。"
+                    },
+                    color = Color.Gray, fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    wallpaperDialogOpen = false
+                    AppLock.noteExternalLaunch()
+                    chatWallpaperPicker.launch("image/*")
+                }) {
+                    Text(if (hasOwnWallpaper) "换一张" else "选图片")
+                }
+            },
+            dismissButton = {
+                if (hasOwnWallpaper) {
+                    TextButton(onClick = {
+                        wallpaperDialogOpen = false
+                        UiSettings.clearChatWallpaper(chatId)
+                        wallpaperNotice = "已清除专属壁纸，恢复跟随全局。"
+                    }) { Text("清除专属壁纸") }
+                } else {
+                    TextButton(onClick = {
+                        wallpaperDialogOpen = false
+                    }) { Text("取消") }
+                }
             }
         )
     }

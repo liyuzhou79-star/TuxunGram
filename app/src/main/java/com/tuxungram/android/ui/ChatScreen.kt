@@ -1373,7 +1373,18 @@ fun ChatScreen(
         // Custom wallpaper picture (v0.9.4, N4): when a
         // picture is set it replaces the solid wallpaper
         // behind the message area (the two are alternatives).
-        val chatBgImage by UiSettings.chatBgImage.collectAsState()
+        // Per-chat override (v0.9.16, W5): this chat's own
+        // picture when one is set (and its file is still
+        // there), else the global picture — everything below
+        // keeps reading the one effective path.
+        val globalBgImage by UiSettings.chatBgImage.collectAsState()
+        val chatWallpapers by UiSettings.chatWallpapers
+            .collectAsState()
+        val chatBgImage = remember(
+            chatId, globalBgImage, chatWallpapers
+        ) {
+            UiSettings.effectiveWallpaperImage(chatId)
+        }
         val wallpaperBitmap by produceState<android.graphics.Bitmap?>(
             initialValue = null, chatBgImage
         ) {

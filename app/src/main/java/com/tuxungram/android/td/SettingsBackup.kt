@@ -18,6 +18,16 @@ import org.json.JSONObject
  * Import is all-or-nothing: the whole file is validated
  * into a staging area first, and only a fully valid file is
  * applied — a malformed file changes nothing and says why.
+ *
+ * Wallpapers (v0.9.16, W5): the backup carries the global
+ * wallpaper's path and the per-chat override map (chat id
+ * -> path) — the picture FILES themselves are never in the
+ * backup (they live in the app's private storage and can be
+ * megabytes each). On the same phone the paths resolve and
+ * the wallpapers come back; on another phone they dangle,
+ * and UiSettings treats a missing file as "no override", so
+ * the chat falls back to the global wallpaper there. The
+ * export dialog says this out loud before writing.
  */
 object SettingsBackup {
 
@@ -32,6 +42,13 @@ object SettingsBackup {
             put("bubble_style", UiSettings.bubbleStyle.value)
             put("font_size", UiSettings.fontSize.value)
             put("voice_speed", UiSettings.voiceSpeed.value.toDouble())
+            // Wallpaper paths only — never the picture files
+            // (see the header note).
+            put("chat_bg_image", UiSettings.chatBgImage.value)
+        }
+        val chatWallpapers = JSONObject()
+        for ((chatId, path) in UiSettings.chatWallpapers.value) {
+            chatWallpapers.put(chatId.toString(), path)
         }
         val proxies = JSONArray()
         val list = ProxyStore.proxies.value
@@ -56,6 +73,7 @@ object SettingsBackup {
             put("version", 1)
             put("from_version", fromVersion)
             put("ui", ui)
+            put("chat_wallpapers", chatWallpapers)
             put("proxies", proxies)
             put("active_proxy", activeIndex)
         }.toString(2)
@@ -91,6 +109,8 @@ object SettingsBackup {
         var bubbleStyle: Int? = null
         var fontSize: Int? = null
         var voiceSpeed: Float? = null
+        var chatBgImage: String? = null
+        var chatWallpapers: Map<Long, String>? = null
         val uiObj = root.optJSONObject("ui")
         if (uiObj != null) {
             try {
@@ -143,9 +163,33 @@ object SettingsBackup {
                     }
                     voiceSpeed = v
                 }
+                if (uiObj.has("chat_bg_image")) {
+                    chatBgImage = uiObj.getString("chat_bg_image")
+                }
             } catch (t: Throwable) {
                 return "备份里的设置部分格式不对，设置没有改动。"
             }
+        }
+        if (root.has("chat_wallpapers")) {
+            val obj = root.optJSONObject("chat_wallpapers")
+                ?: return "备份里的专属壁纸部分格式不对，设置没有改动。"
+            val staged = HashMap<Long, String>()
+            try {
+                val keys = obj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val id = key.toLongOrNull()
+                        ?: return "备份里的专属壁纸部分格式不对，设置没有改动。"
+                    val path = obj.getString(key)
+                    if (path.isEmpty()) {
+                        return "备份里的专属壁纸部分格式不对，设置没有改动。"
+                    }
+                    staged[id] = path
+                }
+            } catch (t: Throwable) {
+                return "备份里的专属壁纸部分格式不对，设置没有改动。"
+            }
+            chatWallpapers = staged
         }
 
         var stagedProxies: List<StagedProxy>? = null
@@ -206,6 +250,16 @@ object SettingsBackup {
         bubbleStyle?.let { UiSettings.setBubbleStyle(it) }
         fontSize?.let { UiSettings.setFontSize(it) }
         voiceSpeed?.let { UiSettings.setVoiceSpeed(it) }
+        chatBgImage?.let { path ->
+            // A wallpaper path is applied only when it is a
+            // clear ("") or the picture is actually on this
+            // phone; a foreign backup's dangling path must
+            // not wipe a working wallpaper here.
+            if (path.isEmpty() || java.io.File(path).exists()) {
+                UiSettings.setChatBgImage(path)
+            }
+        }
+        chatWallpapers?.let { UiSettings.replaceChatWallpapers(it) }
 
         val proxies = stagedProxies
         if (proxies != null) {
