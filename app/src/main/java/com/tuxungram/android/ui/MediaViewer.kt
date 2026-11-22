@@ -166,9 +166,12 @@ fun MediaViewerScreen(initialId: Long, onClose: () -> Unit) {
             }
         }
 
-        // Caption of the current photo, if it has one.
-        val caption = current?.text?.takeIf { it.isNotEmpty() }
-        if (caption != null) {
+        // Caption of the current photo, if it has one —
+        // rendered through the shared rich-text builder like
+        // every other surface (regression fix R4, v0.9.6), in
+        // white to stay readable over the photo.
+        val captionMsg = current?.takeIf { it.text.isNotEmpty() }
+        if (captionMsg != null) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -177,8 +180,8 @@ fun MediaViewerScreen(initialId: Long, onClose: () -> Unit) {
                     .padding(horizontal = 20.dp, vertical = 14.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    caption,
+                RichMessageText(
+                    captionMsg,
                     color = Color.White,
                     fontSize = 14.sp,
                     maxLines = 3

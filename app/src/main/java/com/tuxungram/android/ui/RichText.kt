@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.CustomEmojiStore
@@ -62,7 +63,12 @@ import kotlinx.coroutines.withContext
 fun RichMessageText(
     msg: MsgItem,
     fontSize: TextUnit = 15.sp,
-    onBotCommand: (String) -> Unit = {}
+    onBotCommand: (String) -> Unit = {},
+    // Secondary surfaces (shared-media rows, the photo
+    // viewer's caption — regression fix R4, v0.9.6) render the
+    // same built text but in their own color and line budget.
+    color: Color = Color.Unspecified,
+    maxLines: Int = Int.MAX_VALUE
 ) {
     // Custom emoji (L2): kick off the sticker fetch for this
     // message's ids and watch the downloaded paths; the inline
@@ -315,7 +321,14 @@ fun RichMessageText(
             }
         }
     }
-    Text(annotated, inlineContent = inlineContent, fontSize = fontSize)
+    Text(
+        annotated,
+        inlineContent = inlineContent,
+        fontSize = fontSize,
+        color = color,
+        maxLines = maxLines,
+        overflow = TextOverflow.Ellipsis
+    )
 }
 
 /** One inline custom emoji: the sticker image once its file

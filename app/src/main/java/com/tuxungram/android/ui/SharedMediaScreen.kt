@@ -242,8 +242,8 @@ fun SharedMediaScreen(chatId: Long, onBack: () -> Unit) {
                                             fontSize = 14.sp
                                         )
                                     }
-                                    Text(
-                                        item.text,
+                                    RichMessageText(
+                                        item,
                                         fontSize = 13.sp,
                                         color = Color.Gray,
                                         maxLines = 2
@@ -351,8 +351,8 @@ private fun FileRow(item: MsgItem, onTap: () -> Unit) {
                 color = Color.Gray, fontSize = 12.sp
             )
             if (item.text.isNotEmpty()) {
-                Text(
-                    item.text, color = Color.Gray, fontSize = 12.sp,
+                RichMessageText(
+                    item, color = Color.Gray, fontSize = 12.sp,
                     maxLines = 1
                 )
             }
