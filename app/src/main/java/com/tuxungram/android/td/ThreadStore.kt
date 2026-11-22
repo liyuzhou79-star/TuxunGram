@@ -1,5 +1,7 @@
 package com.tuxungram.android.td
 
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -543,7 +545,48 @@ object ThreadStore {
         }
     }
 
+    // Publish throttling (v0.9.33, Z6): same coalescing as
+    // MessageStore — bursts of updates during a history
+    // load used to re-sort the whole window per update.
+    // Leading edge flushes immediately; the trailing flush
+    // rides a throwaway request so it runs on the receiver
+    // thread like every other cache access.
+    private const val PUBLISH_WINDOW_MS = 50L
+
+    private val publishHandler = Handler(Looper.getMainLooper())
+
+    @Volatile
+    private var publishDirty = false
+
+    @Volatile
+    private var publishScheduled = false
+
+    @Volatile
+    private var lastPublishAt = 0L
+
     private fun publish() {
+        publishDirty = true
+        val now = System.currentTimeMillis()
+        if (now - lastPublishAt >= PUBLISH_WINDOW_MS) {
+            flushPublish()
+            return
+        }
+        if (publishScheduled) return
+        publishScheduled = true
+        publishHandler.postDelayed({
+            publishScheduled = false
+            TdRepository.sendRaw(
+                TdClient.request("getAuthorizationState")
+            ) {
+                flushPublish()
+            }
+        }, PUBLISH_WINDOW_MS)
+    }
+
+    private fun flushPublish() {
+        if (!publishDirty) return
+        publishDirty = false
+        lastPublishAt = System.currentTimeMillis()
         _messages.value = byId.values.sortedBy { it.id }
     }
 }

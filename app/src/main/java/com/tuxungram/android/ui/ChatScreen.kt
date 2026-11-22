@@ -931,6 +931,12 @@ fun ChatScreen(
     }
     // (path, mimeType, displayName) of a picked file awaiting confirm.
     var pendingFile by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+    // Pre-send video trimmer (v0.9.33, Z1): while set, the
+    // trim screen owns the display; pendingFile stays set
+    // underneath, so cancelling lands back on the send
+    // confirm dialog and finishing swaps the trimmed file
+    // into it.
+    var trimmingVideo by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
@@ -1652,6 +1658,24 @@ fun ChatScreen(
             return@Column
         }
 
+        val trimming = trimmingVideo
+        if (trimming != null) {
+            VideoTrimScreen(
+                path = trimming.first,
+                fileName = trimming.third,
+                onDone = { newPath ->
+                    val base = trimming.third
+                        .substringBeforeLast('.', trimming.third)
+                    pendingFile = Triple(
+                        newPath, "video/mp4", "${base}_trim.mp4"
+                    )
+                    trimmingVideo = null
+                },
+                onCancel = { trimmingVideo = null }
+            )
+            return@Column
+        }
+
         val photoPath = pendingPhoto
         if (photoPath != null) {
             PhotoPreview(
@@ -1838,7 +1862,31 @@ fun ChatScreen(
             AlertDialog(
                 onDismissRequest = { pendingFile = null },
                 title = { Text("发送文件") },
-                text = { Text("要发送「${fileToSend.third}」吗？") },
+                text = {
+                    Column {
+                        Text("要发送「${fileToSend.third}」吗？")
+                        // Video trim entry (v0.9.33, Z1): MP4
+                        // can be trimmed before sending; other
+                        // containers get the honest note, never
+                        // a dead entry.
+                        if (fileToSend.second == "video/mp4") {
+                            TextButton(onClick = {
+                                trimmingVideo = fileToSend
+                            }) {
+                                Text("剪辑视频")
+                            }
+                        } else if (
+                            fileToSend.second.startsWith("video/")
+                        ) {
+                            Text(
+                                "这个格式暂时不能剪辑（仅支持 MP4），" +
+                                    "可以直接发送原视频。",
+                                fontSize = 12.sp, color = Color.Gray,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                        }
+                    }
+                },
                 confirmButton = {
                     Button(onClick = {
                         MessageStore.clearSendError()
@@ -3903,10 +3951,12 @@ fun PhotoPreview(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(40.dp)
+                    // 48dp touch height (v0.9.33, Z5); the
+                    // pill radius grows with it.
+                    .height(48.dp)
                     .background(
                         MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(20.dp)
+                        RoundedCornerShape(24.dp)
                     )
                     .combinedClickable(
                         onClick = onSend,
@@ -8248,24 +8298,32 @@ fun VoiceBubbleContent(msg: MsgItem) {
         0f
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
+        // Touch target (v0.9.33, Z5): the visible circle
+        // stays 42dp; the tappable box around it is 48dp.
         Box(
             modifier = Modifier
-                .size(42.dp)
-                .background(
-                    if (msg.outgoing) {
-                        Color.White.copy(alpha = 0.22f)
-                    } else {
-                        palette.accent
-                    },
-                    CircleShape
-                )
+                .size(48.dp)
                 .clickable { VoicePlayer.toggle(path) },
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                if (active && playing) "❚❚" else "▶",
-                color = Color.White, fontSize = 14.sp
-            )
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .background(
+                        if (msg.outgoing) {
+                            Color.White.copy(alpha = 0.22f)
+                        } else {
+                            palette.accent
+                        },
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (active && playing) "❚❚" else "▶",
+                    color = Color.White, fontSize = 14.sp
+                )
+            }
         }
         Spacer(Modifier.width(9.dp))
         Column {
@@ -8353,7 +8411,10 @@ private fun WaveformBars(
     }
     Row(
         modifier = Modifier
-            .height(30.dp)
+            // Seek target height (v0.9.33, Z5): 30dp was
+            // fiddly to hit; 40dp keeps the bubble compact
+            // and makes waveform seeking reliable.
+            .height(40.dp)
             .pointerInput(seekable) {
                 if (seekable) {
                     detectTapGestures { offset ->

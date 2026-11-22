@@ -2469,7 +2469,9 @@ fun FolderTab(
                 FontWeight.Normal
             },
             maxLines = 1,
-            modifier = Modifier.padding(vertical = 10.dp)
+            // 12dp (v0.9.33, Z5): tab touch height lands at
+            // ~47dp including the underline, up from ~43dp.
+            modifier = Modifier.padding(vertical = 12.dp)
         )
         // Official indicator: accent, 3 dp, flush with the
         // strip's bottom edge (the hairline divider sits

@@ -388,14 +388,21 @@ fun ScrollToLatestButton(
             scaleOut(Motion.tween(Motion.SCROLL_BTN_OUT), targetScale = 0.7f),
         modifier = modifier
     ) {
-        Box {
+        // Touch target (v0.9.33, Z5): the visible circle
+        // stays 40dp, but the tappable area is the full
+        // 48dp box around it — 40dp was under the minimum
+        // comfortable target size.
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clickable { onClick() },
+            contentAlignment = Alignment.Center
+        ) {
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 4.dp,
-                modifier = Modifier
-                    .size(40.dp)
-                    .clickable { onClick() }
+                modifier = Modifier.size(40.dp)
             ) {
                 Icon(
                     Icons.Filled.KeyboardArrowDown,

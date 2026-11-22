@@ -4177,7 +4177,59 @@ object MessageStore {
         return best ?: largest
     }
 
+    // Publish throttling (v0.9.33, Z6): publishNow() sorts
+    // and re-maps the WHOLE loaded window, and publish() is
+    // called from 30+ sites — every incoming update during
+    // a sync burst (new messages, read ticks, content edits)
+    // redid that O(n log n) work and handed Compose a brand
+    // new list to diff. Same medicine as ChatStore's K1
+    // recompute coalescing (v0.9.1): leading-edge immediate
+    // flush, bursts coalesce into one trailing flush per
+    // window, and the trailing flush is routed through a
+    // throwaway request so it runs on the receiver thread
+    // like every other cache access. The window is 50 ms —
+    // half of ChatStore's, because a just-sent message must
+    // feel instant; the leading edge already covers that.
+    private const val PUBLISH_WINDOW_MS = 50L
+
+    private val publishHandler = Handler(Looper.getMainLooper())
+
+    @Volatile
+    private var publishDirty = false
+
+    @Volatile
+    private var publishScheduled = false
+
+    @Volatile
+    private var lastPublishAt = 0L
+
     private fun publish() {
+        publishDirty = true
+        val now = System.currentTimeMillis()
+        if (now - lastPublishAt >= PUBLISH_WINDOW_MS) {
+            flushPublish()
+            return
+        }
+        if (publishScheduled) return
+        publishScheduled = true
+        publishHandler.postDelayed({
+            publishScheduled = false
+            TdRepository.sendRaw(
+                TdClient.request("getAuthorizationState")
+            ) {
+                flushPublish()
+            }
+        }, PUBLISH_WINDOW_MS)
+    }
+
+    private fun flushPublish() {
+        if (!publishDirty) return
+        publishDirty = false
+        lastPublishAt = System.currentTimeMillis()
+        publishNow()
+    }
+
+    private fun publishNow() {
         _messages.value = byId.values.sortedBy { it.id }.map { item ->
             // Backfill sender names that arrived after first parse.
             val name = if (item.senderUserId != 0L) {

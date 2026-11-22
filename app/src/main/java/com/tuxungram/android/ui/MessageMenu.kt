@@ -137,7 +137,11 @@ fun OfficialMessageMenu(
                         reactions.forEach { emoji ->
                             Box(
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    // 40dp (v0.9.33, Z5): up
+                                    // from 36dp; the strip's
+                                    // space-between layout caps
+                                    // how far this can grow.
+                                    .size(40.dp)
                                     .clip(CircleShape)
                                     .clickable { onReaction(emoji) },
                                 contentAlignment = Alignment.Center
