@@ -150,6 +150,7 @@ import com.tuxungram.android.td.AvatarStore
 import com.tuxungram.android.td.BotStore
 import com.tuxungram.android.td.InlineResultUi
 import com.tuxungram.android.td.InlineStore
+import com.tuxungram.android.td.SlowModeStore
 import com.tuxungram.android.td.ViewersStore
 import com.tuxungram.android.td.ReplyKb
 import com.tuxungram.android.td.TdClient
@@ -285,6 +286,28 @@ fun ChatScreen(
     val chats by ChatStore.chats.collectAsState()
     val adminCaps by AdminStore.caps.collectAsState()
     val chat = chats.firstOrNull { it.id == chatId }
+    // Slow mode (v0.9.32, Y4): the group's delay and the
+    // server-computed moment this account may post again.
+    // The remaining seconds tick locally off that anchor;
+    // creators/administrators are exempt per td_api.tl, so
+    // their caps suppress the block entirely.
+    val slowDelay by SlowModeStore.delaySec.collectAsState()
+    val slowWaitUntil by SlowModeStore.waitUntilMs.collectAsState()
+    var slowRemaining by remember(chatId) { mutableStateOf(0) }
+    LaunchedEffect(slowWaitUntil, chatId) {
+        while (true) {
+            val leftMs = slowWaitUntil - System.currentTimeMillis()
+            slowRemaining = if (leftMs > 0L) {
+                ((leftMs + 999L) / 1000L).toInt()
+            } else {
+                0
+            }
+            if (leftMs <= 0L) break
+            kotlinx.coroutines.delay(250L)
+        }
+    }
+    val slowBlocked = slowDelay > 0 && slowRemaining > 0 &&
+        !adminCaps.canManage
     // Secret-chat state (v0.6.0, E1): drives the encryption
     // banner under the top bar.
     val secretInfo by SecretChatStore.info.collectAsState()
@@ -551,6 +574,8 @@ fun ChatScreen(
         // the "delete for everyone" entry on other people's
         // messages.
         AdminStore.loadCaps(chatId)
+        // Slow-mode state for this chat (v0.9.32, Y4).
+        SlowModeStore.watch(chatId)
         // The notifier must not post notifications for the chat
         // the user is already looking at (Batch 3, C1).
         Notifier.foregroundChatId = chatId
@@ -2458,6 +2483,32 @@ fun ChatScreen(
         } else {
             val replyTarget by MessageStore.replyTarget.collectAsState()
             val replyQuote by MessageStore.replyQuote.collectAsState()
+            if (slowBlocked) {
+                // Slow-mode countdown strip (v0.9.32, Y4):
+                // sits with the other bars over the composer
+                // while the server-side wait runs down; the
+                // send button below is disabled and carries
+                // the same number.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFF5F5F5))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        ClockIcon, contentDescription = null,
+                        tint = Color.Gray,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "慢速模式：每条之间要等 $slowDelay 秒，" +
+                            "还剩 $slowRemaining 秒",
+                        color = Color.Gray, fontSize = 12.5.sp
+                    )
+                }
+            }
             val target = replyTarget
             if (target != null) {
                 Row(
@@ -3577,7 +3628,9 @@ fun ChatScreen(
                                 scaleY = sendScale
                             }
                             .background(
-                                if (canBasic && input.isNotBlank()) {
+                                if (canBasic && input.isNotBlank() &&
+                                    !slowBlocked
+                                ) {
                                     // chat_messagePanelSend
                                     // (v0.9.17, X4).
                                     OfficialTheme.current().accent
@@ -3593,7 +3646,13 @@ fun ChatScreen(
                                 CircleShape
                             )
                             .combinedClickable(
-                                enabled = canBasic && input.isNotBlank(),
+                                // Slow mode (Y4): while the
+                                // server wait runs, the button
+                                // is disabled and shows the
+                                // remaining seconds instead of
+                                // the plane.
+                                enabled = canBasic &&
+                                    input.isNotBlank() && !slowBlocked,
                                 interactionSource = sendInteraction,
                                 indication = androidx.compose.foundation
                                     .LocalIndication.current,
@@ -3615,12 +3674,21 @@ fun ChatScreen(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            PlaneIcon,
-                            contentDescription = "发送",
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
+                        if (slowBlocked) {
+                            Text(
+                                "$slowRemaining",
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        } else {
+                            Icon(
+                                PlaneIcon,
+                                contentDescription = "发送",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                         DropdownMenu(
                             expanded = sendMenuOpen,
                             onDismissRequest = { sendMenuOpen = false }
