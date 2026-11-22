@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -75,7 +77,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
@@ -400,12 +405,49 @@ fun PhoneScreen(onSubmit: (String) -> Unit) {
     }
 }
 
-/** Full-screen country picker (v0.9.21, AB1 basic form;
- *  AB2 adds the search field and the letter groups):
- *  an action-bar header over the bundled table, one row
- *  per country — flag, names, dial code. Picking a row
- *  writes the country (and with it the dial code) back
- *  to the phone page. */
+/** One country row in the picker: flag, Chinese name
+ *  with the English name under it, dial code at the end. */
+@Composable
+private fun CountryRow(c: Country, onClick: () -> Unit) {
+    val palette = OfficialTheme.current()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(c.flag, fontSize = 20.sp)
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                c.zhName, fontSize = 16.sp,
+                color = palette.textPrimary
+            )
+            Text(
+                c.enName, fontSize = 12.sp,
+                color = palette.textSecondary
+            )
+        }
+        Text(
+            "+${c.dial}", fontSize = 15.sp,
+            color = palette.textSecondary
+        )
+    }
+}
+
+/** Full-screen country picker (v0.9.21, AB1 basic form,
+ *  AB2 official form): the top bar IS the search field
+ *  (back arrow, auto-focused input, clear button); the
+ *  list is grouped under sticky letter headers taken
+ *  from the English name, the official arrangement, and
+ *  flattens into plain results while searching. Search
+ *  matches the Chinese name, the English name, the ISO
+ *  code and the dial code. Picking a row writes the
+ *  country (and with it the dial code) back to the
+ *  phone page; the number itself is still assembled
+ *  there as dial code + typed digits. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CountryPickerScreen(
     onPick: (Country) -> Unit,
@@ -413,6 +455,33 @@ fun CountryPickerScreen(
 ) {
     BackHandler { onBack() }
     val palette = OfficialTheme.current()
+    var query by remember { mutableStateOf("") }
+    val q = query.trim()
+    val filtered = remember(q) {
+        if (q.isEmpty()) {
+            Countries.all
+        } else {
+            val needle = q.lowercase()
+            val dialNeedle = q.removePrefix("+")
+            Countries.all.filter { c ->
+                c.zhName.contains(q) ||
+                    c.enName.lowercase().contains(needle) ||
+                    c.iso.equals(q, ignoreCase = true) ||
+                    (dialNeedle.isNotEmpty() &&
+                        dialNeedle.all { it.isDigit() } &&
+                        c.dial.startsWith(dialNeedle))
+            }
+        }
+    }
+    val groups = remember(filtered, q) {
+        if (q.isEmpty()) {
+            filtered.groupBy { it.enName.first().uppercaseChar() }
+        } else {
+            emptyMap()
+        }
+    }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -432,12 +501,44 @@ fun CountryPickerScreen(
                     tint = palette.actionBarIcon
                 )
             }
-            Text(
-                "选择国家或地区",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Medium,
-                color = palette.actionBarTitle
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = null,
+                tint = palette.textSecondary,
+                modifier = Modifier.size(20.dp)
             )
+            Spacer(Modifier.width(8.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                textStyle = TextStyle(
+                    color = palette.actionBarTitle,
+                    fontSize = 17.sp
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
+                decorationBox = { inner ->
+                    if (query.isEmpty()) {
+                        Text(
+                            "搜索国家或地区",
+                            color = palette.textSecondary,
+                            fontSize = 17.sp
+                        )
+                    }
+                    inner()
+                }
+            )
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { query = "" }) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "清空",
+                        tint = palette.actionBarIcon
+                    )
+                }
+            }
         }
         Box(
             modifier = Modifier
@@ -452,30 +553,32 @@ fun CountryPickerScreen(
                 .fillMaxSize()
                 .lazyListScrollbar(listState)
         ) {
-            items(Countries.all) { c ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onPick(c) }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(c.flag, fontSize = 20.sp)
-                    Spacer(Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            c.zhName, fontSize = 16.sp,
-                            color = palette.textPrimary
-                        )
-                        Text(
-                            c.enName, fontSize = 12.sp,
-                            color = palette.textSecondary
-                        )
+            if (q.isEmpty()) {
+                for ((letter, members) in groups) {
+                    stickyHeader(key = "h-$letter") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(palette.graySection)
+                                .padding(
+                                    horizontal = 16.dp, vertical = 4.dp
+                                )
+                        ) {
+                            Text(
+                                letter.toString(),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = palette.graySectionText
+                            )
+                        }
                     }
-                    Text(
-                        "+${c.dial}", fontSize = 15.sp,
-                        color = palette.textSecondary
-                    )
+                    items(members, key = { it.iso }) { c ->
+                        CountryRow(c) { onPick(c) }
+                    }
+                }
+            } else {
+                items(filtered, key = { it.iso }) { c ->
+                    CountryRow(c) { onPick(c) }
                 }
             }
         }
