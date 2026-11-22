@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -515,6 +516,17 @@ fun ChatScreen(
     }
     var pinCycle by remember(chatId) { mutableIntStateOf(0) }
     var pinnedListOpen by remember { mutableStateOf(false) }
+    // Header overflow menu (v0.9.16, W3): jump to a date.
+    var headerMenuOpen by remember { mutableStateOf(false) }
+    // Date-jump outcome hints (v0.9.16, W3): the store sets
+    // one when the picked day itself has no message; show it
+    // once as a toast, never as an error.
+    val dateJumpHint by MessageStore.dateJumpHint.collectAsState()
+    LaunchedEffect(dateJumpHint) {
+        val hint = dateJumpHint ?: return@LaunchedEffect
+        Toast.makeText(context, hint, Toast.LENGTH_SHORT).show()
+        MessageStore.clearDateJumpHint()
+    }
     var chatSearchOpen by remember { mutableStateOf(false) }
     var chatSearchQuery by remember { mutableStateOf("") }
     val chatSearchResults by MessageStore.searchResults.collectAsState()
@@ -918,6 +930,64 @@ fun ChatScreen(
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { chatSearchOpen = !chatSearchOpen }) {
                 Icon(Icons.Filled.Search, contentDescription = "搜索聊天记录")
+            }
+            if (!isForum) {
+                // Jump to a date (v0.9.16, W3): the framework
+                // date picker picks the day; MessageStore
+                // resolves it to that day's first message (or
+                // the nearest one after an empty day, with a
+                // hint). Forum chats read through ForumStore,
+                // not MessageStore, so the entry hides there.
+                Box {
+                    IconButton(onClick = { headerMenuOpen = true }) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = "更多"
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = headerMenuOpen,
+                        onDismissRequest = { headerMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("按日期跳转") },
+                            onClick = {
+                                headerMenuOpen = false
+                                val now = java.util.Calendar.getInstance()
+                                android.app.DatePickerDialog(
+                                    context,
+                                    { _, year, month, dayOfMonth ->
+                                        val start =
+                                            java.util.Calendar.getInstance()
+                                                .apply {
+                                                    set(
+                                                        year, month,
+                                                        dayOfMonth,
+                                                        0, 0, 0
+                                                    )
+                                                    set(
+                                                        java.util.Calendar
+                                                            .MILLISECOND,
+                                                        0
+                                                    )
+                                                }
+                                        val dayStart =
+                                            (start.timeInMillis / 1000)
+                                                .toInt()
+                                        MessageStore.jumpToDate(
+                                            dayStart, dayStart + 86399
+                                        )
+                                    },
+                                    now.get(java.util.Calendar.YEAR),
+                                    now.get(java.util.Calendar.MONTH),
+                                    now.get(
+                                        java.util.Calendar.DAY_OF_MONTH
+                                    )
+                                ).show()
+                            }
+                        )
+                    }
+                }
             }
         }
         }

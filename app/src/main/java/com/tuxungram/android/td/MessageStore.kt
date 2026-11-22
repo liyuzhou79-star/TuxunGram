@@ -658,6 +658,241 @@ object MessageStore {
         }
     }
 
+    // ---- Jump to a date (v0.9.16, W3) ----
+    // getChatMessageByDate returns the last message sent no
+    // later than the given date, or a 404 error when there is
+    // none (td_api.tl L13099). Three modes fall out of that:
+    // A) a message exists before the picked day: the day's
+    //    first message is its immediate successor, inside the
+    //    normal jump window around it;
+    // B) no message before the day but one on it: the day is
+    //    the chat's first day — page older from the day's
+    //    last message (D1 stop rule) to its first;
+    // C) no message on or before the day at all: the whole
+    //    chat is newer — probe forward exponentially for any
+    //    message, then page older to the first one past the
+    //    day, and say plainly that the day itself is empty.
+
+    private val _dateJumpHint = MutableStateFlow<String?>(null)
+    val dateJumpHint: StateFlow<String?> = _dateJumpHint
+
+    fun clearDateJumpHint() {
+        _dateJumpHint.value = null
+    }
+
+    private fun fetchMessageByDate(
+        chatId: Long,
+        dateSec: Int,
+        cb: (JSONObject?) -> Unit
+    ) {
+        val query = TdClient.request("getChatMessageByDate").apply {
+            put("chat_id", chatId)
+            put("date", dateSec)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (currentChatId != chatId) return@sendRaw
+            cb(if (TdClient.isError(response)) null else response)
+        }
+    }
+
+    fun jumpToDate(dayStartSec: Int, dayEndSec: Int) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        fetchMessageByDate(chatId, dayStartSec - 1) { prev ->
+            if (prev != null) {
+                val prevId = prev.optLong("id")
+                loadDateWindow(chatId, prevId) {
+                    if (_messages.value.isEmpty()) {
+                        _dateJumpHint.value =
+                            "没跳过去，检查网络后再试一次。"
+                        return@loadDateWindow
+                    }
+                    val target = _messages.value
+                        .firstOrNull { it.dateSeconds >= dayStartSec }
+                    when {
+                        target == null -> {
+                            _locateId.value = prevId
+                            _dateJumpHint.value =
+                                "那天之后还没有消息，已跳到之前最近的一条。"
+                        }
+                        target.dateSeconds > dayEndSec -> {
+                            _locateId.value = target.id
+                            _dateJumpHint.value =
+                                "那天没有消息，已跳到最近的下一条。"
+                        }
+                        else -> _locateId.value = target.id
+                    }
+                }
+            } else {
+                fetchMessageByDate(chatId, dayEndSec) { lastOfDay ->
+                    if (lastOfDay != null) {
+                        pageOlderUntil(
+                            chatId, lastOfDay,
+                            continueWhileDateAtLeast = dayStartSec,
+                            maxPages = 20
+                        ) {
+                            val target = _messages.value.firstOrNull {
+                                it.dateSeconds >= dayStartSec
+                            }
+                            if (target != null) {
+                                _locateId.value = target.id
+                            }
+                        }
+                    } else {
+                        probeAfterDay(chatId, dayEndSec)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Mode C of jumpToDate: probe dates after the picked
+     *  day with exponentially growing steps until some
+     *  message answers, then page older to the first message
+     *  past the day. */
+    private fun probeAfterDay(chatId: Long, dayEndSec: Int) {
+        val nowSec = (System.currentTimeMillis() / 1000).toInt()
+        val probes = ArrayList<Int>()
+        var deltaDays = 1
+        while (true) {
+            val t = dayEndSec.toLong() + deltaDays * 86400L
+            if (t >= nowSec) {
+                probes.add(nowSec)
+                break
+            }
+            probes.add(t.toInt())
+            if (deltaDays >= 512) {
+                probes.add(nowSec)
+                break
+            }
+            deltaDays *= 2
+        }
+        fun tryProbe(index: Int) {
+            if (index >= probes.size) {
+                _dateJumpHint.value = "这个对话还没有消息。"
+                return
+            }
+            fetchMessageByDate(chatId, probes[index]) { msg ->
+                if (msg == null) {
+                    tryProbe(index + 1)
+                } else {
+                    pageOlderUntil(
+                        chatId, msg,
+                        continueWhileDateAtLeast = dayEndSec + 1,
+                        maxPages = 20
+                    ) {
+                        val target = _messages.value.firstOrNull {
+                            it.dateSeconds > dayEndSec
+                        }
+                        if (target != null) {
+                            _locateId.value = target.id
+                            _dateJumpHint.value =
+                                "那天没有消息，已跳到最近的下一条。"
+                        }
+                    }
+                }
+            }
+        }
+        tryProbe(0)
+    }
+
+    /** The jumpTo window fetch with a completion callback
+     *  (jumpTo itself stays untouched for its other callers). */
+    private fun loadDateWindow(
+        chatId: Long,
+        anchorId: Long,
+        done: () -> Unit
+    ) {
+        byId.clear()
+        _messages.value = emptyList()
+        allHistoryLoaded = false
+        val query = TdClient.request("getChatHistory").apply {
+            put("chat_id", chatId)
+            put("from_message_id", anchorId)
+            put("offset", -25)
+            put("limit", 50)
+            put("only_local", false)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (currentChatId != chatId) return@sendRaw
+            if (!TdClient.isError(response)) {
+                val arr = response.optJSONArray("messages") ?: JSONArray()
+                if (arr.length() == 0) allHistoryLoaded = true
+                for (i in 0 until arr.length()) {
+                    val msg = arr.optJSONObject(i) ?: continue
+                    val item = parseMessage(msg)
+                    byId[item.id] = item
+                }
+                publish()
+            }
+            done()
+        }
+    }
+
+    /** Replace the loaded history with [first] plus older
+     *  pages (100 at a time), continuing while the oldest
+     *  loaded message's date is still >=
+     *  [continueWhileDateAtLeast] and the page budget lasts.
+     *  A page that brings no older message ends the walk with
+     *  the chat's first message loaded (the D1 stop rule). */
+    private fun pageOlderUntil(
+        chatId: Long,
+        first: JSONObject,
+        continueWhileDateAtLeast: Int,
+        maxPages: Int,
+        done: () -> Unit
+    ) {
+        byId.clear()
+        _messages.value = emptyList()
+        allHistoryLoaded = false
+        val firstItem = parseMessage(first)
+        byId[firstItem.id] = firstItem
+        var pages = 0
+        fun step() {
+            val oldest = byId.values.minByOrNull { it.id }
+            if (oldest == null ||
+                oldest.dateSeconds < continueWhileDateAtLeast ||
+                pages >= maxPages
+            ) {
+                publish()
+                done()
+                return
+            }
+            pages++
+            val query = TdClient.request("getChatHistory").apply {
+                put("chat_id", chatId)
+                put("from_message_id", oldest.id)
+                put("offset", 0)
+                put("limit", 100)
+                put("only_local", false)
+            }
+            TdRepository.sendRaw(query) { response ->
+                if (currentChatId != chatId) return@sendRaw
+                if (TdClient.isError(response)) {
+                    publish()
+                    done()
+                    return@sendRaw
+                }
+                val arr = response.optJSONArray("messages") ?: JSONArray()
+                var addedOlder = false
+                for (i in 0 until arr.length()) {
+                    val msg = arr.optJSONObject(i) ?: continue
+                    val item = parseMessage(msg)
+                    if (item.id < oldest.id) addedOlder = true
+                    byId[item.id] = item
+                }
+                if (!addedOlder) {
+                    allHistoryLoaded = true
+                    publish()
+                    done()
+                    return@sendRaw
+                }
+                step()
+            }
+        }
+        step()
+    }
+
     @Volatile
     var currentChatId: Long = 0L
         private set
