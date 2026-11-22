@@ -61,6 +61,26 @@ val PinIcon: ImageVector = icon("Pin") {
     close()
 }
 
+/** Quotation marks (quote reply, v0.9.15 V2). */
+val QuoteIcon: ImageVector = icon("Quote") {
+    moveTo(6f, 17f)
+    lineTo(9f, 17f)
+    lineTo(11f, 13f)
+    lineTo(11f, 7f)
+    lineTo(5f, 7f)
+    lineTo(5f, 13f)
+    lineTo(8f, 13f)
+    close()
+    moveTo(14f, 17f)
+    lineTo(17f, 17f)
+    lineTo(19f, 13f)
+    lineTo(19f, 7f)
+    lineTo(13f, 7f)
+    lineTo(13f, 13f)
+    lineTo(16f, 13f)
+    close()
+}
+
 /** Bell with a slash (muted chat). */
 val MuteBellIcon: ImageVector = icon("MuteBell") {
     moveTo(12f, 3.2f)

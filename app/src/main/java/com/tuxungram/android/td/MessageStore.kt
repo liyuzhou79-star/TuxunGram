@@ -239,6 +239,30 @@ object MessageStore {
     private val _replyTarget = MutableStateFlow<MsgItem?>(null)
     val replyTarget: StateFlow<MsgItem?> = _replyTarget
 
+    // Quote mode for the current reply target (v0.9.15, V2):
+    // when true, the next send carries an inputTextQuote with
+    // the target's text, not just a bare reply pointer.
+    private val _replyQuote = MutableStateFlow(false)
+    val replyQuote: StateFlow<Boolean> = _replyQuote
+
+    // Server cap for a reply quote's length, in characters
+    // (getOption("message_reply_quote_length_max") per the
+    // inputTextQuote docs in td_api.tl; 1024 is TDLib's own
+    // default, replaced by the live value on first use).
+    @Volatile
+    private var quoteLimit = 1024
+
+    @Volatile
+    private var quoteLimitFetched = false
+
+    // The only entity kinds td_api.tl allows inside a reply
+    // quote (DateTime has no flattened kind here — rich
+    // messages are out of this app's quote scope).
+    private val QUOTE_ENTITY_KINDS = setOf(
+        "bold", "italic", "underline", "strike", "spoiler",
+        "customEmoji"
+    )
+
     // ---- Drafts + peer typing state (v0.7.0, F5) ----
 
     /** The chat's saved draft text (from the chat object's
@@ -681,7 +705,7 @@ object MessageStore {
         byId.clear()
         _messages.value = emptyList()
         _sendError.value = null
-        _replyTarget.value = null
+        clearReplyTarget()
         _searchResults.value = emptyList()
         _searchExhausted.value = true
         _pinnedMessages.value = emptyList()
@@ -856,8 +880,123 @@ object MessageStore {
         }
     }
 
-    fun setReplyTarget(item: MsgItem?) {
+    fun setReplyTarget(item: MsgItem?, quote: Boolean = false) {
         _replyTarget.value = item
+        _replyQuote.value = quote && item != null &&
+            item.text.isNotEmpty()
+        if (_replyQuote.value) fetchQuoteLimit()
+    }
+
+    /** Drop the reply target and its quote mode together —
+     *  every send path clears both so a quote can never leak
+     *  into a later plain reply. */
+    private fun clearReplyTarget() {
+        _replyTarget.value = null
+        _replyQuote.value = false
+    }
+
+    private fun fetchQuoteLimit() {
+        if (quoteLimitFetched) return
+        quoteLimitFetched = true
+        val query = TdClient.request("getOption").apply {
+            put("name", "message_reply_quote_length_max")
+        }
+        TdRepository.sendRaw(query) { response ->
+            val value = response.optLong("value")
+            if (!TdClient.isError(response) && value > 0) {
+                quoteLimit = value.toInt()
+            }
+        }
+    }
+
+    /** The exact text a quote of [item] will carry: the
+     *  message's own text, truncated to the server cap in
+     *  whole characters (code points, so a surrogate pair is
+     *  never split). The input preview bar shows this same
+     *  string, so what the user sees is what gets sent. */
+    fun quoteTextOf(item: MsgItem): String {
+        val full = item.text
+        if (full.isEmpty()) return ""
+        val limit = quoteLimit
+        if (full.codePointCount(0, full.length) <= limit) return full
+        return full.substring(0, full.offsetByCodePoints(0, limit))
+    }
+
+    /** textEntity JSON for one flattened entity (the inverse
+     *  of [entitiesOf]); null for kinds that must not be
+     *  re-sent (plain/url/quote blocks and the like). Shared
+     *  by the quote builder and the markdown send parser. */
+    fun entityJson(e: TextEntityUi): JSONObject? {
+        val type = when (e.kind) {
+            "bold" -> JSONObject().put("@type", "textEntityTypeBold")
+            "italic" -> JSONObject().put("@type", "textEntityTypeItalic")
+            "underline" ->
+                JSONObject().put("@type", "textEntityTypeUnderline")
+            "strike" ->
+                JSONObject().put("@type", "textEntityTypeStrikethrough")
+            "code" -> JSONObject().put("@type", "textEntityTypeCode")
+            "pre" -> JSONObject().put("@type", "textEntityTypePre")
+            "spoiler" ->
+                JSONObject().put("@type", "textEntityTypeSpoiler")
+            "textUrl" -> JSONObject().apply {
+                put("@type", "textEntityTypeTextUrl")
+                put("url", e.url)
+            }
+            "mention" ->
+                JSONObject().put("@type", "textEntityTypeMention")
+            "mentionName" -> JSONObject().apply {
+                put("@type", "textEntityTypeMentionName")
+                put("user_id", e.userId)
+            }
+            "hashtag" ->
+                JSONObject().put("@type", "textEntityTypeHashtag")
+            "botCommand" ->
+                JSONObject().put("@type", "textEntityTypeBotCommand")
+            "customEmoji" -> JSONObject().apply {
+                put("@type", "textEntityTypeCustomEmoji")
+                put("custom_emoji_id", e.customEmojiId)
+            }
+            else -> null
+        } ?: return null
+        return JSONObject().apply {
+            put("@type", "textEntity")
+            put("offset", e.offset)
+            put("length", e.length)
+            put("type", type)
+        }
+    }
+
+    /** inputTextQuote for [target] (v0.9.15, V2), verified
+     *  in td_api.tl: the text is capped at
+     *  getOption("message_reply_quote_length_max") characters
+     *  and only Bold / Italic / Underline / Strikethrough /
+     *  Spoiler / CustomEmoji / DateTime entities may be kept
+     *  — the target's own entities of those kinds, clipped to
+     *  the quoted range, ride along; position is 0 because
+     *  the quote is the message text's prefix. */
+    private fun quoteJson(target: MsgItem): JSONObject? {
+        val quoteText = quoteTextOf(target)
+        if (quoteText.isEmpty()) return null
+        val entities = JSONArray()
+        for (e in target.entities) {
+            if (e.kind !in QUOTE_ENTITY_KINDS) continue
+            if (e.offset < 0 ||
+                e.offset + e.length > quoteText.length
+            ) {
+                continue
+            }
+            entityJson(e)?.let { entities.put(it) }
+        }
+        return JSONObject().apply {
+            put("@type", "inputTextQuote")
+            put("text", JSONObject().apply {
+                put("@type", "formattedText")
+                put("text", quoteText)
+                put("entities", entities)
+            })
+            put("rich_texts", JSONArray())
+            put("position", 0)
+        }
     }
 
     /** Persist the input box as the chat's draft
@@ -943,10 +1082,15 @@ object MessageStore {
      *  carries message_id plus optional quote fields. */
     private fun replyToJson(): JSONObject? {
         val target = _replyTarget.value ?: return null
+        val quote = if (_replyQuote.value) {
+            quoteJson(target)
+        } else {
+            null
+        }
         return JSONObject().apply {
             put("@type", "inputMessageReplyToMessage")
             put("message_id", target.id)
-            put("quote", JSONObject.NULL)
+            put("quote", quote ?: JSONObject.NULL)
             put("checklist_task_id", 0)
             put("poll_option_id", "")
         }
@@ -1011,7 +1155,7 @@ object MessageStore {
         val chatId = currentChatId
         if (chatId == 0L) return
         val replyTo = replyToJson()
-        _replyTarget.value = null
+        clearReplyTarget()
         val options = sendOptionsJson(mods)
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
@@ -1066,7 +1210,7 @@ object MessageStore {
         val chatId = currentChatId
         if (chatId == 0L) return
         val replyTo = replyToJson()
-        _replyTarget.value = null
+        clearReplyTarget()
         val options = sendOptionsJson(mods)
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
@@ -1093,7 +1237,7 @@ object MessageStore {
         val chatId = currentChatId
         if (chatId == 0L) return
         val replyTo = replyToJson()
-        _replyTarget.value = null
+        clearReplyTarget()
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
             if (replyTo != null) put("reply_to", replyTo)
@@ -2068,7 +2212,7 @@ object MessageStore {
         val chatId = currentChatId
         if (chatId == 0L || fileId == 0) return
         val replyTo = replyToJson()
-        _replyTarget.value = null
+        clearReplyTarget()
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
             if (replyTo != null) put("reply_to", replyTo)
@@ -2103,7 +2247,7 @@ object MessageStore {
         val chatId = currentChatId
         if (chatId == 0L || fileId == 0) return
         val replyTo = replyToJson()
-        _replyTarget.value = null
+        clearReplyTarget()
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
             if (replyTo != null) put("reply_to", replyTo)
@@ -2144,7 +2288,7 @@ object MessageStore {
         val chatId = currentChatId
         if (chatId == 0L) return
         val replyTo = replyToJson()
-        _replyTarget.value = null
+        clearReplyTarget()
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
             if (replyTo != null) put("reply_to", replyTo)
@@ -2266,7 +2410,7 @@ object MessageStore {
         val chatId = currentChatId
         if (chatId == 0L) return
         val replyTo = replyToJson()
-        _replyTarget.value = null
+        clearReplyTarget()
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
             if (replyTo != null) put("reply_to", replyTo)
@@ -2497,7 +2641,7 @@ object MessageStore {
         val chatId = currentChatId
         if (chatId == 0L) return
         val replyTo = replyToJson()
-        _replyTarget.value = null
+        clearReplyTarget()
         val content = JSONObject().apply {
             put("@type", "inputMessageVideoNote")
             put("video_note", JSONObject().apply {
@@ -2616,6 +2760,14 @@ object MessageStore {
     private fun replySummaryOf(msg: JSONObject): String {
         val replyTo = msg.optJSONObject("reply_to") ?: return ""
         if (replyTo.optString("@type") != "messageReplyToMessage") return ""
+        // A chosen quote (v0.9.15, V2) is more precise than
+        // the whole-message summary: the bubble's reply strip
+        // shows the quoted fragment itself.
+        val quoteText = replyTo.optJSONObject("quote")
+            ?.optJSONObject("text")?.optString("text")
+        if (!quoteText.isNullOrEmpty()) {
+            return quoteText.replace('\n', ' ').take(60)
+        }
         val embedded = replyTo.optJSONObject("content")
         if (embedded != null) return summarizeContent(embedded)
         val targetId = replyTo.optLong("message_id")

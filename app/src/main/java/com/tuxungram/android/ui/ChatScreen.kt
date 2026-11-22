@@ -1438,6 +1438,7 @@ fun ChatScreen(
             )
         } else {
             val replyTarget by MessageStore.replyTarget.collectAsState()
+            val replyQuote by MessageStore.replyQuote.collectAsState()
             val target = replyTarget
             if (target != null) {
                 Row(
@@ -1449,14 +1450,24 @@ fun ChatScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "回复 ${target.senderName.ifEmpty { if (target.outgoing) "我" else "" }}",
+                            "${if (replyQuote) "引用" else "回复"} ${target.senderName.ifEmpty { if (target.outgoing) "我" else "" }}",
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            target.text.ifEmpty {
-                                if (target.kind == MsgKind.PHOTO) "[图片]" else "原消息"
+                            if (replyQuote) {
+                                // Exactly the fragment that
+                                // will be sent as the quote
+                                // (v0.9.15, V2) — already
+                                // truncated to the server cap
+                                // by the store.
+                                MessageStore.quoteTextOf(target)
+                                    .replace('\n', ' ')
+                            } else {
+                                target.text.ifEmpty {
+                                    if (target.kind == MsgKind.PHOTO) "[图片]" else "原消息"
+                                }
                             },
                             color = Color.Gray,
                             fontSize = 13.sp,
@@ -3106,6 +3117,23 @@ fun MessageBubble(
                         MessageStore.setReplyTarget(msg)
                     }
                 )
+                if (msg.text.isNotEmpty()) {
+                    // Quote reply (v0.9.15, V2): the reply
+                    // carries the message's text as a quote
+                    // (inputTextQuote), not just a pointer.
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(QuoteIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
+                        text = { Text("引用回复") },
+                        onClick = {
+                            menuOpen = false
+                            MessageStore.setReplyTarget(
+                                msg, quote = true
+                            )
+                        }
+                    )
+                }
                 if (canComment) {
                     DropdownMenuItem(
                         leadingIcon = {
