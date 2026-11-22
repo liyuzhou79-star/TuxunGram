@@ -1385,6 +1385,12 @@ object ChatStore {
             }
             "messageLocation", "messageVenue" -> "[位置]"
             "messageContact" -> "[联系人]"
+            "messageGiveaway" -> "[抽奖]"
+            "messageGiveawayWinners" -> "[抽奖结果]"
+            "messageGiveawayCompleted" -> "[抽奖已结束]"
+            "messageInvoice" -> "[账单]"
+            "messageUsersShared" -> "[分享了用户]"
+            "messageChatShared" -> "[分享了对话]"
             "messageCall" -> "[通话]"
             "messageGame" -> "[游戏]"
             null -> ""

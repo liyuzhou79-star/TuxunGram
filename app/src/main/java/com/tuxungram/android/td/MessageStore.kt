@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, ANIMATED_EMOJI, CHECKLIST, PAID_MEDIA, OTHER }
+enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, ANIMATED_EMOJI, CHECKLIST, PAID_MEDIA, SERVICE, GIVEAWAY, AUDIO, INVOICE, SHARED, OTHER }
 
 /** One poll option, flattened from pollOption. */
 data class PollOptionUi(
@@ -73,6 +73,43 @@ data class PaidMediaUi(
     val durationSec: Int = 0,
     val width: Int = 0,
     val height: Int = 0
+)
+
+/** Giveaway payload (v0.9.37, D3): messageGiveaway (the
+ *  announcement post in a channel) and
+ *  messageGiveawayWinners (the results post) share one
+ *  card shape. Participation in a giveaway is automatic
+ *  for eligible members — there is no join call in
+ *  TDLib; the card's only action asks getGiveawayInfo
+ *  for the current user's own status. */
+data class GiveawayUi(
+    /** "Telegram Premium 3 个月" / "⭐ 500 星星" style. */
+    val prizeText: String,
+    val prizeDescription: String = "",
+    val winnerCount: Int = 0,
+    /** Participation conditions, one plain line each. */
+    val conditions: List<String> = emptyList(),
+    /** messageGiveaway's winners_selection_date. */
+    val deadlineSec: Int = 0,
+    /** True for messageGiveawayWinners (results post). */
+    val isWinners: Boolean = false,
+    /** messageGiveawayWinners' actual selection date. */
+    val winnersDateSec: Int = 0,
+    val unclaimedCount: Int = 0,
+    /** Winner names resolved from the parse-time user
+     *  cache (up to 20); empty when none were cached —
+     *  the card then shows the count alone, never a
+     *  guessed name. */
+    val winnerNames: List<String> = emptyList()
+)
+
+/** One entry of a messageUsersShared / messageChatShared
+ *  card (v0.9.37, D4). Exactly one of [userId] / [chatId]
+ *  is non-zero. */
+data class SharedEntryUi(
+    val name: String,
+    val userId: Long = 0L,
+    val chatId: Long = 0L
 )
 
 /** A copy of this message re-shaped as a plain PHOTO item
@@ -374,7 +411,37 @@ data class MsgItem(
     // preview entries to everyone else; there is no
     // separate flag to trust.
     val paidStarCount: Long = 0L,
-    val paidMedia: List<PaidMediaUi> = emptyList()
+    val paidMedia: List<PaidMediaUi> = emptyList(),
+    // Venue payload (LOCATION kind, v0.9.37 D4): a venue is
+    // a location with a name and a street address; plain
+    // locations keep both empty and the card renders as
+    // before.
+    val venueTitle: String = "",
+    val venueAddress: String = "",
+    // Audio payload (AUDIO kind, v0.9.37 D4): the file
+    // itself rides the generic file fields and the length
+    // rides durationSec; title/performer come from the
+    // audio's own metadata, caption rides text/entities.
+    val audioTitle: String = "",
+    val audioPerformer: String = "",
+    // Invoice payload (INVOICE kind, v0.9.37 D4): product
+    // title/description from messageInvoice.product_info
+    // and the formatted grand total (currency + amount,
+    // formatted at parse time).
+    val invoiceTitle: String = "",
+    val invoiceDescription: String = "",
+    val invoiceTotalText: String = "",
+    // Giveaway payload (GIVEAWAY kind, v0.9.37 D3): the
+    // sticker, when the giveaway carries one, rides the
+    // generic fileId/filePath fields like a sticker
+    // message's.
+    val giveaway: GiveawayUi? = null,
+    // Shared users / chat payload (SHARED kind, v0.9.37
+    // D4): messageUsersShared / messageChatShared carry
+    // the names inside the message itself, so the card
+    // needs no lookups.
+    val sharedHeader: String = "",
+    val sharedEntries: List<SharedEntryUi> = emptyList()
 ) {
     val paidPurchased: Boolean
         get() = paidMedia.any {
@@ -3442,7 +3509,864 @@ object MessageStore {
                     paidMedia = entries
                 )
             }
+            "messageAudio" -> {
+                // Audio file (v0.9.37, D4): until this
+                // version messageAudio fell to OTHER even
+                // though the chat-list preview already knew
+                // it. Playback rides the voice player — it
+                // is the same MediaPlayer path.
+                val audio = content.optJSONObject("audio")
+                val file = audio?.optJSONObject("audio")
+                base.copy(
+                    kind = MsgKind.AUDIO,
+                    text = content.optJSONObject("caption")
+                        ?.optString("text") ?: "",
+                    entities = entitiesOf(
+                        content.optJSONObject("caption")
+                    ),
+                    fileId = file?.optInt("id", 0) ?: 0,
+                    filePath = downloadedPath(file),
+                    fileName = audio?.optString("file_name") ?: "",
+                    fileSize = fileSizeOf(file),
+                    fileMime = audio?.optString("mime_type") ?: "",
+                    durationSec = audio?.optInt("duration", 0) ?: 0,
+                    audioTitle = audio?.optString("title") ?: "",
+                    audioPerformer =
+                        audio?.optString("performer") ?: ""
+                )
+            }
+            "messageVenue" -> {
+                // Venue (v0.9.37, D4): a location with a
+                // name and address; renders on the location
+                // card with two extra lines.
+                val venue = content.optJSONObject("venue")
+                val loc = venue?.optJSONObject("location")
+                base.copy(
+                    kind = MsgKind.LOCATION,
+                    latitude = loc?.optDouble("latitude", 0.0)
+                        ?: 0.0,
+                    longitude = loc?.optDouble("longitude", 0.0)
+                        ?: 0.0,
+                    venueTitle = venue?.optString("title") ?: "",
+                    venueAddress =
+                        venue?.optString("address") ?: ""
+                )
+            }
+            "messageSuggestProfilePhoto" -> {
+                // Suggested avatar (v0.9.37, D4): the photo
+                // itself is the content — parse it exactly
+                // like a photo message so it is visible;
+                // there is no caption.
+                val photo = content.optJSONObject("photo")
+                val size = pickPhotoSize(photo?.optJSONArray("sizes"))
+                val file = size?.optJSONObject("photo")
+                val local = file?.optJSONObject("local")
+                val downloaded =
+                    local?.optBoolean("is_downloading_completed") == true
+                val fileId = file?.optInt("id", 0) ?: 0
+                if (fileId != 0 && !downloaded) {
+                    requestDownload(fileId, priority = 16)
+                }
+                base.copy(
+                    kind = MsgKind.PHOTO,
+                    photoFileId = fileId,
+                    photoPath = if (downloaded) {
+                        local?.optString("path")
+                    } else {
+                        null
+                    },
+                    photoWidth = size?.optInt("width", 0) ?: 0,
+                    photoHeight = size?.optInt("height", 0) ?: 0
+                )
+            }
+            "messageInvoice" -> {
+                // Invoice (v0.9.37, D4): a bot's payment
+                // request. Rendered as an information card
+                // only — this app has no payment flow and
+                // the card carries no pay button.
+                val info = content.optJSONObject("product_info")
+                base.copy(
+                    kind = MsgKind.INVOICE,
+                    invoiceTitle = info?.optString("title") ?: "",
+                    invoiceDescription = info
+                        ?.optJSONObject("description")
+                        ?.optString("text") ?: "",
+                    invoiceTotalText = formatMoney(
+                        content.optString("currency"),
+                        content.optLong("total_amount")
+                    )
+                )
+            }
+            "messageGiveaway" -> {
+                // Giveaway announcement (v0.9.37, D3).
+                val params = content.optJSONObject("parameters")
+                val sticker = content.optJSONObject("sticker")
+                val sFile = sticker?.optJSONObject("sticker")
+                val sFileId = sFile?.optInt("id", 0) ?: 0
+                if (sFileId != 0 && downloadedPath(sFile) == null) {
+                    requestDownload(sFileId, priority = 16)
+                }
+                val conditions = ArrayList<String>()
+                if (params?.optBoolean("only_new_members") == true) {
+                    conditions.add("仅限活动开始后加入的新成员")
+                }
+                val extraChats = params
+                    ?.optJSONArray("additional_chat_ids")
+                    ?.length() ?: 0
+                if (extraChats > 0) {
+                    conditions.add("需要同时是另外 $extraChats 个对话的成员")
+                }
+                if ((params?.optJSONArray("country_codes")
+                        ?.length() ?: 0) > 0
+                ) {
+                    conditions.add("仅限部分国家或地区的号码参加")
+                }
+                if (params?.optBoolean("has_public_winners") == true) {
+                    conditions.add("中奖名单将公开")
+                }
+                base.copy(
+                    kind = MsgKind.GIVEAWAY,
+                    fileId = sFileId,
+                    filePath = downloadedPath(sFile),
+                    giveaway = GiveawayUi(
+                        prizeText = giveawayPrizeText(
+                            content.optJSONObject("prize")
+                        ),
+                        prizeDescription = params
+                            ?.optString("prize_description") ?: "",
+                        winnerCount = content.optInt("winner_count"),
+                        conditions = conditions,
+                        deadlineSec = params
+                            ?.optInt("winners_selection_date") ?: 0
+                    )
+                )
+            }
+            "messageGiveawayWinners" -> {
+                // Giveaway results (v0.9.37, D3).
+                val ids = content.optJSONArray("winner_user_ids")
+                val names = ArrayList<String>()
+                if (ids != null) {
+                    for (i in 0 until minOf(ids.length(), 20)) {
+                        val name = cachedUserName(ids.optLong(i))
+                        if (name.isNotEmpty()) names.add(name)
+                    }
+                }
+                base.copy(
+                    kind = MsgKind.GIVEAWAY,
+                    giveaway = GiveawayUi(
+                        prizeText = giveawayPrizeText(
+                            content.optJSONObject("prize")
+                        ),
+                        prizeDescription = content
+                            .optString("prize_description") ?: "",
+                        winnerCount = content.optInt("winner_count"),
+                        isWinners = true,
+                        winnersDateSec = content.optInt(
+                            "actual_winners_selection_date"
+                        ),
+                        unclaimedCount = content.optInt(
+                            "unclaimed_prize_count"
+                        ),
+                        winnerNames = names
+                    )
+                )
+            }
+            "messageUsersShared" -> {
+                // Shared users (v0.9.37, D4): names ride
+                // inside the message payload itself.
+                val users = content.optJSONArray("users")
+                val entries = ArrayList<SharedEntryUi>()
+                if (users != null) {
+                    for (i in 0 until users.length()) {
+                        val u = users.optJSONObject(i) ?: continue
+                        val name = listOf(
+                            u.optString("first_name"),
+                            u.optString("last_name")
+                        ).filter { it.isNotEmpty() }
+                            .joinToString(" ")
+                        entries.add(
+                            SharedEntryUi(
+                                name = name.ifEmpty { "用户" },
+                                userId = u.optLong("user_id")
+                            )
+                        )
+                    }
+                }
+                base.copy(
+                    kind = MsgKind.SHARED,
+                    sharedHeader = "分享了 ${entries.size} 位用户",
+                    sharedEntries = entries
+                )
+            }
+            "messageChatShared" -> {
+                val chat = content.optJSONObject("chat")
+                val title = chat?.optString("title") ?: ""
+                base.copy(
+                    kind = MsgKind.SHARED,
+                    sharedHeader = "分享了一个对话",
+                    sharedEntries = listOf(
+                        SharedEntryUi(
+                            name = title.ifEmpty { "对话" },
+                            chatId = chat?.optLong("chat_id") ?: 0L
+                        )
+                    )
+                )
+            }
+            // The whole service family (v0.9.37, D4):
+            // until this version every one of these fell
+            // to OTHER and rendered as a bare "[消息]"
+            // bubble. They are centered service lines now;
+            // serviceTextFor composes the wording.
+            "messageBasicGroupChatCreate",
+            "messageSupergroupChatCreate",
+            "messageChatAddMembers",
+            "messageChatJoinByLink",
+            "messageChatJoinByRequest",
+            "messageChatDeleteMember",
+            "messageChatChangePhoto",
+            "messageChatDeletePhoto",
+            "messageChatChangeTitle",
+            "messageChatSetBackground",
+            "messageChatSetTheme",
+            "messageChatSetMessageAutoDeleteTime",
+            "messagePinMessage",
+            "messageChatUpgradeFrom",
+            "messageChatUpgradeTo",
+            "messageChatOwnerLeft",
+            "messageChatOwnerChanged",
+            "messageChatBoost",
+            "messageChatHasProtectedContentToggled",
+            "messageChatHasProtectedContentDisableRequested",
+            "messageChatAddedToCommunity",
+            "messageChatJoinFromCommunity",
+            "messageChatRemovedFromCommunity",
+            "messageForumTopicCreated",
+            "messageForumTopicEdited",
+            "messageForumTopicIsClosedToggled",
+            "messageForumTopicIsHiddenToggled",
+            "messageVideoChatStarted",
+            "messageVideoChatEnded",
+            "messageVideoChatScheduled",
+            "messageInviteVideoChatParticipants",
+            "messageGroupCall",
+            "messageCall",
+            "messageGameScore",
+            "messagePaymentSuccessful",
+            "messagePaymentSuccessfulBot",
+            "messagePaymentRefunded",
+            "messagePremiumGiftCode",
+            "messageGiftedPremium",
+            "messageGiftedStars",
+            "messageGiftedGrams",
+            "messageGift",
+            "messageUpgradedGift",
+            "messageRefundedUpgradedGift",
+            "messageUpgradedGiftPurchaseOffer",
+            "messageUpgradedGiftPurchaseOfferRejected",
+            "messageGiveawayCreated",
+            "messageGiveawayCompleted",
+            "messageGiveawayPrizeStars",
+            "messageChecklistTasksAdded",
+            "messageChecklistTasksDone",
+            "messagePollOptionAdded",
+            "messagePollOptionDeleted",
+            "messageBotWriteAccessAllowed",
+            "messageWebAppDataReceived",
+            "messageWebAppDataSent",
+            "messagePassportDataReceived",
+            "messagePassportDataSent",
+            "messageProximityAlertTriggered",
+            "messageScreenshotTaken",
+            "messageContactRegistered",
+            "messageExpiredPhoto",
+            "messageExpiredVideo",
+            "messageExpiredVideoNote",
+            "messageExpiredVoiceNote",
+            "messageStory",
+            "messageSuggestBirthdate",
+            "messageManagedBotCreated",
+            "messageDirectMessagePriceChanged",
+            "messagePaidMessagePriceChanged",
+            "messagePaidMessagesRefunded",
+            "messageSuggestedPostApproved",
+            "messageSuggestedPostDeclined",
+            "messageSuggestedPostApprovalFailed",
+            "messageSuggestedPostPaid",
+            "messageSuggestedPostRefunded",
+            "messageTonConnectRequest",
+            "messageTonWalletTransfer",
+            "messageUnpaidMessagesAllowedByLink",
+            "messageCustomServiceAction" -> serviceItem(base, content)
             else -> base.copy(kind = MsgKind.OTHER, text = "")
+        }
+    }
+
+    /** Display name for a user id from the parse-time
+     *  cache; a miss starts a fetch and yields "" (the
+     *  caller composes a name-free line instead of
+     *  guessing). */
+    private fun cachedUserName(userId: Long): String {
+        if (userId == 0L) return ""
+        return userNames[userId] ?: run {
+            fetchUser(userId)
+            ""
+        }
+    }
+
+    /** Prize wording shared by the giveaway announcement
+     *  and its results post (v0.9.37, D3). */
+    private fun giveawayPrizeText(prize: JSONObject?): String {
+        if (prize == null) return "奖品"
+        return when (prize.optString("@type")) {
+            "giveawayPrizePremium" ->
+                "Telegram Premium " +
+                    "${prize.optInt("month_count")} 个月"
+            "giveawayPrizeStars" ->
+                "⭐ ${prize.optLong("star_count")} 星星"
+            else -> "奖品"
+        }
+    }
+
+    /** Money in a currency's smallest units (invoice and
+     *  payment messages ship int53 minor units). Most
+     *  currencies divide by 100; currencies without minor
+     *  units are a known approximation, recorded in the
+     *  v0.9.37 audit. */
+    private fun formatMoney(currency: String, minor: Long): String {
+        val whole = minor / 100
+        val frac = minor % 100
+        val amount = if (frac == 0L) {
+            whole.toString()
+        } else {
+            "$whole.${frac.toString().padStart(2, '0')}"
+        }
+        return if (currency.isEmpty()) amount else "$amount $currency"
+    }
+
+    /** Compact duration for service lines: 45 秒 /
+     *  3 分 20 秒 / 1 小时 5 分钟. */
+    private fun formatServiceDuration(sec: Int): String {
+        return when {
+            sec >= 3600 ->
+                "${sec / 3600} 小时 ${(sec % 3600) / 60} 分钟"
+            sec >= 60 -> "${sec / 60} 分 ${sec % 60} 秒"
+            else -> "$sec 秒"
+        }
+    }
+
+    /** "2026年1月2日 15:04" for service lines that carry
+     *  an absolute time (scheduled video chats). */
+    private fun formatServiceDateTime(sec: Int): String {
+        val fmt = java.text.SimpleDateFormat(
+            "yyyy年M月d日 HH:mm", java.util.Locale.CHINA
+        )
+        return fmt.format(java.util.Date(sec.toLong() * 1000))
+    }
+
+    private fun serviceItem(
+        base: MsgItem,
+        content: JSONObject
+    ): MsgItem = base.copy(
+        kind = MsgKind.SERVICE,
+        text = serviceTextFor(base, content)
+    )
+
+    /** Wording for the whole service family (v0.9.37,
+     *  D4). Lines are composed so they read correctly
+     *  with an actor ("你" for my own actions, the
+     *  sender's cached name for other users) and without
+     *  one (channel posts, unresolved names) — Chinese
+     *  drops the subject cleanly in the second case.
+     *  Nothing is invented: a field TDLib did not ship
+     *  simply never reaches the line. */
+    private fun serviceTextFor(
+        base: MsgItem,
+        content: JSONObject
+    ): String {
+        val actor = when {
+            base.outgoing -> "你"
+            base.senderName.isNotEmpty() -> base.senderName
+            else -> ""
+        }
+        fun act(verb: String): String =
+            if (actor.isEmpty()) verb else actor + verb
+        return when (content.optString("@type")) {
+            "messageCustomServiceAction" ->
+                content.optString("text").ifEmpty { "服务消息" }
+            "messageBasicGroupChatCreate" -> {
+                val title = content.optString("title")
+                if (title.isNotEmpty()) {
+                    act("创建了群组「$title」")
+                } else {
+                    act("创建了群组")
+                }
+            }
+            "messageSupergroupChatCreate" -> {
+                val title = content.optString("title")
+                if (title.isNotEmpty()) {
+                    act("创建了「$title」")
+                } else {
+                    act("创建了这个对话")
+                }
+            }
+            "messageChatAddMembers" -> {
+                val ids = content.optJSONArray("member_user_ids")
+                val count = ids?.length() ?: 0
+                val names = ArrayList<String>()
+                if (ids != null) {
+                    for (i in 0 until ids.length()) {
+                        val n = cachedUserName(ids.optLong(i))
+                        if (n.isNotEmpty()) names.add(n)
+                    }
+                }
+                when {
+                    count == 0 -> act("邀请了新成员加入群组")
+                    names.size == count && count <= 3 ->
+                        act("邀请 ${names.joinToString("、")} 加入了群组")
+                    else -> act("邀请了 $count 位成员加入群组")
+                }
+            }
+            "messageChatJoinByLink" ->
+                act("通过邀请链接加入了群组")
+            "messageChatJoinByRequest" ->
+                act("经管理员批准加入了群组")
+            "messageChatDeleteMember" -> {
+                val name = cachedUserName(content.optLong("user_id"))
+                if (name.isNotEmpty()) {
+                    act("移除了成员 $name")
+                } else {
+                    act("移除了一位成员")
+                }
+            }
+            "messageChatChangePhoto" -> act("更新了群头像")
+            "messageChatDeletePhoto" -> act("删除了群头像")
+            "messageChatChangeTitle" -> {
+                val title = content.optString("title")
+                if (title.isNotEmpty()) {
+                    act("把群名改成了「$title」")
+                } else {
+                    act("修改了群名")
+                }
+            }
+            "messageChatSetBackground" -> act("更换了聊天背景")
+            "messageChatSetTheme" -> {
+                val theme = content.optJSONObject("theme")
+                val emojiName = if (
+                    theme?.optString("@type") == "chatThemeEmoji"
+                ) {
+                    theme.optString("name")
+                } else {
+                    ""
+                }
+                if (emojiName.isNotEmpty()) {
+                    act("把聊天主题换成了 $emojiName")
+                } else {
+                    act("更换了聊天主题")
+                }
+            }
+            "messageChatSetMessageAutoDeleteTime" -> {
+                val sec = content.optInt("message_auto_delete_time")
+                when {
+                    sec == 0 -> act("关闭了消息自动删除")
+                    sec == 86400 -> act("把消息自动删除设为 24 小时")
+                    sec == 604800 -> act("把消息自动删除设为 7 天")
+                    sec == 2678400 -> act("把消息自动删除设为 31 天")
+                    sec % 86400 == 0 ->
+                        act("把消息自动删除设为 ${sec / 86400} 天")
+                    sec % 3600 == 0 ->
+                        act("把消息自动删除设为 ${sec / 3600} 小时")
+                    else -> act("把消息自动删除设为 $sec 秒")
+                }
+            }
+            "messagePinMessage" -> act("置顶了一条消息")
+            "messageChatUpgradeFrom", "messageChatUpgradeTo" ->
+                "群组已升级为超级群组"
+            "messageChatOwnerLeft" -> act("离开了群组")
+            "messageChatOwnerChanged" -> {
+                val name = cachedUserName(content.optLong("user_id"))
+                if (name.isNotEmpty()) {
+                    "新群主是 $name"
+                } else {
+                    act("转让了群主")
+                }
+            }
+            "messageChatBoost" -> {
+                val count = content.optInt("boost_count")
+                if (count > 0) {
+                    act("为本对话助力了 $count 次")
+                } else {
+                    act("为本对话助力了")
+                }
+            }
+            "messageChatHasProtectedContentToggled" ->
+                if (content.optBoolean("has_protected_content")) {
+                    act("开启了内容保护（禁止转发与保存）")
+                } else {
+                    act("关闭了内容保护")
+                }
+            "messageChatHasProtectedContentDisableRequested" ->
+                act("请求关闭内容保护")
+            "messageChatAddedToCommunity" ->
+                act("把群组加入了社区")
+            "messageChatJoinFromCommunity" ->
+                act("从社区加入了群组")
+            "messageChatRemovedFromCommunity" ->
+                act("把群组移出了社区")
+            "messageForumTopicCreated" -> {
+                val title = content.optString("title")
+                if (title.isNotEmpty()) {
+                    act("创建了话题「$title」")
+                } else {
+                    act("创建了话题")
+                }
+            }
+            "messageForumTopicEdited" -> {
+                val title = content.optString("title")
+                if (title.isNotEmpty()) {
+                    act("编辑了话题「$title」")
+                } else {
+                    act("编辑了话题")
+                }
+            }
+            "messageForumTopicIsClosedToggled" ->
+                if (content.optBoolean("is_closed")) {
+                    act("关闭了话题")
+                } else {
+                    act("重新打开了话题")
+                }
+            "messageForumTopicIsHiddenToggled" ->
+                if (content.optBoolean("is_hidden")) {
+                    act("隐藏了话题")
+                } else {
+                    act("取消隐藏了话题")
+                }
+            "messageVideoChatStarted" -> act("开始了视频聊天")
+            "messageVideoChatEnded" -> {
+                val dur = content.optInt("duration")
+                if (dur > 0) {
+                    "视频聊天结束了（${formatServiceDuration(dur)}）"
+                } else {
+                    "视频聊天结束了"
+                }
+            }
+            "messageVideoChatScheduled" -> {
+                val at = content.optInt("start_date")
+                if (at > 0) {
+                    act("预定了视频聊天（${formatServiceDateTime(at)}）")
+                } else {
+                    act("预定了视频聊天")
+                }
+            }
+            "messageInviteVideoChatParticipants" ->
+                act("邀请了成员参加视频聊天")
+            "messageGroupCall" -> when {
+                content.optBoolean("is_active") -> "群组通话进行中"
+                content.optBoolean("was_missed") -> "未接的群组通话"
+                content.optInt("duration") > 0 ->
+                    "群组通话结束了（" +
+                        formatServiceDuration(
+                            content.optInt("duration")
+                        ) + "）"
+                else -> "群组通话"
+            }
+            "messageCall" -> {
+                // A call record, not a call feature: type,
+                // outcome and duration are all in the
+                // payload (unique_id is never shown).
+                val word = if (content.optBoolean("is_video")) {
+                    "视频通话"
+                } else {
+                    "语音通话"
+                }
+                val reason = content.optJSONObject("discard_reason")
+                    ?.optString("@type") ?: ""
+                val dur = content.optInt("duration")
+                when {
+                    reason == "callDiscardReasonMissed" ->
+                        "未接的$word"
+                    reason == "callDiscardReasonDeclined" ->
+                        "被拒绝的$word"
+                    dur > 0 ->
+                        "$word · ${formatServiceDuration(dur)}"
+                    else -> word
+                }
+            }
+            "messageGameScore" ->
+                act("在游戏中获得了 ${content.optInt("score")} 分")
+            "messagePaymentSuccessful",
+            "messagePaymentSuccessfulBot" -> {
+                val money = formatMoney(
+                    content.optString("currency"),
+                    content.optLong("total_amount")
+                )
+                val name = content.optString("invoice_name")
+                if (name.isNotEmpty()) {
+                    "付款成功：$money（$name）"
+                } else {
+                    "付款成功：$money"
+                }
+            }
+            "messagePaymentRefunded" ->
+                "已退款：" + formatMoney(
+                    content.optString("currency"),
+                    content.optLong("total_amount")
+                )
+            "messagePremiumGiftCode" -> {
+                val months = content.optInt("month_count")
+                val days = content.optInt("day_count")
+                val period = when {
+                    months > 0 -> "$months 个月"
+                    days > 0 -> "$days 天"
+                    else -> ""
+                }
+                val base = if (period.isNotEmpty()) {
+                    "一份 $period 的 Premium 礼品码"
+                } else {
+                    "一份 Premium 礼品码"
+                }
+                if (content.optBoolean("is_unclaimed")) {
+                    "$base（尚未领取）"
+                } else {
+                    base
+                }
+            }
+            "messageGiftedPremium" -> {
+                val months = content.optInt("month_count")
+                val days = content.optInt("day_count")
+                val period = when {
+                    months > 0 -> "$months 个月"
+                    days > 0 -> "$days 天"
+                    else -> ""
+                }
+                if (period.isNotEmpty()) {
+                    act("赠送了 $period 的 Telegram Premium")
+                } else {
+                    act("赠送了 Telegram Premium")
+                }
+            }
+            "messageGiftedStars" ->
+                act("赠送了 ⭐ ${content.optLong("star_count")} 星星")
+            "messageGiftedGrams" -> act("赠送了 TON 代币")
+            "messageGift" -> act("送出了一份礼物")
+            "messageUpgradedGift" -> act("送出了一份升级礼物")
+            "messageRefundedUpgradedGift" -> "一份升级礼物已退款"
+            "messageUpgradedGiftPurchaseOffer" ->
+                act("发出了购买升级礼物的报价")
+            "messageUpgradedGiftPurchaseOfferRejected" ->
+                "升级礼物的购买报价被拒绝了"
+            "messageGiveawayCreated" -> {
+                val stars = content.optLong("star_count")
+                if (stars > 0) {
+                    act("创建了抽奖（奖品池 ⭐ $stars 星星）")
+                } else {
+                    act("创建了抽奖")
+                }
+            }
+            "messageGiveawayCompleted" -> {
+                val winners = content.optInt("winner_count")
+                val unclaimed =
+                    content.optInt("unclaimed_prize_count")
+                val head = "抽奖已结束，共 $winners 位中奖者"
+                if (unclaimed > 0) {
+                    "$head，$unclaimed 份奖品无人领取"
+                } else {
+                    head
+                }
+            }
+            "messageGiveawayPrizeStars" -> {
+                val stars = content.optLong("star_count")
+                if (content.optBoolean("is_unclaimed")) {
+                    "抽奖奖品：⭐ $stars 星星（尚未领取）"
+                } else {
+                    "抽奖奖品：⭐ $stars 星星"
+                }
+            }
+            "messageChecklistTasksAdded" -> {
+                val count = content.optJSONArray("tasks")
+                    ?.length() ?: 0
+                if (count > 0) {
+                    act("在清单里添加了 $count 项")
+                } else {
+                    act("在清单里添加了新项")
+                }
+            }
+            "messageChecklistTasksDone" -> {
+                val done = content.optJSONArray(
+                    "marked_as_done_task_ids"
+                )?.length() ?: 0
+                val undone = content.optJSONArray(
+                    "marked_as_not_done_task_ids"
+                )?.length() ?: 0
+                when {
+                    done > 0 && undone > 0 ->
+                        act("在清单里完成了 $done 项、取消了 $undone 项")
+                    done > 0 -> act("在清单里完成了 $done 项")
+                    undone > 0 ->
+                        act("在清单里取消了 $undone 项的完成标记")
+                    else -> act("更新了清单")
+                }
+            }
+            "messagePollOptionAdded" -> {
+                val text = content.optJSONObject("text")
+                    ?.optString("text") ?: ""
+                if (text.isNotEmpty()) {
+                    act("给投票添加了选项「$text」")
+                } else {
+                    act("给投票添加了选项")
+                }
+            }
+            "messagePollOptionDeleted" -> {
+                val text = content.optJSONObject("text")
+                    ?.optString("text") ?: ""
+                if (text.isNotEmpty()) {
+                    act("从投票删除了选项「$text」")
+                } else {
+                    act("从投票删除了选项")
+                }
+            }
+            "messageBotWriteAccessAllowed" ->
+                "你允许了这个机器人向你发送消息"
+            "messageWebAppDataReceived" -> "收到小程序发来的数据"
+            "messageWebAppDataSent" -> act("通过小程序发送了数据")
+            "messagePassportDataReceived" -> "收到了护照资料"
+            "messagePassportDataSent" -> "发送了护照资料"
+            "messageProximityAlertTriggered" ->
+                "位置提醒：对方已进入 " +
+                    "${content.optInt("distance")} 米范围"
+            "messageScreenshotTaken" -> act("截了屏")
+            "messageContactRegistered" -> act("刚刚加入了 Telegram")
+            "messageExpiredPhoto" -> "照片已过期"
+            "messageExpiredVideo" -> "视频已过期"
+            "messageExpiredVideoNote" -> "视频消息已过期"
+            "messageExpiredVoiceNote" -> "语音已过期"
+            "messageStory" -> act("分享了一条动态")
+            "messageSuggestBirthdate" -> {
+                val bd = content.optJSONObject("birthdate")
+                if (bd != null) {
+                    act(
+                        "建议了生日：${bd.optInt("month")}月" +
+                            "${bd.optInt("day")}日"
+                    )
+                } else {
+                    act("建议了生日")
+                }
+            }
+            "messageManagedBotCreated" -> act("创建了一个机器人")
+            "messageDirectMessagePriceChanged" ->
+                if (content.optBoolean("is_enabled")) {
+                    "频道私信价格已设为 ⭐ " +
+                        content.optLong("paid_message_star_count")
+                } else {
+                    "频道私信已改为免费"
+                }
+            "messagePaidMessagePriceChanged" -> {
+                val count = content.optLong(
+                    "paid_message_star_count"
+                )
+                if (count > 0) {
+                    "付费消息价格已设为 ⭐ $count"
+                } else {
+                    "付费消息已关闭"
+                }
+            }
+            "messagePaidMessagesRefunded" -> "付费消息已退款"
+            "messageSuggestedPostApproved" -> "一条投稿已被通过"
+            "messageSuggestedPostDeclined" -> "一条投稿已被拒绝"
+            "messageSuggestedPostApprovalFailed" -> "一条投稿审核失败"
+            "messageSuggestedPostPaid" -> "一条投稿已付费发布"
+            "messageSuggestedPostRefunded" -> "一条投稿已退款"
+            "messageTonConnectRequest" -> {
+                val dapp = content.optString("dapp_name")
+                if (dapp.isNotEmpty()) {
+                    "TON 钱包连接请求：$dapp"
+                } else {
+                    "TON 钱包连接请求"
+                }
+            }
+            "messageTonWalletTransfer" -> "一笔 TON 钱包转账"
+            "messageUnpaidMessagesAllowedByLink" ->
+                "已允许通过链接加入的用户免付费发消息"
+            else -> "服务消息"
+        }
+    }
+
+    /** Ask TDLib for the current user's own giveaway
+     *  status (v0.9.37, D3): participation is automatic,
+     *  so this is a query, never a join. The answer is
+     *  mapped to one plain-language paragraph; errors say
+     *  so plainly too. */
+    fun loadGiveawayInfo(
+        chatId: Long,
+        messageId: Long,
+        onResult: (String) -> Unit
+    ) {
+        val query = TdClient.request("getGiveawayInfo").apply {
+            put("chat_id", chatId)
+            put("message_id", messageId)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                val message = response.optString("message")
+                onResult(
+                    "查不到这次抽奖的状态，再试一次。（错误码 " +
+                        "${response.optInt("code")}）" +
+                        if (message.isNotEmpty()) " $message" else ""
+                )
+                return@sendRaw
+            }
+            onResult(giveawayInfoText(response))
+        }
+    }
+
+    private fun giveawayInfoText(info: JSONObject): String {
+        return when (info.optString("@type")) {
+            "giveawayInfoOngoing" -> {
+                val status = info.optJSONObject("status")
+                    ?.optString("@type") ?: ""
+                val head = when (status) {
+                    "giveawayParticipantStatusEligible" ->
+                        "你符合这次抽奖的参加条件，已经自动参加，" +
+                            "不用再做任何操作。"
+                    "giveawayParticipantStatusParticipating" ->
+                        "你已经在这次抽奖里了，等开奖就行。"
+                    "giveawayParticipantStatusAlreadyWasMember" ->
+                        "这次抽奖只限活动开始后加入的新成员，" +
+                            "你那时已经在群里了，所以参加不了。"
+                    "giveawayParticipantStatusAdministrator" ->
+                        "你是这个对话的管理员，按规则参加不了" +
+                            "这次抽奖。"
+                    "giveawayParticipantStatusDisallowedCountry" ->
+                        "这次抽奖限制了参加的国家或地区，" +
+                            "你的号码不在范围内。"
+                    else -> "这次抽奖还在进行中。"
+                }
+                if (info.optBoolean("is_ended")) {
+                    head + "\n活动已经结束，正在准备开奖结果。"
+                } else {
+                    head
+                }
+            }
+            "giveawayInfoCompleted" -> {
+                val sb = StringBuilder("这次抽奖已经开奖了。")
+                if (info.optBoolean("was_refunded")) {
+                    sb.append("\n活动被取消，费用已退回。")
+                }
+                if (info.optBoolean("is_winner")) {
+                    sb.append("\n🎉 你中奖了！")
+                    val code = info.optString("gift_code")
+                    val stars = info.optLong("won_star_count")
+                    if (code.isNotEmpty()) {
+                        sb.append("\n你的 Premium 礼品码：$code")
+                    }
+                    if (stars > 0) {
+                        sb.append("\n你赢得了 ⭐ $stars 星星。")
+                    }
+                } else {
+                    sb.append("\n你这次没有中奖。")
+                }
+                sb.toString()
+            }
+            else -> "这次抽奖的状态暂时读不出来。"
         }
     }
 
@@ -4392,6 +5316,24 @@ object MessageStore {
                 if (title.isEmpty()) "[清单]" else "[清单] $title"
             }
             "messageVideoNote" -> "[视频消息]"
+            "messageAudio" -> {
+                val title = content.optJSONObject("audio")
+                    ?.optString("title") ?: ""
+                if (title.isEmpty()) "[音频]" else "[音频] $title"
+            }
+            "messageVenue" -> "[位置]"
+            "messageGiveaway" -> "[抽奖]"
+            "messageGiveawayWinners" -> "[抽奖结果]"
+            "messageGiveawayCompleted" -> "[抽奖已结束]"
+            "messageInvoice" -> "[账单]"
+            "messageUsersShared" -> "[分享了用户]"
+            "messageChatShared" -> "[分享了对话]"
+            "messageCall" -> "[通话]"
+            "messagePinMessage" -> "置顶了一条消息"
+            "messageChatChangeTitle" -> {
+                val title = content.optString("title")
+                if (title.isEmpty()) "修改了群名" else "群名改成了「$title」"
+            }
             "messageDice" -> {
                 val emoji = content.optString("emoji")
                 if (emoji.isEmpty()) "[骰子]" else "[骰子] $emoji"
