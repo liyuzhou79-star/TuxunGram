@@ -229,7 +229,13 @@ fun ForwardPickerScreen(
                     }
                 }
                 items(items = chats, key = { it.id }) { chat ->
-                    ChatRow(chat, onClick = { forwardTo(chat.id) })
+                    Box(
+                        modifier = Modifier.animateItemPlacement(
+                            Motion.tween(250)
+                        )
+                    ) {
+                        ChatRow(chat, onClick = { forwardTo(chat.id) })
+                    }
                 }
             }
         }
@@ -658,13 +664,23 @@ fun ChatListScreen(
                     items = shown,
                     key = { it.id }
                 ) { chat ->
-                    SwipeableChatRow(
-                        chat = chat,
-                        inArchive = false,
-                        openId = swipeOpenId,
-                        onOpenChange = { swipeOpenId = it },
-                        onClick = { onOpenChat(chat.id) }
-                    )
+                    // Placement animation (v0.9.11, A1): rows
+                    // glide to their new position when a pin,
+                    // an archive or a fresh message reorders
+                    // the list instead of teleporting.
+                    Box(
+                        modifier = Modifier.animateItemPlacement(
+                            Motion.tween(250)
+                        )
+                    ) {
+                        SwipeableChatRow(
+                            chat = chat,
+                            inArchive = false,
+                            openId = swipeOpenId,
+                            onOpenChange = { swipeOpenId = it },
+                            onClick = { onOpenChat(chat.id) }
+                        )
+                    }
                 }
                 if (query.isNotBlank() && selectedFolder == null) {
                     val contactHits = ContactsStore.search(query)

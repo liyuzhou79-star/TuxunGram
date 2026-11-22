@@ -120,7 +120,17 @@ import com.tuxungram.android.td.TdClient
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.ThreadStore
 import com.tuxungram.android.td.UiSettings
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1062,7 +1072,35 @@ fun ChatScreen(
                 .lazyListScrollbar(listState, reverse = true)
         ) {
             items(items = messages.asReversed(), key = { it.id }) { msg ->
-                Column {
+                // Entry motion (v0.9.11, A1): a message that
+                // arrives while the chat is open — just sent by
+                // me or just received — fades and settles in
+                // instead of popping. Gated on the message's
+                // own date, so paging through history (whose
+                // messages are old) never animates.
+                val entryFresh = remember(msg.id) {
+                    kotlin.math.abs(
+                        System.currentTimeMillis() / 1000 -
+                            msg.dateSeconds
+                    ) < 120
+                }
+                val entry = remember(msg.id) {
+                    Animatable(if (entryFresh) 0f else 1f)
+                }
+                LaunchedEffect(msg.id) {
+                    if (entryFresh) {
+                        entry.animateTo(1f, Motion.tween(260))
+                    }
+                }
+                Column(
+                    modifier = Modifier.graphicsLayer {
+                        alpha = entry.value
+                        val s = 0.96f + 0.04f * entry.value
+                        scaleX = s
+                        scaleY = s
+                        transformOrigin = TransformOrigin(0.5f, 1f)
+                    }
+                ) {
                     if (msg.id in separatorIds) {
                         Box(
                             modifier = Modifier
@@ -1142,11 +1180,19 @@ fun ChatScreen(
 
         val canBasic = chat?.canSendBasic ?: true
         val canPhotos = chat?.canSendPhotos ?: true
-        if (selectionMode) {
-            // Batch action bar (v0.7.0, F1) replaces the input
-            // dock while selecting: forward / copy / delete the
-            // whole selection at once.
-            val selectedItems = messages.filter { it.id in selectedIds }
+        // Batch action bar (v0.7.0, F1) replaces the input
+        // dock while selecting: forward / copy / delete the
+        // whole selection at once. Animated (v0.9.11, A1): it
+        // rises and fades in instead of swapping in a hard
+        // cut; the dock below composes only when not selecting.
+        val selectedItems = messages.filter { it.id in selectedIds }
+        AnimatedVisibility(
+            visible = selectionMode,
+            enter = expandVertically(Motion.tween(200)) +
+                fadeIn(Motion.tween(200)),
+            exit = shrinkVertically(Motion.tween(160)) +
+                fadeOut(Motion.tween(160))
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1197,7 +1243,9 @@ fun ChatScreen(
                     modifier = Modifier.weight(1f)
                 ) { Text("删除", color = Color(0xFFC62828)) }
             }
-        } else if (!canBasic && !canPhotos) {
+        }
+        if (!selectionMode) {
+            if (!canBasic && !canPhotos) {
             Text(
                 "你不能在这个对话里发言",
                 color = Color.Gray,
@@ -1243,9 +1291,14 @@ fun ChatScreen(
                 // keyboard grid.
                 val bot = botUi?.takeIf { it.chatId == chatId }
                 val kb = replyKb
-                if (bot?.isBot == true &&
-                    messages.none { it.outgoing } &&
-                    (messages.isNotEmpty() || showEmptyHistory)
+                AnimatedVisibility(
+                    visible = bot?.isBot == true &&
+                        messages.none { it.outgoing } &&
+                        (messages.isNotEmpty() || showEmptyHistory),
+                    enter = expandVertically(Motion.tween(200)) +
+                        fadeIn(Motion.tween(200)),
+                    exit = shrinkVertically(Motion.tween(160)) +
+                        fadeOut(Motion.tween(160))
                 ) {
                     Button(
                         onClick = {
@@ -1279,7 +1332,14 @@ fun ChatScreen(
                         if (kb.forceReply) kb.placeholder else null
                     else -> null
                 }
-                if (forceHint != null) {
+                AnimatedVisibility(
+                    visible = forceHint != null,
+                    enter = expandVertically(Motion.tween(180)) +
+                        fadeIn(Motion.tween(180)),
+                    exit = shrinkVertically(Motion.tween(140)) +
+                        fadeOut(Motion.tween(140))
+                ) {
+                    if (forceHint != null) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1301,6 +1361,7 @@ fun ChatScreen(
                             fontSize = 13.sp,
                             color = Color.Gray
                         )
+                    }
                     }
                 }
                 // Slash popup: while the input is a bare /prefix
@@ -1343,7 +1404,32 @@ fun ChatScreen(
                 } else {
                     emptyList()
                 }
-                if (slashMatches.isNotEmpty()) {
+                // The popup keeps the last non-empty match
+                // list for its exit animation (v0.9.11, A1):
+                // the live list empties the moment the input
+                // stops matching, which would blank the popup
+                // before it can sink away.
+                var lastSlash by remember {
+                    mutableStateOf<List<Triple<String, String, String>>>(
+                        emptyList()
+                    )
+                }
+                LaunchedEffect(slashMatches) {
+                    if (slashMatches.isNotEmpty()) {
+                        lastSlash = slashMatches
+                    }
+                }
+                AnimatedVisibility(
+                    visible = slashMatches.isNotEmpty(),
+                    enter = expandVertically(
+                        Motion.tween(180),
+                        expandFrom = Alignment.Bottom
+                    ) + fadeIn(Motion.tween(180)),
+                    exit = shrinkVertically(
+                        Motion.tween(140),
+                        shrinkTowards = Alignment.Bottom
+                    ) + fadeOut(Motion.tween(140))
+                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1352,7 +1438,7 @@ fun ChatScreen(
                                     .surfaceContainerLow
                             )
                     ) {
-                        for (item in slashMatches) {
+                        for (item in lastSlash) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1393,9 +1479,19 @@ fun ChatScreen(
                 // Reply keyboard grid: rows straight from the
                 // markup; a text button sends its label as a
                 // message, other button types render disabled.
-                if (kb is ReplyKb.Shown &&
-                    kbDismissedSource != kb.sourceMessageId
+                AnimatedVisibility(
+                    visible = kb is ReplyKb.Shown &&
+                        kbDismissedSource != kb.sourceMessageId,
+                    enter = expandVertically(
+                        Motion.tween(200),
+                        expandFrom = Alignment.Bottom
+                    ) + fadeIn(Motion.tween(200)),
+                    exit = shrinkVertically(
+                        Motion.tween(160),
+                        shrinkTowards = Alignment.Bottom
+                    ) + fadeOut(Motion.tween(160))
                 ) {
+                    if (kb is ReplyKb.Shown) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1423,6 +1519,7 @@ fun ChatScreen(
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
@@ -1633,6 +1730,19 @@ fun ChatScreen(
                     maxLines = 4
                 )
                 Spacer(Modifier.width(8.dp))
+                // Send-button press feedback (v0.9.11, A1):
+                // the round action button dips slightly while
+                // pressed instead of only rippling.
+                val sendInteraction = remember {
+                    MutableInteractionSource()
+                }
+                val sendPressed by sendInteraction
+                    .collectIsPressedAsState()
+                val sendScale by animateFloatAsState(
+                    if (sendPressed) 0.86f else 1f,
+                    Motion.tween(120),
+                    label = "sendScale"
+                )
                 if (canBasic && input.isBlank()) {
                     // Empty input: the round button is the voice
                     // recorder, like in other Telegram clients.
@@ -1671,6 +1781,10 @@ fun ChatScreen(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
+                            .graphicsLayer {
+                                scaleX = sendScale
+                                scaleY = sendScale
+                            }
                             .background(
                                 if (canBasic && input.isNotBlank()) {
                                     MaterialTheme.colorScheme.primary
@@ -1681,6 +1795,9 @@ fun ChatScreen(
                             )
                             .combinedClickable(
                                 enabled = canBasic && input.isNotBlank(),
+                                interactionSource = sendInteraction,
+                                indication = androidx.compose.foundation
+                                    .LocalIndication.current,
                                 onClick = {
                                     val text = input.trim()
                                     if (text.isNotEmpty()) {
@@ -1736,7 +1853,16 @@ fun ChatScreen(
                     }
                 }
             }
-            if (stickerPanelOpen && !recording) {
+            // Sticker panel (Phase D steer; v0.9.11, A1):
+            // rises out of the keyboard area and sinks back
+            // instead of popping in and out.
+            AnimatedVisibility(
+                visible = stickerPanelOpen && !recording,
+                enter = expandVertically(Motion.tween(240)) +
+                    fadeIn(Motion.tween(240)),
+                exit = shrinkVertically(Motion.tween(200)) +
+                    fadeOut(Motion.tween(200))
+            ) {
                 MediaPanel(
                     onEmoji = { emoji -> input += emoji },
                     onSendEntry = { entry ->
@@ -1754,6 +1880,7 @@ fun ChatScreen(
                     }
                 )
             }
+        }
         }
     }
         val vid = viewerId
