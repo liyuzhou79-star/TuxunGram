@@ -1140,6 +1140,7 @@ fun SettingsScreen(
                 )
             }
         )
+        TwoFactorSection()
         PrivacySection()
         Spacer(Modifier.height(10.dp))
         IconRow(
