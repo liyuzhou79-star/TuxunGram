@@ -97,6 +97,7 @@ import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.ContactsStore
+import com.tuxungram.android.td.CrashLog
 import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
@@ -144,6 +145,13 @@ import com.tuxungram.android.ui.TransitionScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Crash recorder (v0.9.6, P5): installed before
+        // anything else so even a startup crash leaves a
+        // record. It only writes the stack trace to the app's
+        // private directory and then hands the crash to the
+        // default handler — the crash itself is unchanged,
+        // and nothing is ever uploaded.
+        CrashLog.install(applicationContext, BuildConfig.VERSION_NAME)
         // App lock (v0.6.0, E2): read the persisted state before
         // the UI composes; a set PIN means the app starts locked.
         AppLock.init(applicationContext)
