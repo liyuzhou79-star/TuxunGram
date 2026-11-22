@@ -46,10 +46,14 @@ import com.tuxungram.android.td.CreateStore
 @Composable
 fun CreateChatScreen(
     onBack: () -> Unit,
-    onCreated: (Long) -> Unit
+    onCreated: (Long) -> Unit,
+    // Entry points that already know what they want (the
+    // drawer's separate 新建群组 / 新建频道 items, v0.9.19)
+    // land on the matching tab directly.
+    initialMode: String = "group"
 ) {
     BackHandler { onBack() }
-    var mode by remember { mutableStateOf("group") }
+    var mode by remember(initialMode) { mutableStateOf(initialMode) }
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var memberQuery by remember { mutableStateOf("") }

@@ -60,6 +60,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -279,7 +280,8 @@ fun ChatListScreen(
     onOpenSettings: () -> Unit,
     onOpenChatLocated: (Long, Long) -> Unit,
     onOpenArchive: () -> Unit,
-    onOpenCreate: () -> Unit,
+    onOpenCreate: (String) -> Unit,
+    onOpenDrawer: () -> Unit,
     onOpenStory: (Long) -> Unit,
     onOpenContacts: () -> Unit,
     onOpenSearch: () -> Unit,
@@ -330,6 +332,16 @@ fun ChatListScreen(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Drawer button (v0.9.19, Z2): opens the
+            // official-style navigation drawer. (The Z1 step
+            // collapses this header into the official single
+            // row; the button keeps its seat.)
+            IconButton(onClick = onOpenDrawer) {
+                Icon(
+                    Icons.Filled.Menu, contentDescription = "菜单",
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+            }
             Text(
                 "TuxunGram",
                 fontSize = 20.sp,
@@ -337,7 +349,7 @@ fun ChatListScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
             )
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onOpenCreate) {
+            IconButton(onClick = { onOpenCreate("group") }) {
                 Icon(Icons.Filled.Add, contentDescription = "新建群组或频道")
             }
             TextButton(onClick = onOpenContacts) {

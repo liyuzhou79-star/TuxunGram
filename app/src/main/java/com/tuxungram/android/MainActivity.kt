@@ -64,8 +64,12 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -81,6 +85,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -122,6 +127,7 @@ import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
@@ -138,6 +144,7 @@ import com.tuxungram.android.ui.GuideScreen
 import com.tuxungram.android.ui.WhatsNewScreen
 import com.tuxungram.android.ui.ChatListScreen
 import com.tuxungram.android.ui.AvatarImage
+import com.tuxungram.android.ui.HomeDrawerContent
 import com.tuxungram.android.ui.MeScreen
 import com.tuxungram.android.ui.ChatBubbleIcon
 import com.tuxungram.android.ui.PeopleIcon
@@ -634,6 +641,9 @@ private fun ReadyHost() {
         }
     }
     var showCreate by remember { mutableStateOf(false) }
+    // Which create tab the create screen opens on (v0.9.19,
+    // Z2): the drawer's separate group/channel items set it.
+    var createMode by remember { mutableStateOf("group") }
     // Bottom navigation (v0.9.9, W4): 0 chats / 1 contacts /
     // 2 settings / 3 me. Only the home level carries the bar;
     // opening a chat or any sub-page replaces the whole host
@@ -892,6 +902,7 @@ private fun ReadyHost() {
                     }
                 )
                 is Route.Create -> CreateChatScreen(
+                    initialMode = createMode,
                     onBack = { showCreate = false },
                     onCreated = {
                         showCreate = false
@@ -906,7 +917,38 @@ private fun ReadyHost() {
                         openChatId = forwardReturnTo
                     }
                 )
-                is Route.Home -> Column(modifier = Modifier.fillMaxSize()) {
+                is Route.Home -> {
+            // Navigation drawer (v0.9.19, Z2): wraps the whole
+            // home level (tabs + Duck bar); its gestures arm
+            // only on the chat-list tab, the way the official
+            // drawer belongs to the main list.
+            val drawerState = rememberDrawerState(DrawerValue.Closed)
+            val drawerScope = rememberCoroutineScope()
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                gesturesEnabled = homeTab == 0,
+                drawerContent = {
+                    ModalDrawerSheet(
+                        drawerContainerColor =
+                            OfficialTheme.current().windowBg
+                    ) {
+                        HomeDrawerContent(
+                            onClose = {
+                                drawerScope.launch { drawerState.close() }
+                            },
+                            onOpenMe = { homeTab = 3 },
+                            onOpenContactsTab = { homeTab = 1 },
+                            onOpenSettingsTab = { homeTab = 2 },
+                            onOpenCreate = { mode ->
+                                createMode = mode
+                                showCreate = true
+                            },
+                            onOpenSavedChat = { openChatId = it }
+                        )
+                    }
+                }
+            ) {
+            Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
                 // Tab transitions (v0.9.11, A1): switching the
                 // bottom-nav tabs used to hard-cut; now a short
@@ -953,7 +995,13 @@ private fun ReadyHost() {
                                 openChatId = cid
                             },
                             onOpenArchive = { showArchive = true },
-                            onOpenCreate = { showCreate = true },
+                            onOpenCreate = { mode ->
+                                createMode = mode
+                                showCreate = true
+                            },
+                            onOpenDrawer = {
+                                drawerScope.launch { drawerState.open() }
+                            },
                             onOpenStory = { storyChatId = it },
                             onOpenContacts = { homeTab = 1 },
                             onOpenSearch = { showSearch = true },
@@ -1032,6 +1080,8 @@ private fun ReadyHost() {
                     },
                     label = { Text("我的") }
                 )
+            }
+            }
             }
         }
                 is Route.Chat -> ChatScreen(
