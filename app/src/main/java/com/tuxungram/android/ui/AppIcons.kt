@@ -618,30 +618,6 @@ val TextSizeIcon: ImageVector = icon("TextSize") {
     close()
 }
 
-/** Hashtag (forum topics). */
-val HashIcon: ImageVector = icon("Hash") {
-    moveTo(9.6f, 3f)
-    lineTo(8.1f, 21f)
-    horizontalLineTo(5.9f)
-    lineTo(7.4f, 3f)
-    close()
-    moveTo(17.1f, 3f)
-    lineTo(15.6f, 21f)
-    horizontalLineTo(13.4f)
-    lineTo(14.9f, 3f)
-    close()
-    moveTo(4.2f, 9.3f)
-    horizontalLineTo(20.7f)
-    verticalLineTo(11.6f)
-    horizontalLineTo(3.7f)
-    close()
-    moveTo(3.4f, 14.4f)
-    horizontalLineTo(19.9f)
-    verticalLineTo(16.7f)
-    horizontalLineTo(2.9f)
-    close()
-}
-
 /** Robot head (bots). */
 val BotIcon: ImageVector = icon("Bot", evenOdd = true) {
     moveTo(11.2f, 4f)

@@ -127,53 +127,6 @@ fun tileColorFor(key: String): Color =
     TILE_PALETTE[(key.hashCode() and Int.MAX_VALUE) %
         TILE_PALETTE.size]
 
-/** A section title: the section's icon in a coloured tile,
- *  then the title. Used at the head of every settings group
- *  and profile section. */
-@Composable
-fun SectionTitle(
-    icon: ImageVector,
-    text: String,
-    tileColor: Color? = null
-) {
-    val tile = tileColor ?: tileColorFor(text)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(tile.copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                icon, contentDescription = null,
-                tint = tile,
-                modifier = Modifier.size(18.dp)
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        // Section label (v0.9.17, X7): under the official
-        // preset it takes the official blue-header color
-        // (windowBackgroundWhiteBlueText family) at the
-        // official section size.
-        val accentMode by UiSettings.accentMode.collectAsState()
-        Text(
-            text,
-            fontSize = if (accentMode == UiSettings.ACCENT_OFFICIAL) {
-                15.sp
-            } else {
-                17.sp
-            },
-            fontWeight = FontWeight.SemiBold,
-            color = if (accentMode == UiSettings.ACCENT_OFFICIAL) {
-                OfficialTheme.current().accentText
-            } else {
-                Color.Unspecified
-            }
-        )
-    }
-}
-
 /** A grouped card: one settings/profile section lives on a
  *  rounded surface instead of floating on the background.
  *  Under the official preset (v0.9.17, X7) the card takes
@@ -498,53 +451,6 @@ fun EmptyState(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
-    }
-}
-
-/** A graphical header banner (v0.9.11, A2): a seed-colour
- *  gradient wash with program-drawn deco circles and a faint
- *  oversized plane watermark — no image assets. Heads the Me
- *  tab and the profile page; [content] is laid out over the
- *  banner and owns its padding and text colours. */
-@Composable
-fun HeaderBanner(
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
-) {
-    val primary = MaterialTheme.colorScheme.primary
-    val tertiary = MaterialTheme.colorScheme.tertiary
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(Brush.linearGradient(listOf(primary, tertiary)))
-    ) {
-        Canvas(modifier = Modifier.matchParentSize()) {
-            drawCircle(
-                Color.White.copy(alpha = 0.10f),
-                radius = size.minDimension * 0.55f,
-                center = Offset(size.width * 0.92f, size.height * 0.05f)
-            )
-            drawCircle(
-                Color.White.copy(alpha = 0.07f),
-                radius = size.minDimension * 0.38f,
-                center = Offset(size.width * 0.06f, size.height * 1.05f)
-            )
-            drawCircle(
-                Color.White.copy(alpha = 0.05f),
-                radius = size.minDimension * 0.22f,
-                center = Offset(size.width * 0.68f, size.height * 0.95f)
-            )
-        }
-        Icon(
-            Icons.AutoMirrored.Filled.Send,
-            contentDescription = null,
-            tint = Color.White.copy(alpha = 0.13f),
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 2.dp)
-                .size(110.dp)
-        )
-        content()
     }
 }
 
