@@ -65,6 +65,36 @@ object ThreadStore {
     private val _historyLoading = MutableStateFlow(false)
     val historyLoading: StateFlow<Boolean> = _historyLoading
 
+    /** One delayed retry is allowed when the very first
+     *  history page comes back empty — the local database
+     *  may still be filling in (mirrors MessageStore). */
+    @Volatile
+    private var firstPageRetried = false
+
+    // ---- Deep-paging hardening (v0.9.34, A1) ----
+    // The two pieces MessageStore landed in v0.9.28 (U2),
+    // ported so all three history hosts share one paging
+    // contract (the gap v0.9.29's V5 audit recorded and
+    // deliberately left; this version closes it).
+
+    /** Window generation: bumped every time the loaded
+     *  window is replaced wholesale (open, close). History
+     *  responses — and the getMessageThread resolution
+     *  itself — carry the generation they were sent under;
+     *  a response from a replaced window is dropped instead
+     *  of leaking its messages into the new window (the
+     *  plain sourceChatId check cannot catch reopening the
+     *  SAME thread quickly). */
+    @Volatile
+    private var historyGeneration = 0
+
+    /** The from_message_id anchor an older-page retry is
+     *  already scheduled for; at most one delayed retry per
+     *  anchor, cleared when a page lands with older
+     *  messages. */
+    @Volatile
+    private var olderRetryAnchor = 0L
+
     @Volatile
     private var attached = false
 
@@ -121,12 +151,20 @@ object ThreadStore {
         _ready.value = false
         _replyTarget.value = null
         allLoaded = false
+        firstPageRetried = false
+        historyGeneration++
+        olderRetryAnchor = 0L
+        val gen = historyGeneration
         val query = TdClient.request("getMessageThread").apply {
             put("chat_id", sourceChat)
             put("message_id", postId)
         }
         TdRepository.sendRaw(query) { info ->
-            if (sourceChatId != sourceChat) return@sendRaw
+            if (sourceChatId != sourceChat ||
+                gen != historyGeneration
+            ) {
+                return@sendRaw
+            }
             if (TdClient.isError(info)) {
                 _error.value = "这个帖子没有评论区。"
                 return@sendRaw
@@ -157,6 +195,8 @@ object ThreadStore {
     }
 
     fun close() {
+        historyGeneration++
+        olderRetryAnchor = 0L
         if (threadChatId != 0L) {
             TdRepository.sendRaw(TdClient.request("closeChat").apply {
                 put("chat_id", threadChatId)
@@ -175,12 +215,46 @@ object ThreadStore {
         loadHistory(fromMessageId = oldest)
     }
 
-    private fun loadHistory(fromMessageId: Long) {
+    /** One delayed retry for an older page that came back
+     *  empty or with an error (v0.9.34, A1; the MessageStore
+     *  U2 contract). Deep inside a huge thread TDLib can
+     *  answer a page with nothing while that segment is
+     *  still being fetched — reading that as end-of-history
+     *  strands the user above a fake bottom. At most one
+     *  retry per anchor; a page that answers with the anchor
+     *  itself is the genuine end and never retries. */
+    private fun scheduleOlderRetry(
+        chatId: Long,
+        rootId: Long,
+        anchorId: Long,
+        gen: Int
+    ) {
+        if (olderRetryAnchor == anchorId) return
+        olderRetryAnchor = anchorId
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (threadChatId == chatId &&
+                rootMessageId == rootId &&
+                historyGeneration == gen &&
+                !allLoaded && !loading &&
+                byId.keys.minOrNull() == anchorId
+            ) {
+                loadHistory(
+                    fromMessageId = anchorId, isOlderRetry = true
+                )
+            }
+        }, 1200)
+    }
+
+    private fun loadHistory(
+        fromMessageId: Long,
+        isOlderRetry: Boolean = false
+    ) {
         val chatId = threadChatId
         val rootId = rootMessageId
         if (chatId == 0L || rootId == 0L || loading) return
         loading = true
         _historyLoading.value = true
+        val gen = historyGeneration
         val query = TdClient.request("getMessageThreadHistory").apply {
             put("chat_id", chatId)
             put("message_id", rootId)
@@ -192,7 +266,17 @@ object ThreadStore {
             loading = false
             _historyLoading.value = false
             if (threadChatId != chatId) return@sendRaw
-            if (TdClient.isError(response)) return@sendRaw
+            // Stale window (A1): open / close replaced the
+            // window while this page was in flight; its
+            // messages belong to the old window and must not
+            // leak into the new one.
+            if (gen != historyGeneration) return@sendRaw
+            if (TdClient.isError(response)) {
+                if (fromMessageId != 0L && !isOlderRetry) {
+                    scheduleOlderRetry(chatId, rootId, fromMessageId, gen)
+                }
+                return@sendRaw
+            }
             val arr = response.optJSONArray("messages") ?: JSONArray()
             val previousOldest = byId.keys.minOrNull()
             var addedOlder = false
@@ -207,9 +291,31 @@ object ThreadStore {
                 if (item.id > newestId) newestId = item.id
             }
             if (fromMessageId != 0L) {
-                if (!addedOlder) allLoaded = true
+                when {
+                    addedOlder -> olderRetryAnchor = 0L
+                    // A completely empty answer is suspect
+                    // (A1): retry once before believing it.
+                    arr.length() == 0 && !isOlderRetry ->
+                        scheduleOlderRetry(
+                            chatId, rootId, fromMessageId, gen
+                        )
+                    else -> allLoaded = true
+                }
             } else if (arr.length() == 0) {
-                allLoaded = true
+                if (!firstPageRetried) {
+                    firstPageRetried = true
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (threadChatId == chatId &&
+                            rootMessageId == rootId &&
+                            historyGeneration == gen &&
+                            !allLoaded && !loading
+                        ) {
+                            loadHistory(fromMessageId = 0L)
+                        }
+                    }, 1500)
+                } else {
+                    allLoaded = true
+                }
             }
             publish()
             if (fromMessageId == 0L && newestId != 0L) {
