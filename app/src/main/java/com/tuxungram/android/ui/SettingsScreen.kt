@@ -37,8 +37,22 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -364,6 +378,7 @@ fun SettingsScreen(
         // Everything renders from MeStore, so an edit shows
         // here the moment it lands.
         val me by MeStore.me.collectAsState()
+        GroupCard {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -405,10 +420,17 @@ fun SettingsScreen(
                     color = Color.Gray, fontSize = 13.sp
                 )
             }
-            Text("编辑资料 ›", color = Color.Gray, fontSize = 13.sp)
+            Icon(
+                Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = Color.Gray,
+                modifier = Modifier.size(20.dp)
+            )
+        }
         }
         Spacer(Modifier.height(8.dp))
-        Text("代理", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        SectionTitle(GlobeIcon, "代理")
+        GroupCard {
         Spacer(Modifier.height(4.dp))
         Text(
             "连不上 Telegram 时用。可以存多个代理，点哪个就用哪个，立刻生效，下次打开 App 也会自动用上次那个，不用再靠全局 VPN。",
@@ -433,7 +455,16 @@ fun SettingsScreen(
                     }
                     .padding(vertical = 8.dp)
             ) {
-                Text(if (isActive) "● " else "○ ")
+                Icon(
+                    GlobeIcon, contentDescription = null,
+                    tint = if (isActive) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        Color.Gray
+                    },
+                    modifier = Modifier.size(21.dp)
+                )
+                Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         entry.name.ifEmpty { entry.server },
@@ -685,8 +716,10 @@ fun SettingsScreen(
                 }
             )
         }
+        }
         Spacer(Modifier.height(28.dp))
-        Text("显示", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        SectionTitle(Icons.Filled.List, "显示")
+        GroupCard {
         Spacer(Modifier.height(4.dp))
         Text(
             "未读数上限：对话很多时，角标数字太长不好看。超过上限就显示成「上限+」。",
@@ -703,8 +736,10 @@ fun SettingsScreen(
                 }
             }
         }
+        }
         Spacer(Modifier.height(28.dp))
-        Text("外观", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        SectionTitle(PaletteIcon, "外观")
+        GroupCard {
         Spacer(Modifier.height(4.dp))
         Text(
             "深浅模式和主题色，选完立刻生效，不用重启。",
@@ -753,7 +788,12 @@ fun SettingsScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     if (selected) {
-                        Text("✓", color = Color.White, fontSize = 15.sp)
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
                 Text(UiSettings.SEED_NAMES[index], fontSize = 12.sp)
@@ -803,7 +843,12 @@ fun SettingsScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     if (selected) {
-                        Text("✓", color = Color.DarkGray, fontSize = 15.sp)
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = Color.DarkGray,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
                 Text(UiSettings.CHAT_BG_NAMES[index], fontSize = 12.sp)
@@ -877,8 +922,10 @@ fun SettingsScreen(
                 }
             }
         }
+        }
         Spacer(Modifier.height(28.dp))
-        Text("账号", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        SectionTitle(Icons.Filled.AccountCircle, "账号")
+        GroupCard {
         Spacer(Modifier.height(4.dp))
         Text(
             "可以登录多个 Telegram 账号，每个账号的数据各自独立。切换账号时 App 会自动重启一下，稍等片刻就好。",
@@ -946,8 +993,10 @@ fun SettingsScreen(
         TextButton(onClick = { TdRepository.addAccount() }) {
             Text("添加账号")
         }
+        }
         Spacer(Modifier.height(28.dp))
-        Text("安全", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        SectionTitle(Icons.Filled.Lock, "安全")
+        GroupCard {
         Spacer(Modifier.height(4.dp))
         Text(
             "应用锁：设一个 4-6 位数字密码，打开 App 和切回来时要先解锁。密码只存哈希，不存明文，Telegram 那边也看不到。",
@@ -965,6 +1014,11 @@ fun SettingsScreen(
                     .fillMaxWidth()
                     .padding(top = 10.dp)
             ) {
+                Icon(
+                    Icons.Filled.Lock, contentDescription = null,
+                    modifier = Modifier.size(19.dp)
+                )
+                Spacer(Modifier.width(8.dp))
                 Text("设置应用锁密码")
             }
         } else {
@@ -980,6 +1034,12 @@ fun SettingsScreen(
                 AppLock.biometricAvailable(settingsContext)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Face, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(23.dp)
+                )
+                Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text("指纹解锁")
                     if (!biometricOk) {
@@ -1021,21 +1081,33 @@ fun SettingsScreen(
             )
         }
         Spacer(Modifier.height(10.dp))
-        TextButton(onClick = onOpenSessions) {
-            Text("已登录设备（会话管理）")
-        }
-        Text(
-            "看哪些设备登着你的账号，不认识的可以踢下线。",
-            color = Color.Gray, fontSize = 12.sp
+        IconRow(
+            icon = Icons.Filled.Phone,
+            title = "已登录设备（会话管理）",
+            subtitle = "看哪些设备登着你的账号，不认识的可以踢下线。",
+            onClick = onOpenSessions,
+            trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         )
         PrivacySection()
         Spacer(Modifier.height(10.dp))
-        TextButton(onClick = onOpenBlocked) {
-            Text("已拉黑名单")
-        }
-        Text(
-            "被你拉黑的人都在这里，可以逐个解除。",
-            color = Color.Gray, fontSize = 12.sp
+        IconRow(
+            icon = BlockIcon,
+            title = "已拉黑名单",
+            subtitle = "被你拉黑的人都在这里，可以逐个解除。",
+            onClick = onOpenBlocked,
+            trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         )
         val dialogMode = pinDialog
         if (dialogMode != null) {
@@ -1157,8 +1229,10 @@ fun SettingsScreen(
                 }
             )
         }
+        }
         Spacer(Modifier.height(28.dp))
-        Text("通知", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        SectionTitle(Icons.Filled.Notifications, "通知")
+        GroupCard {
         Spacer(Modifier.height(4.dp))
         Text(
             "打开后，App 切到后台也会留一个服务继续收消息，有新消息就弹通知，点通知直接进对话。",
@@ -1166,6 +1240,12 @@ fun SettingsScreen(
         )
         val keepAlive by UiSettings.keepAlive.collectAsState()
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.Notifications, contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(23.dp)
+            )
+            Spacer(Modifier.width(14.dp))
             Text("后台接收消息", modifier = Modifier.weight(1f))
             Switch(
                 checked = keepAlive,
@@ -1183,8 +1263,10 @@ fun SettingsScreen(
             "一句实话：有些手机系统管后台管得严（比如魅族），光在这里打开还不够——请再去系统设置里给 TuxunGram 开「自启动」，电池用量选「不限制」，不然把 App 从最近任务里划掉后，系统可能还是会把它冻住，通知就迟到甚至收不到。这一层是系统说了算，App 里改不了。",
             color = Color.Gray, fontSize = 13.sp
         )
+        }
         Spacer(Modifier.height(28.dp))
-        Text("贴纸包", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        SectionTitle(Icons.Filled.Face, "贴纸包")
+        GroupCard {
         Spacer(Modifier.height(4.dp))
         Text(
             "查看已装的贴纸包、移除不用的，或者用链接添加新的。",
@@ -1196,10 +1278,17 @@ fun SettingsScreen(
                 .fillMaxWidth()
                 .padding(top = 10.dp)
         ) {
+            Icon(
+                Icons.Filled.Face, contentDescription = null,
+                modifier = Modifier.size(19.dp)
+            )
+            Spacer(Modifier.width(8.dp))
             Text("管理贴纸包")
         }
+        }
         Spacer(Modifier.height(28.dp))
-        Text("存储空间", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        SectionTitle(StorageIcon, "存储空间")
+        GroupCard {
         Spacer(Modifier.height(4.dp))
         var storageTick by remember { mutableIntStateOf(0) }
         val storageState = produceState<Pair<com.tuxungram.android.td.StorageInfo?, List<com.tuxungram.android.td.DownloadedEntry>>>(
@@ -1216,13 +1305,15 @@ fun SettingsScreen(
         if (storageInfo == null) {
             Text("正在统计占用…", color = Color.Gray, fontSize = 13.sp)
         } else {
-            Text(
-                "聊天数据库 ${formatBytes(storageInfo.databaseBytes)}（聊天记录的索引，不会清）",
-                fontSize = 14.sp
+            IconRow(
+                icon = StorageIcon,
+                title = "聊天数据库",
+                subtitle = "${formatBytes(storageInfo.databaseBytes)}（聊天记录的索引，不会清）"
             )
-            Text(
-                "下载的文件 ${formatBytes(storageInfo.filesBytes)}，共 ${storageInfo.fileCount} 个",
-                fontSize = 14.sp
+            IconRow(
+                icon = FolderIcon,
+                title = "下载的文件",
+                subtitle = "${formatBytes(storageInfo.filesBytes)}，共 ${storageInfo.fileCount} 个"
             )
         }
         var confirmClear by remember { mutableStateOf(false) }
@@ -1233,6 +1324,11 @@ fun SettingsScreen(
                 .fillMaxWidth()
                 .padding(top = 10.dp)
         ) {
+            Icon(
+                Icons.Filled.Delete, contentDescription = null,
+                modifier = Modifier.size(19.dp)
+            )
+            Spacer(Modifier.width(8.dp))
             Text("清理下载的文件缓存")
         }
         if (clearedTip != null) {
@@ -1338,20 +1434,24 @@ fun SettingsScreen(
                 )
             }
         }
+        }
         Spacer(Modifier.height(28.dp))
         // About + update check (v0.9.5, O5). The check is
         // the app's only network call outside TDLib and runs
         // only when this button is tapped — stated on the
         // page itself, in small print under the button.
-        Text(
-            "关于",
-            fontSize = 15.sp, fontWeight = FontWeight.SemiBold
-        )
+        SectionTitle(Icons.Filled.Info, "关于")
+        GroupCard {
         val updateInfo by UpdateChecker.state.collectAsState()
         TextButton(
             onClick = { UpdateChecker.check(BuildConfig.VERSION_NAME) },
             enabled = updateInfo.state != "checking"
         ) {
+            Icon(
+                Icons.Filled.Refresh, contentDescription = null,
+                modifier = Modifier.size(19.dp)
+            )
+            Spacer(Modifier.width(8.dp))
             Text(
                 if (updateInfo.state == "checking") {
                     "正在检查…"
@@ -1398,22 +1498,58 @@ fun SettingsScreen(
             color = Color.Gray, fontSize = 12.sp
         )
         // Changelog + guide replay (v0.9.6, P2/P3).
-        TextButton(onClick = onOpenChangelog) {
-            Text("更新日志")
-        }
-        TextButton(onClick = onOpenGuide) {
-            Text("新手引导（再看一遍）")
-        }
+        IconRow(
+            icon = Icons.Filled.List,
+            title = "更新日志",
+            onClick = onOpenChangelog,
+            trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        )
+        IconRow(
+            icon = Icons.Filled.Info,
+            title = "新手引导（再看一遍）",
+            onClick = onOpenGuide,
+            trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        )
         // Settings backup (v0.9.6, P4).
-        TextButton(onClick = { exportWarnOpen = true }) {
-            Text("导出设置（备份）")
-        }
-        TextButton(onClick = {
-            AppLock.noteExternalLaunch()
-            importLauncher.launch("application/json")
-        }) {
-            Text("导入设置")
-        }
+        IconRow(
+            icon = Icons.Filled.Share,
+            title = "导出设置（备份）",
+            onClick = { exportWarnOpen = true },
+            trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        )
+        IconRow(
+            icon = DownloadIcon,
+            title = "导入设置",
+            onClick = {
+                AppLock.noteExternalLaunch()
+                importLauncher.launch("application/json")
+            },
+            trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        )
         Spacer(Modifier.height(12.dp))
         Text(
             "TuxunGram ${BuildConfig.VERSION_NAME}",
@@ -1423,9 +1559,18 @@ fun SettingsScreen(
         // when a crash was recorded on this phone. Records
         // live only on this device and are never uploaded.
         if (crashCount > 0) {
-            TextButton(onClick = { crashDialogOpen = true }) {
-                Text("上次崩溃记录（$crashCount）")
+            IconRow(
+                icon = Icons.Filled.Warning,
+                title = "上次崩溃记录（$crashCount）",
+                onClick = { crashDialogOpen = true },
+                trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
             }
+            )
             Text(
                 "崩溃记录只保存在这台手机上，不会上传。",
                 color = Color.Gray, fontSize = 12.sp
@@ -1433,7 +1578,14 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = { TdRepository.logOut() }) {
+            Icon(
+                Icons.Filled.ExitToApp, contentDescription = null,
+                tint = Color(0xFFC62828),
+                modifier = Modifier.size(19.dp)
+            )
+            Spacer(Modifier.width(8.dp))
             Text("退出登录", color = Color(0xFFC62828))
+        }
         }
     }
 }
@@ -1454,7 +1606,7 @@ fun PrivacySection() {
     var editing by remember { mutableStateOf<PrivacySettingDef?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     Spacer(Modifier.height(18.dp))
-    Text("隐私", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    SectionTitle(EyeIcon, "隐私")
     Spacer(Modifier.height(4.dp))
     Text(
         "这些是账号级设置，在哪个客户端改都算数。点一项就能改。",
