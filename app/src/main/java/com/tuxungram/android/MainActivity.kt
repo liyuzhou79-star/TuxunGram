@@ -498,15 +498,7 @@ private sealed interface Route {
         override val depth = 1
     }
 
-    data object SettingsOverlay : Route {
-        override val depth = 1
-    }
-
     data object Archive : Route {
-        override val depth = 1
-    }
-
-    data object ContactsOverlay : Route {
         override val depth = 1
     }
 
@@ -604,7 +596,6 @@ private fun ReadyHost() {
     }
     var showChangelog by remember { mutableStateOf(false) }
     var showGuideReplay by remember { mutableStateOf(false) }
-    var showSettings by remember { mutableStateOf(false) }
     var showEditProfile by remember { mutableStateOf(false) }
     var showBlocked by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
@@ -612,7 +603,6 @@ private fun ReadyHost() {
     var showDownloads by remember { mutableStateOf(false) }
     var showNetworkStats by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
-    var showContacts by remember { mutableStateOf(false) }
     // Full-screen search page (v0.9.19, Z4): opened from the
     // chat list's search entry, results open chats from here.
     var showSearch by remember { mutableStateOf(false) }
@@ -738,9 +728,7 @@ private fun ReadyHost() {
         showStickerSets -> Route.StickerSets
         showDownloads -> Route.Downloads
         showNetworkStats -> Route.NetworkStats
-        showSettings -> Route.SettingsOverlay
         showArchive -> Route.Archive
-        showContacts -> Route.ContactsOverlay
         showSearch -> Route.Search
         groupSettingsChatId != null ->
             Route.GroupSettings(groupSettingsChatId!!)
@@ -820,52 +808,10 @@ private fun ReadyHost() {
                 is Route.NetworkStats -> NetworkStatsScreen(
                     onBack = { showNetworkStats = false }
                 )
-                is Route.SettingsOverlay -> SettingsScreen(
-            onBack = { showSettings = false },
-            onOpenSessions = {
-                showSettings = false
-                showSessions = true
-            },
-            onOpenStickerSets = {
-                showSettings = false
-                showStickerSets = true
-            },
-            onOpenDownloads = {
-                showSettings = false
-                showDownloads = true
-            },
-            onOpenNetworkStats = {
-                showSettings = false
-                showNetworkStats = true
-            },
-            onOpenEditProfile = {
-                showSettings = false
-                showEditProfile = true
-            },
-            onOpenBlocked = {
-                showSettings = false
-                showBlocked = true
-            },
-            onOpenChangelog = {
-                showSettings = false
-                showChangelog = true
-            },
-            onOpenGuide = {
-                showSettings = false
-                showGuideReplay = true
-            }
-        )
                 is Route.Archive -> ArchiveScreen(
                     onBack = { showArchive = false },
                     onOpenChat = {
                         showArchive = false
-                        openChatId = it
-                    }
-                )
-                is Route.ContactsOverlay -> ContactsScreen(
-                    onBack = { showContacts = false },
-                    onOpenChat = {
-                        showContacts = false
                         openChatId = it
                     }
                 )
@@ -1007,15 +953,16 @@ private fun ReadyHost() {
                             onOpenGuide = { showGuideReplay = true }
                         )
                         3 -> MeScreen(
-                            // With the Duck bar off (Z5) the
-                            // Me page is reached from the
-                            // drawer and needs its own way
-                            // back to the chat list.
-                            onBack = if (duckBar) {
-                                null
-                            } else {
-                                { homeTab = 0 }
-                            },
+                            // The back target is always the
+                            // chats tab (v0.9.22, AC1), so the
+                            // system Back key matches the
+                            // contacts/settings tabs; the
+                            // visible back row only joins it
+                            // when the Duck bar is off (Z5),
+                            // where the page is reached from
+                            // the drawer.
+                            onBack = { homeTab = 0 },
+                            showBackRow = !duckBar,
                             onEditProfile = { showEditProfile = true },
                             onOpenSavedChat = { openChatId = it },
                             onOpenSettingsTab = { homeTab = 2 },

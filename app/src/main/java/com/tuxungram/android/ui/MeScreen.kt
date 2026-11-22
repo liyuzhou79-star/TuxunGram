@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -55,12 +56,20 @@ fun MeScreen(
     onOpenSavedChat: (Long) -> Unit,
     onOpenSettingsTab: () -> Unit,
     onOpenChangelog: () -> Unit,
-    // Set only when the bottom navigation bar is off
-    // (v0.9.19, Z5): the page is then reached from the
-    // drawer and shows its own back row; as a bottom-bar
-    // tab it stays null and nothing changes.
-    onBack: (() -> Unit)? = null
+    // Back target (v0.9.19, Z5): the host always passes
+    // the chats tab, so the system Back key behaves here
+    // exactly like on the contacts and settings tabs
+    // (v0.9.22, AC1: this page used to install no
+    // BackHandler at all, so with the bottom bar off —
+    // where the page is reached from the drawer — the
+    // system Back key left the app instead of returning
+    // to the chat list). The visible back row above the
+    // header is separate: it only shows when the bottom
+    // bar is off (showBackRow), the way Z5 designed it.
+    onBack: (() -> Unit)? = null,
+    showBackRow: Boolean = false
 ) {
+    BackHandler(enabled = onBack != null) { onBack?.invoke() }
     val me by MeStore.me.collectAsState()
     val palette = OfficialTheme.current()
     Column(
@@ -69,7 +78,7 @@ fun MeScreen(
             .background(palette.graySection)
             .verticalScroll(rememberScrollState())
     ) {
-        if (onBack != null) {
+        if (showBackRow && onBack != null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
