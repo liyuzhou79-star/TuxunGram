@@ -7,6 +7,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -53,11 +54,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import com.tuxungram.android.td.MyStoriesStore
 import com.tuxungram.android.td.MyStoryUi
 import com.tuxungram.android.td.StoryAlbumUi
@@ -560,7 +566,14 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
  *  horizontal row of cover tiles over the story grid;
  *  long-press an album for rename/delete. The trailing
  *  tile creates a new album (name 1-12 characters, with
- *  an optional first batch of stories). */
+ *  an optional first batch of stories).
+ *
+ *  Reorder (v0.9.36, C3): the long-press menu's 调整顺序
+ *  entry switches the strip into reorder mode — tiles
+ *  become long-press-draggable horizontally (every tile
+ *  has the same 72 dp pitch, so the drag offset maps to
+ *  whole steps), each drop commits the full order via
+ *  reorderStoryAlbums, and 完成 leaves the mode. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AlbumsSection(
@@ -575,6 +588,20 @@ private fun AlbumsSection(
     var deleteTarget by remember {
         mutableStateOf<StoryAlbumUi?>(null)
     }
+    var reordering by remember { mutableStateOf(false) }
+    var localAlbums by remember {
+        mutableStateOf(albums)
+    }
+    var draggingAlbumId by remember {
+        mutableStateOf<Int?>(null)
+    }
+    var albumDragDelta by remember { mutableStateOf(0f) }
+    LaunchedEffect(albums) {
+        if (!reordering) localAlbums = albums
+    }
+    val albumPitchPx = with(LocalDensity.current) {
+        72.dp.toPx()
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -583,12 +610,24 @@ private fun AlbumsSection(
             )
         ) {
             Text(
-                "相册",
+                if (reordering) "拖动相册调整顺序" else "相册",
                 fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = { createOpen = true }) {
-                Text("新建相册")
+            if (reordering) {
+                TextButton(onClick = {
+                    localAlbums = albums
+                    reordering = false
+                }) {
+                    Text("取消")
+                }
+                TextButton(onClick = { reordering = false }) {
+                    Text("完成")
+                }
+            } else {
+                TextButton(onClick = { createOpen = true }) {
+                    Text("新建相册")
+                }
             }
         }
         if (albums.isEmpty()) {
@@ -609,22 +648,109 @@ private fun AlbumsSection(
                         horizontal = 12.dp
                     )
             ) {
-                items(albums, key = { it.id }) { album ->
+                items(localAlbums, key = { it.id }) { album ->
                     var menuOpen by remember(album.id) {
                         mutableStateOf(false)
                     }
+                    val isDragging = draggingAlbumId == album.id
                     Box {
                         Column(
                             horizontalAlignment =
                                 Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .padding(horizontal = 4.dp)
-                                .combinedClickable(
-                                    onClick = {
-                                        onOpenAlbum(album.id)
-                                    },
-                                    onLongClick = {
-                                        menuOpen = true
+                                .zIndex(if (isDragging) 1f else 0f)
+                                .graphicsLayer {
+                                    translationX =
+                                        if (isDragging) {
+                                            albumDragDelta
+                                        } else {
+                                            0f
+                                        }
+                                }
+                                .then(
+                                    if (reordering) {
+                                        Modifier.pointerInput(
+                                            album.id
+                                        ) {
+                                            detectDragGesturesAfterLongPress(
+                                                onDragStart = {
+                                                    draggingAlbumId =
+                                                        album.id
+                                                    albumDragDelta = 0f
+                                                },
+                                                onDragEnd = {
+                                                    draggingAlbumId =
+                                                        null
+                                                    albumDragDelta = 0f
+                                                    MyStoriesStore
+                                                        .reorderAlbums(
+                                                            localAlbums
+                                                                .map {
+                                                                    it.id
+                                                                }
+                                                        )
+                                                },
+                                                onDragCancel = {
+                                                    draggingAlbumId =
+                                                        null
+                                                    albumDragDelta = 0f
+                                                }
+                                            ) { change, dragAmount ->
+                                                change.consume()
+                                                albumDragDelta +=
+                                                    dragAmount.x
+                                                val shift =
+                                                    (albumDragDelta /
+                                                        albumPitchPx)
+                                                        .roundToInt()
+                                                if (shift != 0) {
+                                                    val idx =
+                                                        localAlbums
+                                                            .indexOfFirst {
+                                                                it.id ==
+                                                                    album.id
+                                                            }
+                                                    if (idx >= 0) {
+                                                        val target =
+                                                            (idx + shift)
+                                                                .coerceIn(
+                                                                    0,
+                                                                    localAlbums
+                                                                        .lastIndex
+                                                                )
+                                                        if (target !=
+                                                            idx
+                                                        ) {
+                                                            localAlbums =
+                                                                localAlbums
+                                                                    .toMutableList()
+                                                                    .apply {
+                                                                        add(
+                                                                            target,
+                                                                            removeAt(
+                                                                                idx
+                                                                            )
+                                                                        )
+                                                                    }
+                                                            albumDragDelta -=
+                                                                (target -
+                                                                    idx) *
+                                                                    albumPitchPx
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        Modifier.combinedClickable(
+                                            onClick = {
+                                                onOpenAlbum(album.id)
+                                            },
+                                            onLongClick = {
+                                                menuOpen = true
+                                            }
+                                        )
                                     }
                                 )
                         ) {
@@ -639,29 +765,39 @@ private fun AlbumsSection(
                                         .TextAlign.Center
                             )
                         }
-                        DropdownMenu(
-                            expanded = menuOpen,
-                            onDismissRequest = { menuOpen = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("改名") },
-                                onClick = {
-                                    menuOpen = false
-                                    renameTarget = album
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        "删除相册",
-                                        color = Color(0xFFC62828)
-                                    )
-                                },
-                                onClick = {
-                                    menuOpen = false
-                                    deleteTarget = album
-                                }
-                            )
+                        if (!reordering) {
+                            DropdownMenu(
+                                expanded = menuOpen,
+                                onDismissRequest = { menuOpen = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("调整顺序") },
+                                    onClick = {
+                                        menuOpen = false
+                                        localAlbums = albums
+                                        reordering = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("改名") },
+                                    onClick = {
+                                        menuOpen = false
+                                        renameTarget = album
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "删除相册",
+                                            color = Color(0xFFC62828)
+                                        )
+                                    },
+                                    onClick = {
+                                        menuOpen = false
+                                        deleteTarget = album
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -871,6 +1007,7 @@ private fun AlbumDetail(
     allStories: List<MyStoryUi>,
     onOpenStory: (Int) -> Unit
 ) {
+    val context = LocalContext.current
     val albumStories by MyStoriesStore.albumStories.collectAsState()
     val loading by
         MyStoriesStore.albumStoriesLoading.collectAsState()
@@ -879,6 +1016,31 @@ private fun AlbumDetail(
     var addPickerOpen by remember(album.id) {
         mutableStateOf(false)
     }
+    // Reorder mode (v0.9.36, C3): entered only after the
+    // store has loaded EVERY story of the album —
+    // reorderStoryAlbumStories takes the complete ordered
+    // id list, so a half-loaded prefix must never reach
+    // it. Rows are uniform 68 dp, dragged vertically with
+    // the same pitch-step pattern as the album strip.
+    var reordering by remember(album.id) {
+        mutableStateOf(false)
+    }
+    var preparingReorder by remember(album.id) {
+        mutableStateOf(false)
+    }
+    var localStories by remember(album.id) {
+        mutableStateOf<List<MyStoryUi>>(emptyList())
+    }
+    var draggingStoryId by remember(album.id) {
+        mutableStateOf<Int?>(null)
+    }
+    var storyDragDelta by remember(album.id) {
+        mutableStateOf(0f)
+    }
+    val storyPitchPx = with(LocalDensity.current) {
+        68.dp.toPx()
+    }
+    BackHandler(enabled = reordering) { reordering = false }
     LaunchedEffect(album.id) { MyStoriesStore.openAlbum(album.id) }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -888,15 +1050,208 @@ private fun AlbumDetail(
             )
         ) {
             Text(
-                "共 ${albumStories.size} 条",
+                if (reordering) {
+                    "拖动动态调整顺序"
+                } else {
+                    "共 ${albumStories.size} 条"
+                },
                 fontSize = 13.sp, color = Color.Gray,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = { addPickerOpen = true }) {
-                Text("添加动态")
+            if (reordering) {
+                TextButton(onClick = { reordering = false }) {
+                    Text("取消")
+                }
+                TextButton(onClick = {
+                    MyStoriesStore.reorderAlbumStories(
+                        album.id,
+                        localStories.map { it.storyId }
+                    )
+                    reordering = false
+                }) {
+                    Text("完成")
+                }
+            } else {
+                if (albumStories.size > 1) {
+                    TextButton(
+                        onClick = {
+                            preparingReorder = true
+                            MyStoriesStore.loadAllAlbumStories(
+                                album.id
+                            ) { ok ->
+                                preparingReorder = false
+                                if (ok) {
+                                    localStories = albumStories
+                                    reordering = true
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        "这个相册的动态没能全部加载下来，" +
+                                            "先不能调整顺序，检查网络后再试。",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        },
+                        enabled = !preparingReorder
+                    ) {
+                        Text(
+                            if (preparingReorder) {
+                                "正在加载全部…"
+                            } else {
+                                "调整顺序"
+                            }
+                        )
+                    }
+                }
+                TextButton(onClick = { addPickerOpen = true }) {
+                    Text("添加动态")
+                }
             }
         }
         when {
+            reordering -> LazyColumn(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(localStories, key = { it.storyId }) { story ->
+                    val isDragging = draggingStoryId == story.storyId
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(68.dp)
+                            .zIndex(if (isDragging) 1f else 0f)
+                            .graphicsLayer {
+                                translationY =
+                                    if (isDragging) {
+                                        storyDragDelta
+                                    } else {
+                                        0f
+                                    }
+                            }
+                            .background(
+                                if (isDragging) {
+                                    Color(0x1A000000)
+                                } else {
+                                    Color.Transparent
+                                }
+                            )
+                            .pointerInput(story.storyId) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = {
+                                        draggingStoryId = story.storyId
+                                        storyDragDelta = 0f
+                                    },
+                                    onDragEnd = {
+                                        draggingStoryId = null
+                                        storyDragDelta = 0f
+                                    },
+                                    onDragCancel = {
+                                        draggingStoryId = null
+                                        storyDragDelta = 0f
+                                    }
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    storyDragDelta += dragAmount.y
+                                    val shift =
+                                        (storyDragDelta /
+                                            storyPitchPx)
+                                            .roundToInt()
+                                    if (shift != 0) {
+                                        val idx = localStories
+                                            .indexOfFirst {
+                                                it.storyId ==
+                                                    story.storyId
+                                            }
+                                        if (idx >= 0) {
+                                            val target =
+                                                (idx + shift)
+                                                    .coerceIn(
+                                                        0,
+                                                        localStories
+                                                            .lastIndex
+                                                    )
+                                            if (target != idx) {
+                                                localStories =
+                                                    localStories
+                                                        .toMutableList()
+                                                        .apply {
+                                                            add(
+                                                                target,
+                                                                removeAt(
+                                                                    idx
+                                                                )
+                                                            )
+                                                        }
+                                                storyDragDelta -=
+                                                    (target - idx) *
+                                                        storyPitchPx
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 16.dp)
+                    ) {
+                        val path = story.previewPath
+                        val bitmap by produceState<
+                            android.graphics.Bitmap?
+                        >(initialValue = null, path) {
+                            value = if (path == null) {
+                                null
+                            } else {
+                                withContext(Dispatchers.IO) {
+                                    decodeCached(path, 256)
+                                }
+                            }
+                        }
+                        val bmp = bitmap
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF37474F))
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                java.text.SimpleDateFormat(
+                                    "yyyy-MM-dd HH:mm",
+                                    java.util.Locale.getDefault()
+                                ).format(
+                                    java.util.Date(
+                                        story.dateSeconds * 1000L
+                                    )
+                                ),
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                if (story.isVideo) {
+                                    "视频动态"
+                                } else {
+                                    "图片动态"
+                                },
+                                fontSize = 12.sp, color = Color.Gray
+                            )
+                        }
+                        Text(
+                            "≡",
+                            fontSize = 20.sp, color = Color.Gray
+                        )
+                    }
+                }
+            }
             loading && albumStories.isEmpty() -> Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center

@@ -237,12 +237,17 @@ object StickerSetStore {
     // ---- Creating a sticker set (v0.9.26, S4, basic) ----
 
     /** One image chosen for the new set, already validated by
-     *  the caller (PNG/WebP, one side exactly 512 px, the
-     *  other at most 512 — the server rejects anything else
-     *  and this basic flow does not resize). */
+     *  the caller (static: PNG/WebP, one side exactly
+     *  512 px, the other at most 512; video: WebM ≤ 256 KB,
+     *  ≤ 3 s, one side 512; animated: TGS ≤ 64 KB on a
+     *  512×512 canvas — the server rejects anything else
+     *  and this flow does not resize or transcode). */
     data class NewStickerItem(
         val path: String,
-        val isWebp: Boolean,
+        /** "webp" (static, PNG rides here too), "webm"
+         *  (video) or "tgs" (animated) — one set, one
+         *  format; createSet refuses a mix. */
+        val format: String,
         val emoji: String
     )
 
@@ -256,15 +261,19 @@ object StickerSetStore {
         _createResult.value = null
     }
 
-    /** Create a regular static sticker set
-     *  (createNewStickerSet, verified in td_api.tl: user_id
-     *  is my own id, stickers are newSticker{inputFileLocal,
-     *  format, emojis}). PNG files ride format
-     *  stickerFormatWebp — StickerFormat has no PNG variant
-     *  and the server re-encodes uploads. On success the set
-     *  is installed server-side right away; the management
-     *  list reloads and the share link is
-     *  t.me/addstickers/<name>. */
+    /** Create a regular sticker set (createNewStickerSet,
+     *  verified in td_api.tl: user_id is my own id, stickers
+     *  are newSticker{inputFileLocal, format, emojis}).
+     *  Static PNG files ride format stickerFormatWebp —
+     *  StickerFormat has no PNG variant and the server
+     *  re-encodes uploads. Video (v0.9.36, C2) rides
+     *  stickerFormatWebm and animated stickerFormatTgs
+     *  through the exact same newSticker shape: the
+     *  interface is isomorphic, only the format tag and
+     *  the caller's validation differ. Nothing is
+     *  transcoded here. On success the set is installed
+     *  server-side right away; the management list reloads
+     *  and the share link is t.me/addstickers/<name>. */
     fun createSet(
         title: String,
         name: String,
@@ -279,6 +288,17 @@ object StickerSetStore {
             _createResult.value = "err:先选至少一张图片。"
             return
         }
+        val formatType = when (items.first().format) {
+            "webm" -> "stickerFormatWebm"
+            "tgs" -> "stickerFormatTgs"
+            else -> "stickerFormatWebp"
+        }
+        if (items.any { it.format != items.first().format }) {
+            _createResult.value =
+                "err:一个贴纸包只能用同一种格式，请把静态图、" +
+                    "视频和动图分开建包。"
+            return
+        }
         _createResult.value = null
         val stickers = org.json.JSONArray()
         for (item in items) {
@@ -290,7 +310,7 @@ object StickerSetStore {
                 })
                 put(
                     "format",
-                    JSONObject().put("@type", "stickerFormatWebp")
+                    JSONObject().put("@type", formatType)
                 )
                 put(
                     "emojis",
@@ -323,9 +343,15 @@ object StickerSetStore {
                         "需要先给账号设置一个用户名，才能创建贴纸包。"
                     message.contains("STICKER", true) &&
                         message.contains("INVALID", true) ->
-                        "有一张图片不符合贴纸要求" +
-                            "（PNG/WebP，一边 512 像素、另一边不超过 512），" +
-                            "换一张再试。"
+                        "有一张不符合贴纸要求：静态图要 PNG/WebP、" +
+                            "一边 512 像素、另一边不超过 512；" +
+                            "视频贴纸要 WebM、不超过 256 KB、" +
+                            "3 秒以内、一边 512；动图要 TGS、" +
+                            "不超过 64 KB、画布 512×512。换一张再试。"
+                    message.contains("VIDEO", true) ->
+                        "视频贴纸不符合服务器要求（WebM 格式、" +
+                            "不超过 256 KB、3 秒以内、一边正好 " +
+                            "512 像素），换一个文件再试。"
                     else ->
                         "创建失败，再试一次。（错误码 " +
                             "${response.optInt("code")}）" +

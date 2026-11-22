@@ -639,6 +639,134 @@ object MyStoriesStore {
         }
     }
 
+    /** Reorder the album list (reorderStoryAlbums,
+     *  verified in td_api.tl: the full ordered id list).
+     *  The local list moves first; a server refusal puts
+     *  it back by reloading. */
+    fun reorderAlbums(orderedIds: List<Int>) {
+        if (myId == 0L) return
+        val byId = _albums.value.associateBy { it.id }
+        val reordered = orderedIds.mapNotNull { byId[it] }
+        if (reordered.size != _albums.value.size) return
+        _albums.value = reordered
+        val ids = JSONArray()
+        for (id in orderedIds) ids.put(id)
+        val query = TdClient.request("reorderStoryAlbums").apply {
+            put("chat_id", myId)
+            put("story_album_ids", ids)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _notice.value =
+                    "相册顺序没保存上，已经恢复成原来的顺序。" +
+                        "（错误码 ${response.optInt("code")}）"
+                loadAlbums()
+            }
+        }
+    }
+
+    /** Load EVERY story of the open album before the
+     *  reorder mode starts: reorderStoryAlbumStories
+     *  takes the complete ordered id list, so reordering
+     *  a half-loaded prefix would silently scramble the
+     *  tail. Pages are fetched into the published list
+     *  directly; the cap (50 pages × 100) keeps a runaway
+     *  album from looping forever — hitting it reports
+     *  failure instead of entering reorder mode. */
+    fun loadAllAlbumStories(albumId: Int, onDone: (Boolean) -> Unit) {
+        if (albumStoriesAlbumId != albumId) {
+            openAlbum(albumId)
+        }
+        val mainHandler = android.os.Handler(
+            android.os.Looper.getMainLooper()
+        )
+        var pages = 0
+        fun finish(ok: Boolean) {
+            mainHandler.post { onDone(ok) }
+        }
+        // fetchAlbumStoriesPage has no completion callback,
+        // so each step waits out the loading flag on a
+        // scratch thread: wait idle -> pull one page ->
+        // wait idle -> repeat until the store says the
+        // album is exhausted.
+        fun step() {
+            Thread {
+                fun waitIdle(): Boolean {
+                    var waited = 0
+                    while (_albumStoriesLoading.value) {
+                        if (++waited > 150) return false
+                        try {
+                            Thread.sleep(100)
+                        } catch (t: InterruptedException) {
+                            return false
+                        }
+                    }
+                    return true
+                }
+                if (!waitIdle()) {
+                    finish(false)
+                    return@Thread
+                }
+                if (_albumStoriesExhausted.value) {
+                    finish(true)
+                    return@Thread
+                }
+                if (++pages > 50) {
+                    finish(false)
+                    return@Thread
+                }
+                val before = _albumStories.value.size
+                loadMoreAlbumStories()
+                if (!waitIdle()) {
+                    finish(false)
+                    return@Thread
+                }
+                if (!_albumStoriesExhausted.value &&
+                    _albumStories.value.size == before
+                ) {
+                    finish(false)
+                    return@Thread
+                }
+                step()
+            }.start()
+        }
+        step()
+    }
+
+    /** Reorder stories inside one album
+     *  (reorderStoryAlbumStories, verified in td_api.tl:
+     *  the complete ordered story id list). The local
+     *  list moves first; a server refusal reloads the
+     *  album from scratch. */
+    fun reorderAlbumStories(albumId: Int, orderedIds: List<Int>) {
+        if (myId == 0L) return
+        if (albumStoriesAlbumId == albumId) {
+            val byId = _albumStories.value.associateBy { it.storyId }
+            val reordered = orderedIds.mapNotNull { byId[it] }
+            if (reordered.size == _albumStories.value.size) {
+                _albumStories.value = reordered
+            }
+        }
+        val ids = JSONArray()
+        for (id in orderedIds) ids.put(id)
+        val query =
+            TdClient.request("reorderStoryAlbumStories").apply {
+                put("chat_id", myId)
+                put("story_album_id", albumId)
+                put("story_ids", ids)
+            }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _notice.value =
+                    "相册内顺序没保存上，已经恢复成原来的顺序。" +
+                        "（错误码 ${response.optInt("code")}）"
+                if (albumStoriesAlbumId == albumId) {
+                    openAlbum(albumId)
+                }
+            }
+        }
+    }
+
     fun openAlbum(albumId: Int) {
         albumStoriesAlbumId = albumId
         albumStoriesOffset = 0

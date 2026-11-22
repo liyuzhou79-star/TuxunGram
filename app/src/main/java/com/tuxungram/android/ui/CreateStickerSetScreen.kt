@@ -57,25 +57,110 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** One image picked for the new set, with its validation
- *  outcome. Validation is honest and final: this basic
- *  flow never resizes or crops, so a wrong-sized image is
- *  flagged here and blocks submission until replaced. */
+/** One file picked for the new set, with its validation
+ *  outcome. Validation is honest and final: this flow
+ *  never resizes, crops or transcodes, so a file that
+ *  misses the server spec is flagged here and blocks
+ *  submission until replaced. [format] is "webp" for
+ *  static images (PNG rides along), "webm" for video
+ *  stickers and "tgs" for animated ones (v0.9.36, C2);
+ *  a set must stay within one format. */
 private data class PickedSticker(
     val path: String,
-    val isWebp: Boolean,
+    val format: String,
     val emoji: String,
     val problem: String?
 )
 
+/** Local pre-check for a video sticker file (v0.9.36,
+ *  C2), mirroring the server spec: WebM container,
+ *  ≤ 256 KB, ≤ 3 seconds, one side exactly 512 px and
+ *  the other at most 512. Metadata the platform cannot
+ *  read is not held against the file — the server stays
+ *  the final judge and its refusal is mapped to plain
+ *  language in StickerSetStore. No transcoding happens
+ *  here or anywhere in this flow. */
+private fun validateWebmSticker(file: File): String? {
+    if (file.length() > 256 * 1024L) {
+        return "文件有 ${file.length() / 1024} KB，视频贴纸不能超过 256 KB。"
+    }
+    val retriever = android.media.MediaMetadataRetriever()
+    try {
+        retriever.setDataSource(file.absolutePath)
+        val durationMs = retriever.extractMetadata(
+            android.media.MediaMetadataRetriever
+                .METADATA_KEY_DURATION
+        )?.toLongOrNull()
+        if (durationMs != null && durationMs > 3000) {
+            return "时长 ${(durationMs / 100).toDouble() / 10} 秒，" +
+                "视频贴纸不能超过 3 秒。"
+        }
+        val w = retriever.extractMetadata(
+            android.media.MediaMetadataRetriever
+                .METADATA_KEY_VIDEO_WIDTH
+        )?.toIntOrNull()
+        val h = retriever.extractMetadata(
+            android.media.MediaMetadataRetriever
+                .METADATA_KEY_VIDEO_HEIGHT
+        )?.toIntOrNull()
+        if (w != null && h != null && w > 0 && h > 0 &&
+            !((w == 512 || h == 512) && w <= 512 && h <= 512)
+        ) {
+            return "尺寸是 ${w}×${h}，视频贴纸需要一边正好 " +
+                "512 像素、另一边不超过 512。"
+        }
+    } catch (t: Throwable) {
+        // Unreadable metadata: the size check above still
+        // stands; dimensions/duration go to the server.
+    } finally {
+        try {
+            retriever.release()
+        } catch (t: Throwable) {
+            // Nothing to release cleanly; the file verdict
+            // does not depend on it.
+        }
+    }
+    return null
+}
+
+/** Local pre-check for an animated sticker file
+ *  (v0.9.36, C2): TGS is a gzipped Lottie JSON — size
+ *  ≤ 64 KB, and the JSON's canvas must be 512×512.
+ *  A file that does not decompress or parse is flagged
+ *  here instead of wasting a server round trip. */
+private fun validateTgsSticker(file: File): String? {
+    if (file.length() > 64 * 1024L) {
+        return "文件有 ${file.length() / 1024} KB，动图贴纸不能超过 64 KB。"
+    }
+    return try {
+        val json = java.util.zip.GZIPInputStream(
+            file.inputStream()
+        ).bufferedReader().use { it.readText() }
+        val root = org.json.JSONObject(json)
+        val w = root.optInt("w")
+        val h = root.optInt("h")
+        if (w != 512 || h != 512) {
+            "画布是 ${w}×${h}，动图贴纸需要 512×512。"
+        } else {
+            null
+        }
+    } catch (t: Throwable) {
+        "这个文件读不出 TGS 动画数据，换一个试试。"
+    }
+}
+
 /**
- * Create a static sticker set (v0.9.26, S4, basic):
- * title + short name (the server requires the
- * "_by_<username>" suffix, appended automatically), pick
- * PNG/WebP images from the gallery, one emoji per image,
- * then createNewStickerSet. Animated/video stickers are
- * out of scope for this version. Success shows the
- * t.me/addstickers link.
+ * Create a sticker set (v0.9.26, S4; video/animated
+ * added v0.9.36, C2): title + short name (the server
+ * requires the "_by_<username>" suffix, appended
+ * automatically), pick files, one emoji per file, then
+ * createNewStickerSet. Static sets take PNG/WebP images
+ * (one side exactly 512 px); video sets take .webm
+ * files as-is (≤ 256 KB, ≤ 3 s, one side 512 px);
+ * animated sets take .tgs files as-is (≤ 64 KB,
+ * 512×512 canvas). Nothing is transcoded — a file that
+ * misses the spec is flagged, never fixed up. Success
+ * shows the t.me/addstickers link.
  */
 @Composable
 fun CreateStickerSetView(onBack: () -> Unit) {
@@ -109,11 +194,38 @@ fun CreateStickerSetView(onBack: () -> Unit) {
             if (picked.size >= 50) break
             try {
                 val mime = context.contentResolver.getType(uri) ?: ""
-                val ext = if (mime == "image/webp") "webp" else "png"
+                // The original file name decides webm/tgs:
+                // their mime types are unreliable across
+                // file managers (often octet-stream).
+                var displayName = ""
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(
+                        android.provider.OpenableColumns.DISPLAY_NAME
+                    ),
+                    null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        displayName =
+                            cursor.getString(0) ?: ""
+                    }
+                }
+                val nameExt = displayName
+                    .substringAfterLast('.', "")
+                    .lowercase()
+                val kind = when {
+                    nameExt == "webm" || mime == "video/webm" ->
+                        "webm"
+                    nameExt == "tgs" -> "tgs"
+                    nameExt == "png" || nameExt == "webp" ||
+                        mime.startsWith("image/") -> "webp"
+                    else -> "other"
+                }
                 val file = File(
                     context.cacheDir,
                     "newsticker_${System.currentTimeMillis()}" +
-                        "_${picked.size}.$ext"
+                        "_${picked.size}." +
+                        if (kind == "other") "bin" else kind
                 )
                 context.contentResolver.openInputStream(uri)
                     ?.use { input ->
@@ -121,28 +233,52 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                             input.copyTo(output)
                         }
                     }
-                val options = BitmapFactory.Options().apply {
-                    inJustDecodeBounds = true
-                }
-                BitmapFactory.decodeFile(file.absolutePath, options)
-                val w = options.outWidth
-                val h = options.outHeight
-                val outMime = options.outMimeType ?: mime
-                val isWebp = outMime == "image/webp"
-                val problem = when {
-                    outMime != "image/png" && !isWebp ->
-                        "格式是 $outMime，需要 PNG 或 WebP。"
-                    w <= 0 || h <= 0 ->
-                        "这张图读不出来，换一张试试。"
-                    !((w == 512 || h == 512) && w <= 512 && h <= 512) ->
-                        "尺寸是 ${w}×${h}，贴纸需要一边正好 " +
-                            "512 像素、另一边不超过 512（本版不自动裁剪）。"
-                    else -> null
+                val problem: String?
+                val format: String
+                when (kind) {
+                    "webm" -> {
+                        format = "webm"
+                        problem = validateWebmSticker(file)
+                    }
+                    "tgs" -> {
+                        format = "tgs"
+                        problem = validateTgsSticker(file)
+                    }
+                    "webp" -> {
+                        format = "webp"
+                        val options = BitmapFactory.Options().apply {
+                            inJustDecodeBounds = true
+                        }
+                        BitmapFactory.decodeFile(
+                            file.absolutePath, options
+                        )
+                        val w = options.outWidth
+                        val h = options.outHeight
+                        val outMime = options.outMimeType ?: mime
+                        problem = when {
+                            outMime != "image/png" &&
+                                outMime != "image/webp" ->
+                                "格式是 $outMime，需要 PNG 或 WebP。"
+                            w <= 0 || h <= 0 ->
+                                "这张图读不出来，换一张试试。"
+                            !((w == 512 || h == 512) &&
+                                w <= 512 && h <= 512) ->
+                                "尺寸是 ${w}×${h}，贴纸需要一边正好 " +
+                                    "512 像素、另一边不超过 512" +
+                                    "（本版不自动裁剪）。"
+                            else -> null
+                        }
+                    }
+                    else -> {
+                        format = "webp"
+                        problem = "这个文件的格式不支持，" +
+                            "需要 PNG、WebP、WebM 或 TGS。"
+                    }
                 }
                 picked.add(
                     PickedSticker(
                         path = file.absolutePath,
-                        isWebp = isWebp,
+                        format = format,
                         emoji = "😀",
                         problem = problem
                     )
@@ -224,10 +360,13 @@ fun CreateStickerSetView(onBack: () -> Unit) {
         ) {
             item {
                 Text(
-                    "本版只做静态贴纸：从相册选 PNG / WebP 图片，" +
-                        "一边正好 512 像素、另一边不超过 512；" +
-                        "尺寸不对的图不会自动裁剪，会标出来。" +
-                        "动图和视频贴纸以后再做。",
+                    "三种贴纸都能建：静态选 PNG / WebP 图片" +
+                        "（一边正好 512 像素、另一边不超过 512）；" +
+                        "视频贴纸选 .webm 文件（不超过 256 KB、" +
+                        "3 秒以内、一边 512）；动图选 .tgs 文件" +
+                        "（不超过 64 KB、画布 512×512）。" +
+                        "本页不裁剪、不转码，不合规格的文件会标出来；" +
+                        "一个贴纸包只能用同一种格式。",
                     color = Color.Gray,
                     fontSize = 13.sp
                 )
@@ -263,13 +402,24 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                     modifier = Modifier.padding(top = 4.dp)
                 )
                 Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = {
-                        AppLock.noteExternalLaunch()
-                        picker.launch("image/*")
+                Row {
+                    Button(
+                        onClick = {
+                            AppLock.noteExternalLaunch()
+                            picker.launch("image/*")
+                        }
+                    ) {
+                        Text("从相册选图片")
                     }
-                ) {
-                    Text("从相册选图片")
+                    Spacer(Modifier.width(10.dp))
+                    Button(
+                        onClick = {
+                            AppLock.noteExternalLaunch()
+                            picker.launch("*/*")
+                        }
+                    ) {
+                        Text("选视频/动图文件")
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
             }
@@ -301,8 +451,22 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                         Box(
                             modifier = Modifier
                                 .size(52.dp)
-                                .background(Color(0xFFE0E0E0))
-                        )
+                                .background(Color(0xFFE0E0E0)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Video / animated files have no
+                            // bitmap preview; the tile names
+                            // the format instead of staying
+                            // blank.
+                            if (item.format != "webp") {
+                                Text(
+                                    item.format.uppercase(),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF616161)
+                                )
+                            }
+                        }
                     }
                     Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
@@ -340,11 +504,28 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                     )
                     Spacer(Modifier.height(8.dp))
                 }
+                // One set, one format (v0.9.36, C2): mixing
+                // static images with webm/tgs files is
+                // refused here and again in the store.
+                val mixedFormats = picked.isNotEmpty() &&
+                    picked.any {
+                        it.format != picked.first().format
+                    }
+                if (mixedFormats) {
+                    Text(
+                        "现在选的文件格式不统一：一个贴纸包只能用" +
+                            "同一种格式，把静态图、视频、动图分开建包。",
+                        color = Color(0xFFC62828),
+                        fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 val canSubmit = title.isNotBlank() &&
                     finalName.length >= 5 &&
                     me.username.isNotEmpty() &&
                     picked.isNotEmpty() &&
                     picked.all { it.problem == null } &&
+                    !mixedFormats &&
                     !submitting
                 Button(
                     onClick = {
@@ -356,7 +537,7 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                             items = picked.map {
                                 StickerSetStore.NewStickerItem(
                                     path = it.path,
-                                    isWebp = it.isWebp,
+                                    format = it.format,
                                     emoji = it.emoji
                                 )
                             }
