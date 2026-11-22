@@ -29,6 +29,10 @@ data class ChatItem(
     // End-to-end encrypted secret chat (chatTypeSecret); the
     // list row and the chat screen mark it with a lock.
     val isSecret: Boolean = false,
+    // Private chats only: the other user is online right now
+    // (userStatusOnline, tracked from updateUser /
+    // updateUserStatus; v0.9.9 W1 online dot).
+    val isOnline: Boolean = false,
     // Reactions this chat allows, from chat.available_reactions
     // (verified in td_api.tl): null = all reactions allowed
     // (chatAvailableReactionsAll or unknown), empty = reactions
@@ -60,6 +64,7 @@ object ChatStore {
      *  id of the other user's small profile photo. */
     private val userPhotoFileByChat = ConcurrentHashMap<Long, Int>()
     private val chatIdByUserId = ConcurrentHashMap<Long, Long>()
+    private val onlineByChat = ConcurrentHashMap<Long, Boolean>()
 
     @Volatile
     private var attached = false
@@ -414,11 +419,24 @@ object ChatStore {
                 val user = update.optJSONObject("user") ?: return
                 AvatarStore.noteUser(user)
                 val chatIdForUser = chatIdByUserId[user.optLong("id")] ?: return
+                onlineByChat[chatIdForUser] =
+                    user.optJSONObject("status")?.optString("@type") ==
+                    "userStatusOnline"
                 val smallId = user.optJSONObject("profile_photo")
                     ?.optJSONObject("small")?.optInt("id", 0) ?: 0
                 if (smallId != 0) {
                     userPhotoFileByChat[chatIdForUser] = smallId
                 }
+            }
+            "updateUserStatus" -> {
+                // Presence flips arrive on this lighter update
+                // (td_api.tl line 11652); the chat id comes from
+                // the private-chat mapping built on updateNewChat.
+                val chatIdForUser =
+                    chatIdByUserId[update.optLong("user_id")] ?: return
+                onlineByChat[chatIdForUser] =
+                    update.optJSONObject("status")?.optString("@type") ==
+                    "userStatusOnline"
             }
             "updateChatPhoto" -> {
                 val chat = cache[chatId] ?: return
@@ -598,6 +616,7 @@ object ChatStore {
             isMarkedAsUnread = chat.optBoolean("is_marked_as_unread"),
             photoFileId = avatarFileId(chat),
             photoPath = avatarPath(chat),
+            isOnline = onlineByChat[chat.optLong("id")] == true,
             allowedReactions = allowedReactionsOf(chat)
         )
     }

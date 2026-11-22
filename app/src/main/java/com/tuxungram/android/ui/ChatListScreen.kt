@@ -48,6 +48,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.MailOutline
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -612,17 +615,29 @@ fun ChatListScreen(
                     Spacer(Modifier.height(12.dp))
                     Text("正在加载文件夹…", color = Color.Gray)
                 } else if (selectedFolder != null) {
-                    Text("这个文件夹里还没有对话", color = Color.Gray)
+                    EmptyState(
+                        FolderIcon, "这个文件夹里还没有对话",
+                        "把对话移进这个文件夹后会出现在这里。"
+                    )
                 } else if (!allLoaded) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(12.dp))
                     Text("正在加载对话…", color = Color.Gray)
                 } else {
-                    Text(
-                        "还没有对话。在 Telegram 里有聊天后，这里会自动出现。",
-                        color = Color.Gray
+                    EmptyState(
+                        Icons.AutoMirrored.Filled.Send, "还没有对话",
+                        "在 Telegram 里有聊天后，这里会自动出现。"
                     )
                 }
+            }
+        } else if (shown.isEmpty()) {
+            // Search (or a filter) matched nothing: say so with
+            // a graphic instead of a blank page (W1/W5).
+            CenterColumn {
+                EmptyState(
+                    Icons.Filled.Search, "没有找到对话",
+                    "换个关键词试试，或者检查一下拼写。"
+                )
             }
         } else {
             LazyColumn(
@@ -781,7 +796,7 @@ fun SearchHitRow(hit: SearchHit, onClick: () -> Unit) {
 /** One action cell behind a swiped chat row (v0.9.2, L3). */
 data class SwipeAction(
     val label: String,
-    val glyph: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val bg: Color,
     val run: () -> Unit
 )
@@ -808,20 +823,20 @@ fun SwipeableChatRow(
     val hasUnread = chat.unreadCount > 0 || chat.isMarkedAsUnread
     val leftActions = listOf(
         if (inArchive) {
-            SwipeAction("取消归档", "📤", Color(0xFF78909C)) {
+            SwipeAction("取消归档", ArchiveIcon, Color(0xFF78909C)) {
                 ChatStore.unarchive(chat)
             }
         } else {
-            SwipeAction("归档", "📥", Color(0xFF78909C)) {
+            SwipeAction("归档", ArchiveIcon, Color(0xFF78909C)) {
                 ChatStore.archive(chat)
             }
         },
         if (hasUnread) {
-            SwipeAction("标已读", "✓", Color(0xFF5B7C99)) {
+            SwipeAction("标已读", Icons.Filled.Check, Color(0xFF5B7C99)) {
                 ChatStore.markRead(chat)
             }
         } else {
-            SwipeAction("标未读", "●", Color(0xFF5B7C99)) {
+            SwipeAction("标未读", Icons.Filled.MailOutline, Color(0xFF5B7C99)) {
                 ChatStore.markUnread(chat)
             }
         }
@@ -830,18 +845,18 @@ fun SwipeableChatRow(
         listOf(
             SwipeAction(
                 if (chat.isMuted) "取消静音" else "静音",
-                "🔕", Color(0xFF7E57C2)
+                MuteBellIcon, Color(0xFF7E57C2)
             ) { ChatStore.toggleMute(chat) }
         )
     } else {
         listOf(
             SwipeAction(
                 if (chat.isPinned) "取消置顶" else "置顶",
-                "📌", Color(0xFF8D6E63)
+                PinIcon, Color(0xFF8D6E63)
             ) { ChatStore.togglePin(chat) },
             SwipeAction(
                 if (chat.isMuted) "取消静音" else "静音",
-                "🔕", Color(0xFF7E57C2)
+                MuteBellIcon, Color(0xFF7E57C2)
             ) { ChatStore.toggleMute(chat) }
         )
     }
@@ -967,7 +982,10 @@ private fun SwipeActionCell(
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(action.glyph, color = Color.White, fontSize = 19.sp)
+            Icon(
+                action.icon, contentDescription = null,
+                tint = Color.White, modifier = Modifier.size(22.dp)
+            )
             Text(action.label, color = Color.White, fontSize = 11.sp)
         }
     }
@@ -993,23 +1011,38 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
             Color(0xFFEF9A9A), Color(0xFFF48FB1), Color(0xFFCE93D8), Color(0xFF90CAF9),
             Color(0xFF80CBC4), Color(0xFFA5D6A7), Color(0xFFFFCC80), Color(0xFFBCAAA4)
         )
-        if (chat.photoPath != null) {
-            AvatarImage(path = chat.photoPath, sizeDp = 48)
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(
-                        colors[hue.toInt()],
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    chat.title.trim().firstOrNull()?.toString() ?: "?",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
+        Box {
+            if (chat.photoPath != null) {
+                AvatarImage(path = chat.photoPath, sizeDp = 48)
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(
+                            colors[hue.toInt()],
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        chat.title.trim().firstOrNull()?.toString() ?: "?",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                }
+            }
+            if (chat.isOnline) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(13.dp)
+                        .border(
+                            2.dp,
+                            MaterialTheme.colorScheme.background,
+                            CircleShape
+                        )
+                        .background(Color(0xFF4CAF50), CircleShape)
                 )
             }
         }
@@ -1031,6 +1064,13 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     Spacer(Modifier.width(6.dp))
                     Text("频道", color = Color.Gray, fontSize = 11.sp)
                 }
+                if (chat.isMuted) {
+                    Spacer(Modifier.width(5.dp))
+                    Icon(
+                        MuteBellIcon, contentDescription = "已静音",
+                        tint = Color.Gray, modifier = Modifier.size(14.dp)
+                    )
+                }
                 Spacer(Modifier.weight(1f))
                 Text(formatChatTime(chat.dateSeconds), color = Color.Gray, fontSize = 12.sp)
             }
@@ -1044,7 +1084,10 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     modifier = Modifier.weight(1f)
                 )
                 if (chat.isPinned) {
-                    Text("置顶", color = Color.Gray, fontSize = 11.sp)
+                    Icon(
+                        PinIcon, contentDescription = "置顶",
+                        tint = Color.Gray, modifier = Modifier.size(13.dp)
+                    )
                 }
                 if (chat.unreadCount > 0 || chat.isMarkedAsUnread) {
                     Spacer(Modifier.width(6.dp))
@@ -1075,6 +1118,9 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(
+                leadingIcon = {
+                    Icon(PinIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                },
                 text = { Text(if (chat.isPinned) "取消置顶" else "置顶") },
                 onClick = {
                     menuOpen = false
@@ -1082,6 +1128,9 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 }
             )
             DropdownMenuItem(
+                leadingIcon = {
+                    Icon(MuteBellIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                },
                 text = { Text(if (chat.isMuted) "取消静音" else "静音") },
                 onClick = {
                     menuOpen = false
@@ -1090,6 +1139,9 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
             )
             if (chat.unreadCount > 0 || chat.isMarkedAsUnread) {
                 DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
+                    },
                     text = { Text("标为已读") },
                     onClick = {
                         menuOpen = false
@@ -1098,6 +1150,9 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 )
             }
             DropdownMenuItem(
+                leadingIcon = {
+                    Icon(ArchiveIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                },
                 text = { Text("归档") },
                 onClick = {
                     menuOpen = false
@@ -1136,7 +1191,10 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                     Spacer(Modifier.height(12.dp))
                     Text("正在加载归档…", color = Color.Gray)
                 } else {
-                    Text("没有归档的对话", color = Color.Gray)
+                    EmptyState(
+                        ArchiveIcon, "没有归档的对话",
+                        "在对话列表长按一个对话可以把它归档到这里。"
+                    )
                 }
             }
         } else {
@@ -1150,17 +1208,17 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                 items(items = archived, key = { it.id }) { chat ->
                     SwipeActionsContainer(
                         leftActions = listOf(
-                            SwipeAction("取消归档", "📤", Color(0xFF78909C)) {
+                            SwipeAction("取消归档", ArchiveIcon, Color(0xFF78909C)) {
                                 ChatStore.unarchive(chat)
                             },
                             if (chat.unreadCount > 0 ||
                                 chat.isMarkedAsUnread
                             ) {
-                                SwipeAction("标已读", "✓", Color(0xFF5B7C99)) {
+                                SwipeAction("标已读", Icons.Filled.Check, Color(0xFF5B7C99)) {
                                     ChatStore.markRead(chat)
                                 }
                             } else {
-                                SwipeAction("标未读", "●", Color(0xFF5B7C99)) {
+                                SwipeAction("标未读", Icons.Filled.MailOutline, Color(0xFF5B7C99)) {
                                     ChatStore.markUnread(chat)
                                 }
                             }
@@ -1168,7 +1226,7 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                         rightActions = listOf(
                             SwipeAction(
                                 if (chat.isMuted) "取消静音" else "静音",
-                                "🔕", Color(0xFF7E57C2)
+                                MuteBellIcon, Color(0xFF7E57C2)
                             ) { ChatStore.toggleMute(chat) }
                         ),
                         openKey = chat.id,
