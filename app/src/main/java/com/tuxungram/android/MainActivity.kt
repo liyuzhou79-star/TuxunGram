@@ -113,6 +113,7 @@ import com.tuxungram.android.ui.BlockedScreen
 import com.tuxungram.android.ui.ChatListScreen
 import com.tuxungram.android.ui.ContactsScreen
 import com.tuxungram.android.ui.EditProfileScreen
+import com.tuxungram.android.ui.GroupPermissionsScreen
 import com.tuxungram.android.ui.LockScreen
 import com.tuxungram.android.ui.MembersScreen
 import com.tuxungram.android.ui.ChatScreen
