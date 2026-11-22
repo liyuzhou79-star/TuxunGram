@@ -424,6 +424,17 @@ fun SimpleMessageBubble(
                         .padding(top = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (msg.edited) {
+                        Text(
+                            "已编辑 ",
+                            color = if (outgoing) {
+                                palette.outTime
+                            } else {
+                                palette.inTime
+                            },
+                            fontSize = 11.sp
+                        )
+                    }
                     Text(
                         formatMsgTime(msg.dateSeconds),
                         color = if (outgoing) {

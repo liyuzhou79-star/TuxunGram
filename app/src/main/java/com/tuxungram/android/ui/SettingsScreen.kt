@@ -136,11 +136,18 @@ import com.tuxungram.android.BuildConfig
 fun formatBytes(bytes: Long): String {
     if (bytes < 1024) return "$bytes B"
     val kb = bytes / 1024.0
-    if (kb < 1024) return String.format("%.1f KB", kb)
+    if (kb < 1024) return "${trimZero(kb)} KB"
     val mb = kb / 1024.0
-    if (mb < 1024) return String.format("%.1f MB", mb)
-    return String.format("%.2f GB", mb / 1024.0)
+    if (mb < 1024) return "${trimZero(mb)} MB"
+    return "${trimZero(mb / 1024.0)} GB"
 }
+
+/** One decimal, with a trailing ".0" dropped (v0.9.29, V4):
+ *  the official client writes "1 MB", not "1.0 MB". US
+ *  locale so the decimal point never becomes a comma. */
+private fun trimZero(value: Double): String =
+    String.format(java.util.Locale.US, "%.1f", value)
+        .removeSuffix(".0")
 
 /** Open a downloaded file with a system viewer via FileProvider
  *  (same sharing path the chat screen uses). */

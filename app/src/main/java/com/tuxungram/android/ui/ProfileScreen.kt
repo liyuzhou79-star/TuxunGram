@@ -348,15 +348,15 @@ fun ProfileScreen(
                         } ?: p.kindLabel
                     p.memberCount > 0 ->
                         if (p.kindLabel == "频道") {
-                            "${p.memberCount} 位订阅者"
+                            "${formatCount(p.memberCount)} 位订阅者"
                         } else {
-                            "${p.memberCount} 位成员"
+                            "${formatCount(p.memberCount)} 位成员"
                         }
                     (liveItem?.memberCount ?: 0) > 0 ->
                         if (p.kindLabel == "频道") {
-                            "${liveItem?.memberCount} 位订阅者"
+                            "${formatCount(liveItem?.memberCount ?: 0)} 位订阅者"
                         } else {
-                            "${liveItem?.memberCount} 位成员"
+                            "${formatCount(liveItem?.memberCount ?: 0)} 位成员"
                         }
                     else -> p.kindLabel
                 }
@@ -532,7 +532,7 @@ fun ProfileScreen(
                                 } else {
                                     "成员"
                                 },
-                                value = "${p.memberCount} 人"
+                                value = "${formatCount(p.memberCount)} 人"
                             )
                         }
                         if (p.adminCount > 0) {
@@ -1308,7 +1308,7 @@ fun ProfileScreen(
                                         )
                                         if (link.isPrimary) append(" · 主链接")
                                         if (link.isRevoked) append(" · 已撤销")
-                                        append(" · 已有 ${link.memberCount} 人通过它加入")
+                                        append(" · 已有 ${formatCount(link.memberCount)} 人通过它加入")
                                     },
                                     fontSize = 13.sp,
                                     color = if (link.isRevoked) {

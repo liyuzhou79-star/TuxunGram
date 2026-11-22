@@ -169,6 +169,26 @@ fun Modifier.columnScrollbar(state: ScrollState): Modifier =
 /** Translate a TDLib error into one plain sentence for the UI.
  *  Raw codes are never shown except the numeric code on the
  *  unknown-error line, so a user screenshot stays useful. */
+/** People counts the way the app's Chinese UI writes them
+ *  (v0.9.29, V4): thousands grouped below ten thousand, and
+ *  万 units above it (12345 → "1.2 万", 123456 → "12.3 万"),
+ *  matching how the official client's Chinese UI presents
+ *  member and subscriber counts. Used by the chat header
+ *  subtitle and profile pages, which used to print the raw
+ *  number. */
+fun formatCount(count: Int): String {
+    if (count < 0) return "0"
+    if (count < 10_000) {
+        return String.format(
+            java.util.Locale.getDefault(), "%,d", count
+        )
+    }
+    val wan = count / 10_000.0
+    val text = String.format(java.util.Locale.US, "%.1f", wan)
+        .removeSuffix(".0")
+    return "$text 万"
+}
+
 fun friendlyError(error: Pair<Int, String>): String {
     val (code, message) = error
     val flood = Regex("FLOOD_WAIT_(\\d+)").find(message)

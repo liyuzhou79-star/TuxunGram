@@ -124,6 +124,11 @@ data class MsgItem(
     val id: Long,
     val outgoing: Boolean,
     val dateSeconds: Int,
+    // Edited after sending (message.edit_date > 0, v0.9.29
+    // V4): drives the "已编辑" marker before the time in the
+    // bubble footer — before this version the app parsed no
+    // edit state at all and edited messages looked untouched.
+    val edited: Boolean = false,
     val kind: MsgKind,
     val text: String,
     // Formatting entities for [text] (message text or caption),
@@ -2412,6 +2417,21 @@ object MessageStore {
                 byId[messageId] = parseContent(existing, content)
                 publish()
             }
+            "updateMessageEdited" -> {
+                // An edit landed (from any device): flip the
+                // "已编辑" marker on the open chat's copy right
+                // away instead of waiting for a reload
+                // (v0.9.29, V4). The new content itself arrives
+                // as updateMessageContent just before this.
+                val chatId = update.optLong("chat_id")
+                if (chatId != currentChatId) return
+                val messageId = update.optLong("message_id")
+                val existing = byId[messageId] ?: return
+                if (update.optInt("edit_date") > 0 && !existing.edited) {
+                    byId[messageId] = existing.copy(edited = true)
+                    publish()
+                }
+            }
             "updateMessageInteractionInfo" -> {
                 val chatId = update.optLong("chat_id")
                 if (chatId != currentChatId) return
@@ -2463,6 +2483,14 @@ object MessageStore {
                 // group can show who it is; cancel removes them.
                 val chatId = update.optLong("chat_id")
                 if (chatId != currentChatId) return
+                // Topic filter (v0.9.29, V5): this store only
+                // carries the chat's main timeline. An action
+                // scoped to a forum topic (topic_id != 0)
+                // belongs to that topic's own timeline (the
+                // ForumStore's) and must not leak into the main
+                // chat's subtitle. Non-forum updates carry no
+                // topic_id, which reads as 0 here.
+                if (update.optLong("topic_id") != 0L) return
                 val sender = update.optJSONObject("sender_id") ?: return
                 val actionType = update.optJSONObject("action")
                     ?.optString("@type") ?: return
@@ -2711,6 +2739,7 @@ object MessageStore {
             id = msg.optLong("id"),
             outgoing = msg.optBoolean("is_outgoing"),
             dateSeconds = msg.optInt("date"),
+            edited = msg.optInt("edit_date") > 0,
             kind = MsgKind.OTHER,
             text = "",
             senderName = senderNameFor(msg.optJSONObject("sender_id")),

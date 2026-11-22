@@ -1137,9 +1137,9 @@ fun ChatScreen(
                     } else if ((chat?.memberCount ?: 0) > 0) {
                         Text(
                             if (chat?.isChannel == true) {
-                                "${chat?.memberCount} 位订阅者"
+                                "${formatCount(chat?.memberCount ?: 0)} 位订阅者"
                             } else {
-                                "${chat?.memberCount} 位成员"
+                                "${formatCount(chat?.memberCount ?: 0)} 位成员"
                             },
                             color = headerPalette.textSecondary,
                             fontSize = 13.sp,
@@ -4124,7 +4124,10 @@ fun MediaTimeCapsule(msg: MsgItem, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            formatMsgTime(msg.dateSeconds),
+            // Edited marker (v0.9.29, V4): the official client
+            // stamps "edited" into the media time capsule too.
+            (if (msg.edited) "已编辑 " else "") +
+                formatMsgTime(msg.dateSeconds),
             color = Color.White,
             fontSize = 11.sp
         )
@@ -4667,6 +4670,17 @@ fun MessageBubble(
                     if (msg.effectId != 0L) {
                         Text(
                             (effectEmojis[msg.effectId] ?: "✨") + " ",
+                            fontSize = 11.sp
+                        )
+                    }
+                    if (msg.edited) {
+                        Text(
+                            "已编辑 ",
+                            color = if (outgoing) {
+                                palette.outTime
+                            } else {
+                                palette.inTime
+                            },
                             fontSize = 11.sp
                         )
                     }
