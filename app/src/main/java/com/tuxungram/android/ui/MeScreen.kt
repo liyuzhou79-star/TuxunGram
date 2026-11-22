@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
@@ -167,7 +166,7 @@ fun MeScreen(
                 }
                 if (me.username.isNotEmpty()) {
                     ProfileInfoRow(
-                        icon = Icons.Filled.AlternateEmail,
+                        icon = AtIcon,
                         label = "用户名",
                         value = "@${me.username}",
                         valueAccent = true

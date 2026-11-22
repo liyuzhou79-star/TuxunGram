@@ -736,3 +736,26 @@ val MoonIcon: ImageVector = icon("Moon") {
     arcTo(7f, 7f, 0f, false, false, 21f, 12.79f)
     close()
 }
+
+/** At sign (username info rows, v0.9.20): an even-odd ring
+ *  with the inner "a" disc and its stem — the core icon set
+ *  has no AlternateEmail glyph. */
+val AtIcon: ImageVector = icon("At", evenOdd = true) {
+    moveTo(2.5f, 12f)
+    arcTo(8.5f, 8.5f, 0f, false, true, 19.5f, 12f)
+    arcTo(8.5f, 8.5f, 0f, false, true, 2.5f, 12f)
+    close()
+    moveTo(5.6f, 12f)
+    arcTo(5.4f, 5.4f, 0f, false, true, 16.4f, 12f)
+    arcTo(5.4f, 5.4f, 0f, false, true, 5.6f, 12f)
+    close()
+    moveTo(8.5f, 12f)
+    arcTo(2.5f, 2.5f, 0f, false, true, 13.5f, 12f)
+    arcTo(2.5f, 2.5f, 0f, false, true, 8.5f, 12f)
+    close()
+    moveTo(13.2f, 9.6f)
+    horizontalLineTo(15.8f)
+    verticalLineTo(15.2f)
+    horizontalLineTo(13.2f)
+    close()
+}

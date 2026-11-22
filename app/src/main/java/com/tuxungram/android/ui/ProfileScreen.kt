@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -519,7 +518,7 @@ fun ProfileScreen(
                         }
                         if (p.userId != 0L && p.username.isNotEmpty()) {
                             ProfileInfoRow(
-                                icon = Icons.Filled.AlternateEmail,
+                                icon = AtIcon,
                                 label = "用户名",
                                 value = "@${p.username}",
                                 valueAccent = true
