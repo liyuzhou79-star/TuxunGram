@@ -30,7 +30,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -83,9 +86,14 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
     }
 
     val current = stories.getOrNull(index)
+    // Reply draft (v0.9.25, R3): typing pauses the photo
+    // auto-advance so the viewer does not slide away mid-reply.
+    var replyText by remember(chatId) { mutableStateOf("") }
     // Photos advance automatically once they are on screen.
-    LaunchedEffect(index, current?.localPath, current?.isVideo) {
-        if (current != null && !current.isVideo && current.localPath != null) {
+    LaunchedEffect(index, current?.localPath, current?.isVideo, replyText) {
+        if (current != null && !current.isVideo && current.localPath != null &&
+            replyText.isEmpty()
+        ) {
             delay(5000)
             if (index < stories.lastIndex) index++ else onBack()
         }
@@ -237,6 +245,66 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
                         contentDescription = "关闭",
                         tint = Color.White
                     )
+                }
+            }
+        }
+
+        // Bottom interaction bar (v0.9.25, R3): a ❤️ reaction
+        // toggle for every story, plus a reply field when the
+        // story allows replies and it is not my own. Replies
+        // are plain messages with inputMessageReplyToStory —
+        // they land in the poster's chat.
+        if (current != null && !isOwn) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 14.dp)
+            ) {
+                TextButton(onClick = {
+                    StoryStore.toggleStoryReaction(chatId, current)
+                }) {
+                    Text(
+                        if (current.hasReaction) "❤️" else "🤍",
+                        fontSize = 22.sp
+                    )
+                }
+                if (current.canBeReplied) {
+                    OutlinedTextField(
+                        value = replyText,
+                        onValueChange = { replyText = it },
+                        placeholder = {
+                            Text(
+                                "回复这条动态…",
+                                color = Color.White.copy(alpha = 0.6f),
+                                fontSize = 14.sp
+                            )
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color.White,
+                            unfocusedBorderColor =
+                                Color.White.copy(alpha = 0.5f),
+                            cursorColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(
+                        enabled = replyText.isNotBlank(),
+                        onClick = {
+                            StoryStore.replyToStory(
+                                chatId, current.storyId, replyText
+                            )
+                            replyText = ""
+                        }
+                    ) {
+                        Text("发送", color = Color.White, fontSize = 15.sp)
+                    }
                 }
             }
         }

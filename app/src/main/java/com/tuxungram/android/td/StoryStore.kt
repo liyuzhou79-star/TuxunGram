@@ -29,7 +29,12 @@ data class StoryContentUi(
     val fileId: Int,
     val localPath: String? = null,
     val isPostedToPage: Boolean = false,
-    val canTogglePosted: Boolean = false
+    val canTogglePosted: Boolean = false,
+    // Viewer interactions (v0.9.25, R3): can_be_replied gates
+    // the reply entry; hasReaction mirrors a non-null
+    // chosen_reaction_type on the story object.
+    val canBeReplied: Boolean = false,
+    val hasReaction: Boolean = false
 )
 
 /**
@@ -142,6 +147,9 @@ object StoryStore {
             val posted = story.optBoolean("is_posted_to_chat_page")
             val canToggle =
                 story.optBoolean("can_toggle_is_posted_to_chat_page")
+            val canReply = story.optBoolean("can_be_replied")
+            val hasReaction =
+                story.optJSONObject("chosen_reaction_type") != null
             val parsed = when (content.optString("@type")) {
                 "storyContentPhoto" -> {
                     val sizes = content.optJSONObject("photo")
@@ -155,7 +163,8 @@ object StoryStore {
                         path = downloadedPath(file)
                     }
                     StoryContentUi(
-                        storyId, false, fileId, path, posted, canToggle
+                        storyId, false, fileId, path, posted, canToggle,
+                        canReply, hasReaction
                     )
                 }
                 "storyContentVideo" -> {
@@ -164,11 +173,13 @@ object StoryStore {
                     StoryContentUi(
                         storyId, true,
                         file?.optInt("id") ?: 0,
-                        downloadedPath(file), posted, canToggle
+                        downloadedPath(file), posted, canToggle,
+                        canReply, hasReaction
                     )
                 }
                 else -> StoryContentUi(
-                    storyId, false, 0, null, posted, canToggle
+                    storyId, false, 0, null, posted, canToggle,
+                    canReply, hasReaction
                 )
             }
             val current = _viewerStories.value.toMutableList()
@@ -229,7 +240,11 @@ object StoryStore {
      *  postStory with inputStoryContentPhoto, privacy
      *  storyPrivacySettingsEveryone, active_period 86400 (the
      *  only period non-Premium accounts may use). */
-    fun postPhotoStory(path: String) {
+    /** Privacy choices offered at publish time (v0.9.25,
+     *  R3), mapped to storyPrivacySettings* in doPostStory:
+     *  everyone / contacts / close_friends. Selected-users
+     *  needs a user picker and is not offered. */
+    fun postPhotoStory(path: String, privacy: String = "everyone") {
         _postNotice.value = "正在发布动态…"
         TdRepository.sendRaw(TdClient.request("getMe")) { me ->
             if (TdClient.isError(me)) {
@@ -246,7 +261,8 @@ object StoryStore {
                     return@sendRaw
                 }
                 when (result.optString("@type")) {
-                    "canPostStoryResultOk" -> doPostStory(myId, path)
+                    "canPostStoryResultOk" ->
+                        doPostStory(myId, path, privacy)
                     "canPostStoryResultPremiumNeeded" ->
                         _postNotice.value =
                             "发动态需要 Premium，当前账号暂时发不了。"
@@ -269,7 +285,7 @@ object StoryStore {
         }
     }
 
-    private fun doPostStory(myId: Long, path: String) {
+    private fun doPostStory(myId: Long, path: String, privacy: String) {
         val query = TdClient.request("postStory").apply {
             put("chat_id", myId)
             put("content", JSONObject().apply {
@@ -286,9 +302,18 @@ object StoryStore {
             })
             put("caption", JSONObject.NULL)
             put("music", JSONObject.NULL)
-            put("privacy_settings", JSONObject().apply {
-                put("@type", "storyPrivacySettingsEveryone")
-                put("except_user_ids", JSONArray())
+            put("privacy_settings", when (privacy) {
+                "contacts" -> JSONObject().apply {
+                    put("@type", "storyPrivacySettingsContacts")
+                    put("except_user_ids", JSONArray())
+                }
+                "close_friends" -> JSONObject().apply {
+                    put("@type", "storyPrivacySettingsCloseFriends")
+                }
+                else -> JSONObject().apply {
+                    put("@type", "storyPrivacySettingsEveryone")
+                    put("except_user_ids", JSONArray())
+                }
             })
             put("album_ids", JSONArray())
             put("active_period", 86400)
@@ -300,7 +325,87 @@ object StoryStore {
             _postNotice.value = if (TdClient.isError(response)) {
                 "发布失败，再试一次。（错误码 ${response.optInt("code")}）"
             } else {
-                "动态已发布，所有人可见，24 小时后自动归档。"
+                val who = when (privacy) {
+                    "contacts" -> "联系人可见"
+                    "close_friends" -> "亲密朋友可见"
+                    else -> "所有人可见"
+                }
+                "动态已发布，$who，24 小时后自动归档。"
+            }
+        }
+    }
+
+    // ---- Viewer interactions (v0.9.25, R3) ----
+
+    /** Toggle a ❤️ reaction on the story being viewed
+     *  (setStoryReaction, verified in td_api.tl: pass a null
+     *  reaction_type to remove the chosen reaction). The
+     *  local flag flips only after the server accepts. */
+    fun toggleStoryReaction(
+        posterChatId: Long, story: StoryContentUi
+    ) {
+        val query = TdClient.request("setStoryReaction").apply {
+            put("story_poster_chat_id", posterChatId)
+            put("story_id", story.storyId)
+            if (story.hasReaction) {
+                put("reaction_type", JSONObject.NULL)
+            } else {
+                put("reaction_type", JSONObject().apply {
+                    put("@type", "reactionTypeEmoji")
+                    put("emoji", "❤️")
+                })
+            }
+            put("update_recent_reactions", true)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _postNotice.value =
+                    "回应没发出去，再试一次。（错误码 " +
+                        "${response.optInt("code")}）"
+                return@sendRaw
+            }
+            val current = _viewerStories.value.toMutableList()
+            val index =
+                current.indexOfFirst { it.storyId == story.storyId }
+            if (index >= 0) {
+                current[index] = current[index].copy(
+                    hasReaction = !current[index].hasReaction
+                )
+                _viewerStories.value = current
+            }
+        }
+    }
+
+    /** Reply to a story with a text message
+     *  (sendMessage + inputMessageReplyToStory, verified in
+     *  td_api.tl). The reply lands in the poster's chat. */
+    fun replyToStory(posterChatId: Long, storyId: Int, text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val query = TdClient.request("sendMessage").apply {
+            put("chat_id", posterChatId)
+            put("reply_to", JSONObject().apply {
+                put("@type", "inputMessageReplyToStory")
+                put("story_poster_chat_id", posterChatId)
+                put("story_id", storyId)
+            })
+            put("input_message_content", JSONObject().apply {
+                put("@type", "inputMessageText")
+                put("text", JSONObject().apply {
+                    put("@type", "formattedText")
+                    put("text", trimmed)
+                    put("entities", JSONArray())
+                })
+                put("link_preview_options", JSONObject.NULL)
+                put("clear_draft", false)
+            })
+        }
+        TdRepository.sendRaw(query) { response ->
+            _postNotice.value = if (TdClient.isError(response)) {
+                "回复没发出去，再试一次。（错误码 " +
+                    "${response.optInt("code")}）"
+            } else {
+                "已回复对方的动态。"
             }
         }
     }
