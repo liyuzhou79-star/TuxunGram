@@ -75,12 +75,17 @@ private data class PickedSticker(
 /** Local pre-check for a video sticker file (v0.9.36,
  *  C2), mirroring the server spec: WebM container,
  *  ≤ 256 KB, ≤ 3 seconds, one side exactly 512 px and
- *  the other at most 512. Metadata the platform cannot
+ *  the other at most 512. Custom emoji (v0.9.37, D2)
+ *  follow their own spec instead: exactly 100x100.
+ *  Metadata the platform cannot
  *  read is not held against the file — the server stays
  *  the final judge and its refusal is mapped to plain
  *  language in StickerSetStore. No transcoding happens
  *  here or anywhere in this flow. */
-private fun validateWebmSticker(file: File): String? {
+private fun validateWebmSticker(
+    file: File,
+    customEmoji: Boolean = false
+): String? {
     if (file.length() > 256 * 1024L) {
         return "文件有 ${file.length() / 1024} KB，视频贴纸不能超过 256 KB。"
     }
@@ -103,11 +108,16 @@ private fun validateWebmSticker(file: File): String? {
             android.media.MediaMetadataRetriever
                 .METADATA_KEY_VIDEO_HEIGHT
         )?.toIntOrNull()
-        if (w != null && h != null && w > 0 && h > 0 &&
-            !((w == 512 || h == 512) && w <= 512 && h <= 512)
-        ) {
-            return "尺寸是 ${w}×${h}，视频贴纸需要一边正好 " +
-                "512 像素、另一边不超过 512。"
+        if (w != null && h != null && w > 0 && h > 0) {
+            if (customEmoji) {
+                if (w != 100 || h != 100) {
+                    return "尺寸是 ${w}×${h}，自定义表情需要" +
+                        "正好 100×100 像素。"
+                }
+            } else if (!((w == 512 || h == 512) && w <= 512 && h <= 512)) {
+                return "尺寸是 ${w}×${h}，视频贴纸需要一边正好 " +
+                    "512 像素、另一边不超过 512。"
+            }
         }
     } catch (t: Throwable) {
         // Unreadable metadata: the size check above still
@@ -125,10 +135,14 @@ private fun validateWebmSticker(file: File): String? {
 
 /** Local pre-check for an animated sticker file
  *  (v0.9.36, C2): TGS is a gzipped Lottie JSON — size
- *  ≤ 64 KB, and the JSON's canvas must be 512×512.
+ *  ≤ 64 KB, and the JSON's canvas must be 512×512
+ *  (100×100 for custom emoji, v0.9.37 D2).
  *  A file that does not decompress or parse is flagged
  *  here instead of wasting a server round trip. */
-private fun validateTgsSticker(file: File): String? {
+private fun validateTgsSticker(
+    file: File,
+    customEmoji: Boolean = false
+): String? {
     if (file.length() > 64 * 1024L) {
         return "文件有 ${file.length() / 1024} KB，动图贴纸不能超过 64 KB。"
     }
@@ -139,8 +153,9 @@ private fun validateTgsSticker(file: File): String? {
         val root = org.json.JSONObject(json)
         val w = root.optInt("w")
         val h = root.optInt("h")
-        if (w != 512 || h != 512) {
-            "画布是 ${w}×${h}，动图贴纸需要 512×512。"
+        val side = if (customEmoji) 100 else 512
+        if (w != side || h != side) {
+            "画布是 ${w}×${h}，需要 $side×$side。"
         } else {
             null
         }
@@ -170,6 +185,13 @@ fun CreateStickerSetView(onBack: () -> Unit) {
     val createResult by StickerSetStore.createResult.collectAsState()
     var title by remember { mutableStateOf("") }
     var stem by remember { mutableStateOf("") }
+    // Set type (v0.9.37, D2): "regular" stickers or
+    // "emoji" custom emoji. The two follow different
+    // size specs, so switching type clears the picked
+    // files — they were validated against the other
+    // spec and keeping them would submit stale verdicts.
+    var setType by remember { mutableStateOf("regular") }
+    val customEmoji = setType == "emoji"
     val picked = remember { mutableStateListOf<PickedSticker>() }
     var submitting by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -238,11 +260,15 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                 when (kind) {
                     "webm" -> {
                         format = "webm"
-                        problem = validateWebmSticker(file)
+                        problem = validateWebmSticker(
+                            file, customEmoji
+                        )
                     }
                     "tgs" -> {
                         format = "tgs"
-                        problem = validateTgsSticker(file)
+                        problem = validateTgsSticker(
+                            file, customEmoji
+                        )
                     }
                     "webp" -> {
                         format = "webp"
@@ -261,8 +287,13 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                                 "格式是 $outMime，需要 PNG 或 WebP。"
                             w <= 0 || h <= 0 ->
                                 "这张图读不出来，换一张试试。"
-                            !((w == 512 || h == 512) &&
-                                w <= 512 && h <= 512) ->
+                            customEmoji && !(w == 100 && h == 100) ->
+                                "尺寸是 ${w}×${h}，自定义表情需要" +
+                                    "正好 100×100 像素" +
+                                    "（本版不自动缩放）。"
+                            !customEmoji &&
+                                !((w == 512 || h == 512) &&
+                                    w <= 512 && h <= 512) ->
                                 "尺寸是 ${w}×${h}，贴纸需要一边正好 " +
                                     "512 像素、另一边不超过 512" +
                                     "（本版不自动裁剪）。"
@@ -299,7 +330,15 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                 StickerSetStore.clearCreateResult()
                 onBack()
             },
-            title = { Text("贴纸包建好了") },
+            title = {
+                Text(
+                    if (customEmoji) {
+                        "自定义表情包建好了"
+                    } else {
+                        "贴纸包建好了"
+                    }
+                )
+            },
             text = {
                 Column {
                     Text("「$title」已经创建并装好了，分享链接：")
@@ -339,7 +378,11 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                 )
             }
             Text(
-                "创建贴纸包",
+                if (customEmoji) {
+                    "创建自定义表情包"
+                } else {
+                    "创建贴纸包"
+                },
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -359,14 +402,52 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             item {
+                // Type selector (v0.9.37, D2).
+                Row {
+                    Button(
+                        onClick = {
+                            if (setType != "regular") {
+                                setType = "regular"
+                                picked.clear()
+                            }
+                        },
+                        enabled = setType != "regular"
+                    ) {
+                        Text("普通贴纸")
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Button(
+                        onClick = {
+                            if (setType != "emoji") {
+                                setType = "emoji"
+                                picked.clear()
+                            }
+                        },
+                        enabled = setType != "emoji"
+                    ) {
+                        Text("自定义表情")
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 Text(
-                    "三种贴纸都能建：静态选 PNG / WebP 图片" +
-                        "（一边正好 512 像素、另一边不超过 512）；" +
-                        "视频贴纸选 .webm 文件（不超过 256 KB、" +
-                        "3 秒以内、一边 512）；动图选 .tgs 文件" +
-                        "（不超过 64 KB、画布 512×512）。" +
-                        "本页不裁剪、不转码，不合规格的文件会标出来；" +
-                        "一个贴纸包只能用同一种格式。",
+                    if (customEmoji) {
+                        "自定义表情用在消息文字里，规格和贴纸不同：" +
+                            "静态选 PNG / WebP 图片（正好 " +
+                            "100×100 像素）；视频表情选 .webm 文件" +
+                            "（不超过 256 KB、3 秒以内、100×100）；" +
+                            "动图选 .tgs 文件（不超过 64 KB、" +
+                            "画布 100×100）。本页不缩放、不转码，" +
+                            "不合规格的文件会标出来；切换类型会" +
+                            "清空已选文件；一个包只能用同一种格式。"
+                    } else {
+                        "三种贴纸都能建：静态选 PNG / WebP 图片" +
+                            "（一边正好 512 像素、另一边不超过 512）；" +
+                            "视频贴纸选 .webm 文件（不超过 256 KB、" +
+                            "3 秒以内、一边 512）；动图选 .tgs 文件" +
+                            "（不超过 64 KB、画布 512×512）。" +
+                            "本页不裁剪、不转码，不合规格的文件会标出来；" +
+                            "一个贴纸包只能用同一种格式。"
+                    },
                     color = Color.Gray,
                     fontSize = 13.sp
                 )
@@ -374,7 +455,15 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("贴纸包标题") },
+                    label = {
+                        Text(
+                            if (customEmoji) {
+                                "表情包标题"
+                            } else {
+                                "贴纸包标题"
+                            }
+                        )
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -504,6 +593,8 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                     )
                     Spacer(Modifier.height(8.dp))
                 }
+                // (type switching clears the picks — see the
+                // selector above; nothing else to wire here.)
                 // One set, one format (v0.9.36, C2): mixing
                 // static images with webm/tgs files is
                 // refused here and again in the store.
@@ -540,13 +631,22 @@ fun CreateStickerSetView(onBack: () -> Unit) {
                                     format = it.format,
                                     emoji = it.emoji
                                 )
-                            }
+                            },
+                            customEmoji = customEmoji
                         )
                     },
                     enabled = canSubmit,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (submitting) "正在创建…" else "创建贴纸包")
+                    Text(
+                        if (submitting) {
+                            "正在创建…"
+                        } else if (customEmoji) {
+                            "创建自定义表情包"
+                        } else {
+                            "创建贴纸包"
+                        }
+                    )
                 }
                 if (submitting && result == null) {
                     Text(

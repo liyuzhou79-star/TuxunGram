@@ -261,7 +261,7 @@ object StickerSetStore {
         _createResult.value = null
     }
 
-    /** Create a regular sticker set (createNewStickerSet,
+    /** Create a sticker set (createNewStickerSet,
      *  verified in td_api.tl: user_id is my own id, stickers
      *  are newSticker{inputFileLocal, format, emojis}).
      *  Static PNG files ride format stickerFormatWebp —
@@ -273,11 +273,17 @@ object StickerSetStore {
      *  the caller's validation differ. Nothing is
      *  transcoded here. On success the set is installed
      *  server-side right away; the management list reloads
-     *  and the share link is t.me/addstickers/<name>. */
+     *  and the share link is t.me/addstickers/<name>.
+     *  Custom emoji (v0.9.37, D2) is the same call with
+     *  sticker_type stickerTypeCustomEmoji; needs_repainting
+     *  stays false (that flag is for bot-made recolorable
+     *  sets). Only the caller's size validation differs —
+     *  custom emoji are 100x100, not 512-based. */
     fun createSet(
         title: String,
         name: String,
-        items: List<NewStickerItem>
+        items: List<NewStickerItem>,
+        customEmoji: Boolean = false
     ) {
         val myId = MeStore.me.value.id
         if (myId == 0L) {
@@ -326,7 +332,14 @@ object StickerSetStore {
             put("name", name)
             put(
                 "sticker_type",
-                JSONObject().put("@type", "stickerTypeRegular")
+                JSONObject().put(
+                    "@type",
+                    if (customEmoji) {
+                        "stickerTypeCustomEmoji"
+                    } else {
+                        "stickerTypeRegular"
+                    }
+                )
             )
             put("needs_repainting", false)
             put("stickers", stickers)
@@ -343,15 +356,30 @@ object StickerSetStore {
                         "需要先给账号设置一个用户名，才能创建贴纸包。"
                     message.contains("STICKER", true) &&
                         message.contains("INVALID", true) ->
-                        "有一张不符合贴纸要求：静态图要 PNG/WebP、" +
-                            "一边 512 像素、另一边不超过 512；" +
-                            "视频贴纸要 WebM、不超过 256 KB、" +
-                            "3 秒以内、一边 512；动图要 TGS、" +
-                            "不超过 64 KB、画布 512×512。换一张再试。"
+                        if (customEmoji) {
+                            "有一张不符合自定义表情要求：静态图要 " +
+                                "PNG/WebP、正好 100×100 像素；" +
+                                "视频表情要 WebM、不超过 256 KB、" +
+                                "3 秒以内、100×100；动图要 TGS、" +
+                                "不超过 64 KB、画布 100×100。" +
+                                "换一张再试。"
+                        } else {
+                            "有一张不符合贴纸要求：静态图要 PNG/WebP、" +
+                                "一边 512 像素、另一边不超过 512；" +
+                                "视频贴纸要 WebM、不超过 256 KB、" +
+                                "3 秒以内、一边 512；动图要 TGS、" +
+                                "不超过 64 KB、画布 512×512。换一张再试。"
+                        }
                     message.contains("VIDEO", true) ->
-                        "视频贴纸不符合服务器要求（WebM 格式、" +
-                            "不超过 256 KB、3 秒以内、一边正好 " +
-                            "512 像素），换一个文件再试。"
+                        if (customEmoji) {
+                            "视频表情不符合服务器要求（WebM 格式、" +
+                                "不超过 256 KB、3 秒以内、" +
+                                "100×100 像素），换一个文件再试。"
+                        } else {
+                            "视频贴纸不符合服务器要求（WebM 格式、" +
+                                "不超过 256 KB、3 秒以内、一边正好 " +
+                                "512 像素），换一个文件再试。"
+                        }
                     else ->
                         "创建失败，再试一次。（错误码 " +
                             "${response.optInt("code")}）" +

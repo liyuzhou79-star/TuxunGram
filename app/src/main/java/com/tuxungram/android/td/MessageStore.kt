@@ -3983,7 +3983,9 @@ object MessageStore {
                 "群组已升级为超级群组"
             "messageChatOwnerLeft" -> act("离开了群组")
             "messageChatOwnerChanged" -> {
-                val name = cachedUserName(content.optLong("user_id"))
+                val name = cachedUserName(
+                    content.optLong("new_owner_user_id")
+                )
                 if (name.isNotEmpty()) {
                     "新群主是 $name"
                 } else {
@@ -3999,7 +4001,7 @@ object MessageStore {
                 }
             }
             "messageChatHasProtectedContentToggled" ->
-                if (content.optBoolean("has_protected_content")) {
+                if (content.optBoolean("new_has_protected_content")) {
                     act("开启了内容保护（禁止转发与保存）")
                 } else {
                     act("关闭了内容保护")
@@ -4013,7 +4015,7 @@ object MessageStore {
             "messageChatRemovedFromCommunity" ->
                 act("把群组移出了社区")
             "messageForumTopicCreated" -> {
-                val title = content.optString("title")
+                val title = content.optString("name")
                 if (title.isNotEmpty()) {
                     act("创建了话题「$title」")
                 } else {
@@ -4021,7 +4023,7 @@ object MessageStore {
                 }
             }
             "messageForumTopicEdited" -> {
-                val title = content.optString("title")
+                val title = content.optString("name")
                 if (title.isNotEmpty()) {
                     act("编辑了话题「$title」")
                 } else {
