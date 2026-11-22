@@ -438,6 +438,32 @@ object ThreadStore {
                     }
                 }
             }
+            "updateMessageContent", "updateMessageEdited" -> {
+                // Content edits and edited-marker flips
+                // (v0.9.30, W7 audit fix): this store handled
+                // neither update, so inside a thread an edit,
+                // a checklist tick (W4) or a live-location move
+                // only appeared after reopening the thread,
+                // and the 已编辑 marker (v0.9.29) never
+                // flipped. Refetch + reparse — the same
+                // pattern updateMessageInteractionInfo uses
+                // above.
+                if (update.optLong("chat_id") != chatId) return
+                val messageId = update.optLong("message_id")
+                if (!byId.containsKey(messageId)) return
+                TdRepository.sendRaw(TdClient.request("getMessage").apply {
+                    put("chat_id", chatId)
+                    put("message_id", messageId)
+                }) { fresh ->
+                    if (!TdClient.isError(fresh) &&
+                        threadChatId == chatId &&
+                        byId.containsKey(messageId)
+                    ) {
+                        byId[messageId] = MessageStore.parseMessage(fresh)
+                        publish()
+                    }
+                }
+            }
             "updatePoll" -> {
                 // Same handling as the main chat: the full poll
                 // object is pushed on every vote change; match

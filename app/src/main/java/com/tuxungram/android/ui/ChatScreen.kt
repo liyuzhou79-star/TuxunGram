@@ -307,27 +307,9 @@ fun ChatScreen(
         mutableStateOf<Pair<String, Int>?>(null)
     }
     var effectPlayNonce by remember { mutableIntStateOf(0) }
-    LaunchedEffect(listState, messages) {
-        snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.map { it.index }
-        }.collect { indices ->
-            if (Motion.durationScale == 0f) return@collect
-            if (effectPlay != null) return@collect
-            for (idx in indices) {
-                val msg = messages.getOrNull(
-                    messages.size - 1 - idx
-                ) ?: continue
-                if (msg.outgoing || msg.effectId == 0L) continue
-                val emoji = EffectsStore.emojiById.value[msg.effectId]
-                    ?: continue
-                if (EffectPlayMemory.markIfNew(chatId, msg.id)) {
-                    effectPlayNonce += 1
-                    effectPlay = emoji to effectPlayNonce
-                    break
-                }
-            }
-        }
-    }
+    // (The visibility detection effect sits further down,
+    // next to the prefetch effect — it needs listState,
+    // which is declared with the composer state below.)
     // Live-location sender refresh (v0.9.25, R2): while this
     // chat stays open and I have a live location running in
     // it, push a fresh fix about once a minute. Leaving the
@@ -1007,6 +989,30 @@ fun ChatScreen(
                 context, "读取所选文件失败，没有发出去。",
                 Toast.LENGTH_SHORT
             ).show()
+        }
+    }
+
+    // Effect visibility detection (v0.9.30, W3): see the
+    // state declaration near the top of the screen.
+    LaunchedEffect(listState, messages) {
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.map { it.index }
+        }.collect { indices ->
+            if (Motion.durationScale == 0f) return@collect
+            if (effectPlay != null) return@collect
+            for (idx in indices) {
+                val msg = messages.getOrNull(
+                    messages.size - 1 - idx
+                ) ?: continue
+                if (msg.outgoing || msg.effectId == 0L) continue
+                val emoji = EffectsStore.emojiById.value[msg.effectId]
+                    ?: continue
+                if (EffectPlayMemory.markIfNew(chatId, msg.id)) {
+                    effectPlayNonce += 1
+                    effectPlay = emoji to effectPlayNonce
+                    break
+                }
+            }
         }
     }
 

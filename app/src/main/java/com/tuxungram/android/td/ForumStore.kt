@@ -743,6 +743,28 @@ object ForumStore {
                     }
                 }
             }
+            "updateMessageContent", "updateMessageEdited" -> {
+                // Content edits and edited-marker flips
+                // (v0.9.30, W7 audit fix): same gap and same
+                // refetch + reparse fix as ThreadStore — edits,
+                // checklist ticks (W4) and the 已编辑 marker
+                // inside a topic previously needed a reopen.
+                if (update.optLong("chat_id") != chatId) return
+                val messageId = update.optLong("message_id")
+                if (!byId.containsKey(messageId)) return
+                TdRepository.sendRaw(TdClient.request("getMessage").apply {
+                    put("chat_id", chatId)
+                    put("message_id", messageId)
+                }) { fresh ->
+                    if (!TdClient.isError(fresh) &&
+                        topicChatId == chatId &&
+                        byId.containsKey(messageId)
+                    ) {
+                        byId[messageId] = MessageStore.parseMessage(fresh)
+                        publish()
+                    }
+                }
+            }
             "updatePoll" -> {
                 // Same handling as the main chat: the full poll
                 // object is pushed on every vote change; match
