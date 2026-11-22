@@ -48,6 +48,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.OutlinedTextField
@@ -173,6 +174,24 @@ import com.tuxungram.android.ui.StoryViewerScreen
 import com.tuxungram.android.ui.ThreadScreen
 import com.tuxungram.android.ui.TransitionScreen
 
+/** App-wide Material shape tokens (v0.9.21, AB4 — the
+ *  dialog & picker chrome pass). Two tokens carry the
+ *  whole app's dialog/menu chrome: extraLarge is what the
+ *  stock AlertDialog draws its container with (28 dp by
+ *  default; 16 dp here, the official dialog radius), and
+ *  extraSmall is what dropdown menus and the filled /
+ *  underline text fields round their corners with (4 dp
+ *  by default; 8 dp here). Every other token keeps its
+ *  Material default, so cards, chips and buttons render
+ *  exactly as before. Dialog colors already follow the
+ *  scheme (the official materialScheme wires the surface
+ *  to the official dialog background in both themes), so
+ *  no per-dialog changes were needed anywhere. */
+private val AppShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    extraLarge = RoundedCornerShape(16.dp)
+)
+
 // Plain ComponentActivity: the app lock's fingerprint prompt
 // uses the framework BiometricPrompt since v0.9.0 (H3), which
 // needs no FragmentActivity — that dropped the androidx
@@ -239,7 +258,10 @@ class MainActivity : ComponentActivity() {
                 )
             }
             CompositionLocalProvider(LocalDensity provides density) {
-                MaterialTheme(colorScheme = scheme) {
+                MaterialTheme(
+                    colorScheme = scheme,
+                    shapes = AppShapes
+                ) {
                     Surface(modifier = Modifier.fillMaxSize()) {
                         AppRoot()
                     }

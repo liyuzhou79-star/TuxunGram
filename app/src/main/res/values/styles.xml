@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Framework date/time picker theme (v0.9.21, AB4):
+         the framework pickers (jump-to-date in the chat
+         header menu and the custom scheduled-send time)
+         are the only View-system dialogs left in the app.
+         This hands them the official accent for the
+         selected day, the header and the buttons instead
+         of the stock teal the light activity theme gives
+         them. The base dialog style stays the light
+         Material alert style, exactly how they rendered
+         before — only the accent changes. -->
+    <style name="TuxunGramPickerTheme" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#229AF0</item>
+    </style>
+</resources>

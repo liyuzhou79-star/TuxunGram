@@ -1077,6 +1077,8 @@ fun ChatScreen(
                                 val now = java.util.Calendar.getInstance()
                                 android.app.DatePickerDialog(
                                     context,
+                                    com.tuxungram.android.R.style
+                                        .TuxunGramPickerTheme,
                                     { _, year, month, dayOfMonth ->
                                         val start =
                                             java.util.Calendar.getInstance()
@@ -3340,9 +3342,11 @@ fun pickCustomSendTime(
     val now = java.util.Calendar.getInstance()
     val dateDialog = android.app.DatePickerDialog(
         context,
+        com.tuxungram.android.R.style.TuxunGramPickerTheme,
         { _, year, month, day ->
             android.app.TimePickerDialog(
                 context,
+                com.tuxungram.android.R.style.TuxunGramPickerTheme,
                 { _, hour, minute ->
                     val cal = java.util.Calendar.getInstance()
                     cal.set(year, month, day, hour, minute, 0)
