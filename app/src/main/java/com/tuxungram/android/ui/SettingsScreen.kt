@@ -173,6 +173,7 @@ fun SettingsScreen(
     onOpenSessions: () -> Unit = {},
     onOpenStickerSets: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
+    onOpenNetworkStats: () -> Unit = {},
     onOpenEditProfile: () -> Unit = {},
     onOpenBlocked: () -> Unit = {},
     onOpenChangelog: () -> Unit = {},
@@ -1432,6 +1433,19 @@ fun SettingsScreen(
             )
             Spacer(Modifier.width(8.dp))
             Text("下载管理（进行中 / 已完成）")
+        }
+        Button(
+            onClick = onOpenNetworkStats,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp)
+        ) {
+            Icon(
+                PollIcon, contentDescription = null,
+                modifier = Modifier.size(19.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("流量统计（TDLib 本地计数）")
         }
         var confirmClear by remember { mutableStateOf(false) }
         var clearedTip by remember { mutableStateOf<String?>(null) }

@@ -129,6 +129,7 @@ import com.tuxungram.android.ui.BlockedScreen
 import com.tuxungram.android.ui.DownloadsScreen
 import com.tuxungram.android.ui.EventLogScreen
 import com.tuxungram.android.ui.JoinRequestsScreen
+import com.tuxungram.android.ui.NetworkStatsScreen
 import com.tuxungram.android.ui.StatsScreen
 import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.GuideScreen
@@ -453,6 +454,10 @@ private sealed interface Route {
         override val depth = 1
     }
 
+    data object NetworkStats : Route {
+        override val depth = 1
+    }
+
     data object SettingsOverlay : Route {
         override val depth = 1
     }
@@ -561,6 +566,7 @@ private fun ReadyHost() {
     var showSessions by remember { mutableStateOf(false) }
     var showStickerSets by remember { mutableStateOf(false) }
     var showDownloads by remember { mutableStateOf(false) }
+    var showNetworkStats by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
     var showContacts by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }
@@ -678,6 +684,7 @@ private fun ReadyHost() {
         showSessions -> Route.Sessions
         showStickerSets -> Route.StickerSets
         showDownloads -> Route.Downloads
+        showNetworkStats -> Route.NetworkStats
         showSettings -> Route.SettingsOverlay
         showArchive -> Route.Archive
         showContacts -> Route.ContactsOverlay
@@ -756,6 +763,9 @@ private fun ReadyHost() {
                 is Route.Downloads -> DownloadsScreen(
                     onBack = { showDownloads = false }
                 )
+                is Route.NetworkStats -> NetworkStatsScreen(
+                    onBack = { showNetworkStats = false }
+                )
                 is Route.SettingsOverlay -> SettingsScreen(
             onBack = { showSettings = false },
             onOpenSessions = {
@@ -769,6 +779,10 @@ private fun ReadyHost() {
             onOpenDownloads = {
                 showSettings = false
                 showDownloads = true
+            },
+            onOpenNetworkStats = {
+                showSettings = false
+                showNetworkStats = true
             },
             onOpenEditProfile = {
                 showSettings = false
@@ -886,6 +900,9 @@ private fun ReadyHost() {
                             onOpenSessions = { showSessions = true },
                             onOpenStickerSets = { showStickerSets = true },
                             onOpenDownloads = { showDownloads = true },
+                            onOpenNetworkStats = {
+                                showNetworkStats = true
+                            },
                             onOpenEditProfile = { showEditProfile = true },
                             onOpenBlocked = { showBlocked = true },
                             onOpenChangelog = { showChangelog = true },
