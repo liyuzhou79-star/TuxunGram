@@ -51,8 +51,18 @@ object TwoFactorStore {
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
+    /** One request through the repository's raw channel;
+     *  the callback receives the response object, which is
+     *  the error object itself when the server refused. */
+    private fun send(
+        query: JSONObject,
+        cb: (JSONObject?) -> Unit
+    ) {
+        TdRepository.sendRaw(query) { cb(it) }
+    }
+
     fun load() {
-        TdClient.send(
+        send(
             JSONObject()
                 .put("@type", "getPasswordState")
         ) { result ->
@@ -94,7 +104,7 @@ object TwoFactorStore {
         hint: String,
         onDone: (Boolean, String) -> Unit
     ) {
-        TdClient.send(
+        send(
             JSONObject()
                 .put("@type", "setPassword")
                 .put("old_password", oldPw)
@@ -119,7 +129,7 @@ object TwoFactorStore {
         oldPw: String,
         onDone: (Boolean, String) -> Unit
     ) {
-        TdClient.send(
+        send(
             JSONObject()
                 .put("@type", "setPassword")
                 .put("old_password", oldPw)
@@ -146,7 +156,7 @@ object TwoFactorStore {
         newEmail: String,
         onDone: (Boolean, String) -> Unit
     ) {
-        TdClient.send(
+        send(
             JSONObject()
                 .put("@type", "setRecoveryEmailAddress")
                 .put("password", password)
@@ -171,7 +181,7 @@ object TwoFactorStore {
         code: String,
         onDone: (Boolean, String) -> Unit
     ) {
-        TdClient.send(
+        send(
             JSONObject()
                 .put("@type", "checkRecoveryEmailAddressCode")
                 .put("code", code)
@@ -190,7 +200,7 @@ object TwoFactorStore {
     fun resendRecoveryEmailCode(
         onDone: (Boolean, String) -> Unit
     ) {
-        TdClient.send(
+        send(
             JSONObject()
                 .put("@type", "resendRecoveryEmailAddressCode")
         ) { result ->
@@ -212,7 +222,7 @@ object TwoFactorStore {
         password: String,
         onDone: (Boolean, String) -> Unit
     ) {
-        TdClient.send(
+        send(
             JSONObject()
                 .put("@type", "getRecoveryEmailAddress")
                 .put("password", password)
