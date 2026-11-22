@@ -41,7 +41,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -319,6 +329,16 @@ fun ChatScreen(
     // Pinned bar state (v0.9.4, N3): tapping the bar cycles
     // through the pinned messages; 全部 opens the full list.
     val pinnedMessages by MessageStore.pinnedMessages.collectAsState()
+    // Empty-chat graphic (v0.9.9, W1): only after a short
+    // grace period, so it never flashes while history loads.
+    var showEmptyHistory by remember(chatId) { mutableStateOf(false) }
+    LaunchedEffect(chatId, messages.isEmpty()) {
+        showEmptyHistory = false
+        if (messages.isEmpty()) {
+            kotlinx.coroutines.delay(900)
+            showEmptyHistory = true
+        }
+    }
     var pinCycle by remember(chatId) { mutableIntStateOf(0) }
     var pinnedListOpen by remember { mutableStateOf(false) }
     var chatSearchOpen by remember { mutableStateOf(false) }
@@ -547,7 +567,14 @@ fun ChatScreen(
             }
             if (chat?.isSecret == true) {
                 Spacer(Modifier.width(6.dp))
-                Text("🔒 秘密聊天", color = Color.Gray, fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.Lock, contentDescription = null,
+                        tint = Color.Gray, modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Text("秘密聊天", color = Color.Gray, fontSize = 12.sp)
+                }
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { chatSearchOpen = !chatSearchOpen }) {
@@ -577,21 +604,30 @@ fun ChatScreen(
 
         if (chat?.isSecret == true) {
             val info = if (secretInfo?.chatId == chatId) secretInfo else null
-            Text(
-                when (info?.state) {
-                    "pending" ->
-                        "🔒 端到端加密 · 正在等对方上线完成密钥交换，对方上线前消息可能发不出去"
-                    "closed" -> "🔒 这个秘密聊天已关闭，不能再发消息"
-                    else ->
-                        "🔒 端到端加密 · 消息只保存在这台设备上，不同步到云端"
-                },
-                color = Color.Gray,
-                fontSize = 12.sp,
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(horizontal = 16.dp, vertical = 5.dp)
-            )
+                    .padding(horizontal = 16.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Filled.Lock, contentDescription = null,
+                    tint = Color.Gray, modifier = Modifier.size(13.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    when (info?.state) {
+                        "pending" ->
+                            "端到端加密 · 正在等对方上线完成密钥交换，对方上线前消息可能发不出去"
+                        "closed" -> "这个秘密聊天已关闭，不能再发消息"
+                        else ->
+                            "端到端加密 · 消息只保存在这台设备上，不同步到云端"
+                    },
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+            }
         }
 
         if (chatSearchOpen) {
@@ -879,7 +915,11 @@ fun ChatScreen(
                     .padding(horizontal = 14.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("📌", fontSize = 14.sp)
+                Icon(
+                    PinIcon, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(17.dp)
+                )
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -979,6 +1019,18 @@ fun ChatScreen(
                         .background(Color(chatBgArgb))
                 )
             }
+        if (messages.isEmpty() && showEmptyHistory) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                EmptyState(
+                    Icons.AutoMirrored.Filled.Send,
+                    "还没有消息",
+                    "发条消息打个招呼吧。"
+                )
+            }
+        }
         LazyColumn(
             state = listState,
             reverseLayout = true,
@@ -1210,12 +1262,12 @@ fun ChatScreen(
                     Box {
                         IconButton(onClick = { attachMenuOpen = true }) {
                             Icon(
-                                // AttachFile is not in material-icons-core;
-                                // a "+" attach button is the standard
-                                // pattern in several mature clients.
-                                Icons.Filled.Add,
+                                // Hand-drawn paperclip (AppIcons):
+                                // the core material set has none.
+                                ClipIcon,
                                 contentDescription = "发送附件",
-                                tint = Color.Gray
+                                tint = Color.Gray,
+                                modifier = Modifier.size(24.dp)
                             )
                         }
                         DropdownMenu(
@@ -1223,6 +1275,9 @@ fun ChatScreen(
                             onDismissRequest = { attachMenuOpen = false }
                         ) {
                             DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(ImageIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
                                 text = { Text("发图片") },
                                 onClick = {
                                     attachMenuOpen = false
@@ -1231,6 +1286,9 @@ fun ChatScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(ClipIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
                                 text = { Text("发文件 / 视频 / 语音") },
                                 onClick = {
                                     attachMenuOpen = false
@@ -1239,6 +1297,9 @@ fun ChatScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Face, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
                                 text = { Text("贴纸 / GIF") },
                                 onClick = {
                                     attachMenuOpen = false
@@ -1247,6 +1308,9 @@ fun ChatScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(PollIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
                                 text = { Text("投票") },
                                 onClick = {
                                     attachMenuOpen = false
@@ -1254,6 +1318,9 @@ fun ChatScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(Icons.Filled.LocationOn, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
                                 text = { Text("位置") },
                                 onClick = {
                                     attachMenuOpen = false
@@ -1296,6 +1363,9 @@ fun ChatScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
                                 text = { Text("联系人") },
                                 onClick = {
                                     attachMenuOpen = false
@@ -1312,10 +1382,11 @@ fun ChatScreen(
                     stickerPanelOpen = !stickerPanelOpen
                     if (stickerPanelOpen) MediaStore.load()
                 }) {
-                    Text(
-                        if (stickerPanelOpen) "⌨" else "☺",
-                        fontSize = 22.sp,
-                        color = Color.Gray
+                    Icon(
+                        if (stickerPanelOpen) KeyboardIcon else Icons.Filled.Face,
+                        contentDescription = "表情与贴纸",
+                        tint = Color.Gray,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
                 OutlinedTextField(
@@ -1349,9 +1420,12 @@ fun ChatScreen(
                                 )
                             }
                         }) {
-                            // Mic is not in material-icons-core;
-                            // an emoji glyph keeps the button clear.
-                            Text("🎤", fontSize = 20.sp)
+                            Icon(
+                                MicIcon,
+                                contentDescription = "录语音",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
                     }
                 } else {
@@ -1954,7 +2028,10 @@ fun MessageBubble(
                 contentAlignment = Alignment.Center
             ) {
                 if (selected) {
-                    Text("✓", color = Color.White, fontSize = 13.sp)
+                    Icon(
+                        Icons.Filled.Check, contentDescription = null,
+                        tint = Color.White, modifier = Modifier.size(14.dp)
+                    )
                 }
             }
         }
@@ -2224,16 +2301,22 @@ fun MessageBubble(
                 Row {
                     Text(formatMsgTime(msg.dateSeconds), color = Color.Gray, fontSize = 11.sp)
                     when (msg.readState) {
-                        "read" -> Text(
-                            "  ✓✓",
-                            color = Color(0xFF5B7C99),
-                            fontSize = 11.sp
-                        )
-                        "sent" -> Text(
-                            "  ✓",
-                            color = Color.Gray,
-                            fontSize = 11.sp
-                        )
+                        "read" -> {
+                            Spacer(Modifier.width(4.dp))
+                            TicksIcon(
+                                read = true,
+                                color = Color(0xFF5B7C99),
+                                sizeDp = 15
+                            )
+                        }
+                        "sent" -> {
+                            Spacer(Modifier.width(4.dp))
+                            TicksIcon(
+                                read = false,
+                                color = Color.Gray,
+                                sizeDp = 15
+                            )
+                        }
                     }
                     when (msg.sendingState) {
                         "pending" -> Text(
@@ -2251,23 +2334,31 @@ fun MessageBubble(
                 // Scheduled-send label (v0.9.3, M5): the
                 // bubble stays in the chat with its send time
                 // written under it, as TDLib returns it.
-                if (msg.scheduledAtSec > 0) {
-                    Text(
-                        "🕐 定时 · ${formatScheduleWhen(msg.scheduledAtSec.toLong())} 发送",
-                        color = Color.Gray,
-                        fontSize = 11.sp
-                    )
-                } else if (msg.scheduledWhenOnline) {
-                    Text(
-                        "🕐 定时 · 对方上线时发送",
-                        color = Color.Gray,
-                        fontSize = 11.sp
-                    )
+                if (msg.scheduledAtSec > 0 || msg.scheduledWhenOnline) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            ClockIcon, contentDescription = null,
+                            tint = Color.Gray, modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            if (msg.scheduledAtSec > 0) {
+                                "定时 · ${formatScheduleWhen(msg.scheduledAtSec.toLong())} 发送"
+                            } else {
+                                "定时 · 对方上线时发送"
+                            },
+                            color = Color.Gray,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
                 TranslationArea(chatId, msg)
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(ReplyIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                    },
                     text = { Text("回复") },
                     onClick = {
                         menuOpen = false
@@ -2276,6 +2367,9 @@ fun MessageBubble(
                 )
                 if (canComment) {
                     DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(Icons.Filled.List, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
                         text = { Text("评论") },
                         onClick = {
                             menuOpen = false
@@ -2285,6 +2379,9 @@ fun MessageBubble(
                 }
                 if (msg.text.isNotEmpty()) {
                     DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(CopyIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
                         text = { Text("复制") },
                         onClick = {
                             menuOpen = false
@@ -2296,6 +2393,9 @@ fun MessageBubble(
                     // Translate (v0.9.5, O4): the result lands
                     // under the bubble via TranslationArea.
                     DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(GlobeIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
                         text = { Text("翻译") },
                         onClick = {
                             menuOpen = false
@@ -2306,6 +2406,9 @@ fun MessageBubble(
                 }
                 if (outgoing && msg.kind == MsgKind.TEXT && msg.sendingState.isEmpty()) {
                     DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
                         text = { Text("编辑") },
                         onClick = {
                             menuOpen = false
@@ -2319,6 +2422,9 @@ fun MessageBubble(
                 // is not shown at all.
                 if (allowedReactions == null || allowedReactions.isNotEmpty()) {
                     DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(Icons.Filled.Face, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
                         text = { Text("添加回应") },
                         onClick = {
                             menuOpen = false
@@ -2330,6 +2436,9 @@ fun MessageBubble(
                     // The system player stays available here now
                     // that a tap opens the in-app player (J3).
                     DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
                         text = { Text("用其他播放器打开") },
                         onClick = {
                             menuOpen = false
@@ -2344,6 +2453,9 @@ fun MessageBubble(
                     // refuses without rights; the store turns
                     // that into a plain sentence.
                     DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(PinIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
                         text = { Text(if (msg.isPinned) "取消置顶" else "置顶") },
                         onClick = {
                             menuOpen = false
@@ -2357,6 +2469,9 @@ fun MessageBubble(
                     )
                 }
                 DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
+                    },
                     text = { Text("多选") },
                     onClick = {
                         menuOpen = false
@@ -2364,6 +2479,9 @@ fun MessageBubble(
                     }
                 )
                 DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(ForwardIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                    },
                     text = { Text("转发") },
                     onClick = {
                         menuOpen = false
@@ -2371,6 +2489,9 @@ fun MessageBubble(
                     }
                 )
                 DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(Icons.Filled.Delete, contentDescription = null, tint = Color(0xFFC62828), modifier = Modifier.size(20.dp))
+                    },
                     text = { Text("删除", color = Color(0xFFC62828)) },
                     onClick = {
                         menuOpen = false
@@ -3102,7 +3223,11 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
                             fontWeight = FontWeight.SemiBold
                         )
                     } else if (index in selected && poll.allowsMultiple) {
-                        Text("✓", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)
+                        Icon(
+                            Icons.Filled.Check, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
             }
