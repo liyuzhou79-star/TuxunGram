@@ -41,6 +41,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import java.io.File
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,6 +86,34 @@ fun ProfileScreen(
     val canInvite = caps.canInvite
     LaunchedEffect(chatId, canInvite) {
         if (canInvite) AdminStore.loadInviteLinks(chatId)
+    }
+    // Group photo picker (v0.9.5, O3): the pick is copied
+    // into cacheDir first (TDLib reads the file
+    // asynchronously), then handed to AdminStore.setChatPhoto.
+    var photoNotice by remember { mutableStateOf<String?>(null) }
+    val groupPhotoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        Thread {
+            val path = try {
+                val file = File(
+                    context.cacheDir,
+                    "group_photo_${System.currentTimeMillis()}.jpg"
+                )
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    file.outputStream().use { output -> input.copyTo(output) }
+                }
+                file.absolutePath
+            } catch (t: Throwable) {
+                null
+            }
+            if (path == null) {
+                photoNotice = "这张图片读不出来，换一张试试。"
+            } else {
+                AdminStore.setChatPhoto(chatId, path)
+            }
+        }.start()
     }
     var memberAction by remember { mutableStateOf<MemberEntry?>(null) }
     // Secret chats (v0.6.0, E1): encryption state + fingerprint.
@@ -385,6 +416,17 @@ fun ProfileScreen(
                                 TextButton(onClick = { descEditOpen = true }) {
                                     Text("改简介")
                                 }
+                                TextButton(onClick = {
+                                    groupPhotoPicker.launch("image/*")
+                                }) {
+                                    Text("设置群头像")
+                                }
+                            }
+                            if (photoNotice != null) {
+                                Text(
+                                    photoNotice!!,
+                                    fontSize = 13.sp, color = Color.Gray
+                                )
                             }
                         }
                         if (caps.canRestrict) {

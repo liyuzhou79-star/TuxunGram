@@ -124,6 +124,28 @@ object AdminStore {
         act(query, "名称已更新。") { ProfileStore.load(chatId) }
     }
 
+    /** Set the group/channel photo (v0.9.5, O3): setChatPhoto
+     *  with inputChatPhotoStatic over a local file, both
+     *  verified in td_api.tl (needs the can_change_info
+     *  right). The new photo reaches the profile page and the
+     *  chat list through TDLib's updateChatPhoto, which
+     *  ChatStore already handles — no manual refresh needed
+     *  beyond reloading the profile. The caller hands over a
+     *  cacheDir copy it owns (TDLib reads it asynchronously). */
+    fun setChatPhoto(chatId: Long, path: String) {
+        val query = TdClient.request("setChatPhoto").apply {
+            put("chat_id", chatId)
+            put("photo", JSONObject().apply {
+                put("@type", "inputChatPhotoStatic")
+                put("photo", JSONObject().apply {
+                    put("@type", "inputFileLocal")
+                    put("path", path)
+                })
+            })
+        }
+        act(query, "群头像已更新。") { ProfileStore.load(chatId) }
+    }
+
     fun setDescription(chatId: Long, description: String) {
         val query = TdClient.request("setChatDescription").apply {
             put("chat_id", chatId)
