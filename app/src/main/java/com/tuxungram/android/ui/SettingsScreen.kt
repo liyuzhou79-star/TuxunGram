@@ -104,6 +104,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.core.content.FileProvider
 import com.tuxungram.android.td.AccountStore
+import com.tuxungram.android.td.BackgroundAccounts
 import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.MeStore
 import com.tuxungram.android.td.PrivacySettingDef
@@ -940,13 +941,19 @@ fun SettingsScreen(
         GroupCard {
         Spacer(Modifier.height(4.dp))
         Text(
-            "可以登录多个 Telegram 账号，每个账号的数据各自独立。切换账号时 App 会自动重启一下，稍等片刻就好。",
+            "可以登录多个 Telegram 账号，每个账号的数据各自独立。其他账号会保持在线：来了新消息会带着账号名通知你，每个账号的未读数显示在这一行右边。切换账号时 App 会自动重启一下，稍等片刻就好。",
             color = Color.Gray, fontSize = 13.sp
         )
         val accountSlots by AccountStore.slots.collectAsState()
         val currentSlot by AccountStore.current.collectAsState()
         val accountLabels by AccountStore.labels.collectAsState()
         val accountAvatars by AccountStore.avatars.collectAsState()
+        // Unread totals per account (v0.9.10): background
+        // accounts publish theirs from TDLib's
+        // updateUnreadMessageCount; the running account's
+        // total is the live sum over its chat list.
+        val bgUnread by BackgroundAccounts.unreadBySlot.collectAsState()
+        val fgChats by ChatStore.chats.collectAsState()
         for (slot in accountSlots) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -999,6 +1006,29 @@ fun SettingsScreen(
                         color = Color.Gray, fontSize = 12.sp,
                         modifier = Modifier.padding(start = 6.dp)
                     )
+                }
+                val slotUnread = if (slot == currentSlot) {
+                    fgChats.sumOf { it.unreadCount }
+                } else {
+                    bgUnread[slot] ?: 0
+                }
+                if (slotUnread > 0) {
+                    Spacer(Modifier.weight(1f))
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                MaterialTheme.colorScheme.primary,
+                                RoundedCornerShape(10.dp)
+                            )
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            UiSettings.badgeText(slotUnread),
+                            color = Color.White,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
         }
