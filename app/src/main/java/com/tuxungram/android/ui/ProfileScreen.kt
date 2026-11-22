@@ -90,6 +90,7 @@ import com.tuxungram.android.td.MeStore
 import com.tuxungram.android.td.MemberEntry
 import com.tuxungram.android.td.ProfileStore
 import com.tuxungram.android.td.SecretChatStore
+import com.tuxungram.android.td.WebAppStore
 
 /** Profile page (B5): user / group / channel info plus the
  *  member list where the chat allows reading it. Opened by
@@ -468,6 +469,36 @@ fun ProfileScreen(
                             label = "消息",
                             modifier = Modifier.weight(1f),
                             onClick = onBack
+                        )
+                    }
+                    if (p.isBot && p.botHasMainWebApp &&
+                        p.userId != 0L
+                    ) {
+                        // Main Web App (v0.9.37, D1): the
+                        // entry exists only while the
+                        // server's has_main_web_app flag
+                        // holds; it opens through the same
+                        // WebAppStore chain as button-launched
+                        // apps.
+                        ProfileAction(
+                            icon = GlobeIcon,
+                            label = "打开应用",
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                WebAppStore.openMainWebApp(
+                                    chatId = p.chatId,
+                                    botUserId = p.userId,
+                                    botName = p.title,
+                                    palette = profilePalette,
+                                    onError = { err ->
+                                        android.widget.Toast.makeText(
+                                            context, err,
+                                            android.widget.Toast
+                                                .LENGTH_SHORT
+                                        ).show()
+                                    }
+                                )
+                            }
                         )
                     }
                     if (liveItem != null) {

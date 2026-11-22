@@ -252,6 +252,58 @@ object WebAppStore {
         }
     }
 
+    /** Main Web App launch (v0.9.37, D1): getMainWebApp
+     *  returns the URL directly. There is no launch_id
+     *  on this path, so the session closes without
+     *  closeWebApp — the same posture as the
+     *  keyboard-button path — and an updateWebAppMessageSent
+     *  cannot auto-close it (the launch-id guard there
+     *  requires a non-zero id). */
+    fun openMainWebApp(
+        chatId: Long,
+        botUserId: Long,
+        botName: String,
+        palette: OfficialPalette,
+        onError: (String) -> Unit
+    ) {
+        attach()
+        if (botUserId == 0L) {
+            onError("没认出这个应用属于哪个机器人，打不开。")
+            return
+        }
+        val theme = themeParameters(palette)
+        val query = TdClient.request("getMainWebApp").apply {
+            put("chat_id", chatId)
+            put("bot_user_id", botUserId)
+            put("start_parameter", "")
+            put("parameters", openParameters(theme))
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                onError(errorText(response))
+                return@sendRaw
+            }
+            val urlObj = response.optJSONObject("url")
+            val rawUrl = urlObj?.optString("url") ?: ""
+            if (rawUrl.isEmpty()) {
+                onError("机器人没有返回小程序地址，打不开。")
+                return@sendRaw
+            }
+            publish(
+                botUserId = botUserId,
+                botName = botName,
+                rawUrl = rawUrl,
+                launchId = 0L,
+                fromKeyboardButton = false,
+                buttonText = "",
+                requireSameOrigin =
+                    urlObj.optBoolean("require_same_origin"),
+                theme = theme,
+                onError = onError
+            )
+        }
+    }
+
     /** Keyboard-button launch: getWebAppUrl with the
      *  button's URL; [buttonText] is remembered because
      *  sendWebAppData needs it when the page answers. */

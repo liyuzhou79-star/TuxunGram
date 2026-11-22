@@ -191,6 +191,12 @@ fun SimpleMessageBubble(
         )
         else -> Modifier.background(palette.inBubble, bubbleShape)
     }
+    // Service line (v0.9.37, D4): centered chip, no
+    // bubble, no menu — same as the main chat.
+    if (msg.kind == MsgKind.SERVICE) {
+        ServiceChipRow(msg)
+        return
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -235,7 +241,13 @@ fun SimpleMessageBubble(
                                 msg.kind != MsgKind.ANIMATED_EMOJI &&
                                 msg.kind != MsgKind.VOICE &&
                                 msg.kind != MsgKind.DICE &&
-                                msg.kind != MsgKind.GAME
+                                msg.kind != MsgKind.GAME &&
+                                // Same exclusions as the main
+                                // chat (v0.9.37, D3/D4): giveaway
+                                // stickers / audio files are not
+                                // open-with-system targets.
+                                msg.kind != MsgKind.GIVEAWAY &&
+                                msg.kind != MsgKind.AUDIO
                             ) {
                                 val path = msg.filePath
                                 if (path != null) {
@@ -417,6 +429,19 @@ fun SimpleMessageBubble(
                         msg = msg,
                         onToggleTask = onToggleChecklistTask
                     )
+                    // Giveaway / audio / invoice / shared
+                    // cards (v0.9.37, D3/D4) render with the
+                    // main chat's composables; the giveaway
+                    // status action stays off here — the
+                    // message lives in its own channel, not
+                    // in this hosting chat.
+                    MsgKind.GIVEAWAY -> GiveawayBubbleContent(
+                        msg, showStatusAction = false
+                    )
+                    MsgKind.AUDIO -> AudioBubbleContent(msg)
+                    MsgKind.INVOICE -> InvoiceBubbleContent(msg)
+                    MsgKind.SHARED -> SharedBubbleContent(msg)
+                    MsgKind.SERVICE -> ServiceChipRow(msg)
                     MsgKind.OTHER -> Text(
                         "[消息]",
                         color = if (outgoing) {

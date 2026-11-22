@@ -30,7 +30,19 @@ data class BotUi(
     val botUserId: Long = 0L,
     val username: String = "",
     val commands: List<BotCommandUi> = emptyList(),
-    val groupBots: List<GroupBotUi> = emptyList()
+    val groupBots: List<GroupBotUi> = emptyList(),
+    /** Bot menu button (botInfo.menu_button, v0.9.37
+     *  D1): a custom button the bot put in place of the
+     *  default commands button. A non-empty
+     *  [menuButtonUrl] means pressing it opens that Web
+     *  App (openWebApp with the button's URL); text with
+     *  an empty URL still opens the command list, just
+     *  relabelled. Both empty = no custom button. */
+    val menuButtonText: String = "",
+    val menuButtonUrl: String = "",
+    /** userTypeBot.has_main_web_app (v0.9.37, D1): the
+     *  bot's main Web App opens via getMainWebApp. */
+    val hasMainWebApp: Boolean = false
 )
 
 /**
@@ -113,6 +125,10 @@ object BotStore {
             }
             val username = user.optJSONObject("usernames")
                 ?.optJSONArray("active_usernames")?.optString(0) ?: ""
+            // Main Web App flag rides the user type itself
+            // (v0.9.37, D1).
+            val hasMainWebApp = user.optJSONObject("type")
+                ?.optBoolean("has_main_web_app") == true
             val full = TdClient.request("getUserFullInfo").apply {
                 put("user_id", userId)
             }
@@ -125,13 +141,24 @@ object BotStore {
                             ?.optJSONArray("commands")
                     )
                 }
+                val menuButton = if (TdClient.isError(info)) {
+                    null
+                } else {
+                    info.optJSONObject("bot_info")
+                        ?.optJSONObject("menu_button")
+                }
                 publish(
                     BotUi(
                         chatId = chatId,
                         isBot = true,
                         botUserId = userId,
                         username = username,
-                        commands = commands
+                        commands = commands,
+                        menuButtonText = menuButton
+                            ?.optString("text") ?: "",
+                        menuButtonUrl = menuButton
+                            ?.optString("url") ?: "",
+                        hasMainWebApp = hasMainWebApp
                     )
                 )
             }

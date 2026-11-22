@@ -115,6 +115,13 @@ data class ProfileUi(
     /** user.is_contact (v0.9.33, Z4): the 删除联系人 entry
      *  only exists while this is true. */
     val isContact: Boolean = false,
+    /** user.type == userTypeBot and its has_main_web_app
+     *  flag (v0.9.37, D1): the profile page's 打开应用
+     *  entry exists only when both hold — the flag is
+     *  the server's own word that getMainWebApp can
+     *  answer for this bot. */
+    val isBot: Boolean = false,
+    val botHasMainWebApp: Boolean = false,
     val commonGroups: Int = 0,
     val memberCount: Int = 0,
     val adminCount: Int = 0
@@ -156,6 +163,8 @@ object ProfileStore {
     private var currentPhone = ""
     private var currentBirthday = ""
     private var currentIsContact = false
+    private var currentIsBot = false
+    private var currentBotHasMainWebApp = false
     private var currentCommonGroups = 0
     private var currentMemberCount = 0
     private var currentAdminCount = 0
@@ -196,6 +205,8 @@ object ProfileStore {
         currentPhone = ""
         currentBirthday = ""
         currentIsContact = false
+        currentIsBot = false
+        currentBotHasMainWebApp = false
         currentCommonGroups = 0
         currentMemberCount = 0
         currentAdminCount = 0
@@ -297,6 +308,8 @@ object ProfileStore {
             phone = currentPhone,
             birthday = currentBirthday,
             isContact = currentIsContact,
+            isBot = currentIsBot,
+            botHasMainWebApp = currentBotHasMainWebApp,
             commonGroups = currentCommonGroups,
             memberCount = currentMemberCount,
             adminCount = currentAdminCount
@@ -339,6 +352,13 @@ object ProfileStore {
                 // empty and the info row simply never shows.
                 currentPhone = user.optString("phone_number")
                 currentIsContact = user.optBoolean("is_contact")
+                // Bot + main Web App flag (v0.9.37, D1):
+                // both ride the user object itself.
+                val userType = user.optJSONObject("type")
+                currentIsBot = userType?.optString("@type") ==
+                    "userTypeBot"
+                currentBotHasMainWebApp = currentIsBot &&
+                    userType?.optBoolean("has_main_web_app") == true
             }
             done()
         }

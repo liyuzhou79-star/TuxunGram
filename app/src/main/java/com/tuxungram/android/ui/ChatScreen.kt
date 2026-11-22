@@ -39,6 +39,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -2375,6 +2376,11 @@ fun ChatScreen(
                     if (msg.id in albumAnchors.second) {
                         // Covered by the album bubble anchored at
                         // the run's first message (v0.9.15, V4).
+                    } else if (msg.kind == MsgKind.SERVICE) {
+                        // Service line (v0.9.37, D4): a
+                        // centered chip, not a bubble — no
+                        // avatar, no selection, no reactions.
+                        ServiceChipRow(msg)
                     } else if (albumRun != null) {
                         AlbumBubble(
                             items = albumRun,
@@ -3455,7 +3461,79 @@ fun ChatScreen(
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (botUi?.takeIf { it.chatId == chatId }
+                // Bot menu-button slot (v0.9.37, D1): a bot
+                // can replace the default commands button.
+                // Priority: a Web App menu button (botInfo
+                // .menu_button with a URL) opens that app
+                // through openWebApp; a text-only menu
+                // button is the commands button relabelled;
+                // a bot with a main Web App and no commands
+                // gets an app entry here (its profile page
+                // carries one regardless); otherwise the
+                // plain slash entry below.
+                val botHere = botUi?.takeIf {
+                    it.chatId == chatId && it.isBot
+                }
+                if (botHere != null &&
+                    botHere.menuButtonUrl.isNotEmpty()
+                ) {
+                    TextButton(onClick = {
+                        WebAppStore.openFromInlineButton(
+                            chatId = chatId,
+                            botUserId = botHere.botUserId,
+                            botName = chat?.title ?: "",
+                            url = botHere.menuButtonUrl,
+                            palette = OfficialTheme.current(),
+                            onError = { err ->
+                                Toast.makeText(
+                                    context, err,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        )
+                    }) {
+                        Text(
+                            botHere.menuButtonText
+                                .ifEmpty { "打开应用" },
+                            fontSize = 14.sp,
+                            maxLines = 1
+                        )
+                    }
+                } else if (botHere != null &&
+                    botHere.menuButtonText.isNotEmpty()
+                ) {
+                    TextButton(onClick = {
+                        if (!input.startsWith("/")) {
+                            input = "/$input"
+                        }
+                    }) {
+                        Text(
+                            botHere.menuButtonText,
+                            fontSize = 14.sp,
+                            maxLines = 1
+                        )
+                    }
+                } else if (botHere != null &&
+                    botHere.hasMainWebApp &&
+                    botHere.commands.isEmpty()
+                ) {
+                    TextButton(onClick = {
+                        WebAppStore.openMainWebApp(
+                            chatId = chatId,
+                            botUserId = botHere.botUserId,
+                            botName = chat?.title ?: "",
+                            palette = OfficialTheme.current(),
+                            onError = { err ->
+                                Toast.makeText(
+                                    context, err,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        )
+                    }) {
+                        Text("应用", fontSize = 14.sp, maxLines = 1)
+                    }
+                } else if (botUi?.takeIf { it.chatId == chatId }
                         ?.let { it.commands.isNotEmpty() || it.groupBots.isNotEmpty() } == true
                 ) {
                     // Slash entry (W2): one tap puts a "/" in the
@@ -5023,7 +5101,15 @@ fun MessageBubble(
                             } else if (msg.fileId != 0 && msg.kind != MsgKind.STICKER &&
                                 msg.kind != MsgKind.VOICE &&
                                 msg.kind != MsgKind.DICE &&
-                                msg.kind != MsgKind.GAME
+                                msg.kind != MsgKind.GAME &&
+                                // Giveaway stickers and audio
+                                // files ride fileId too
+                                // (v0.9.37, D3/D4) but are not
+                                // open-with-system targets: the
+                                // giveaway card is informational
+                                // and audio plays in its bubble.
+                                msg.kind != MsgKind.GIVEAWAY &&
+                                msg.kind != MsgKind.AUDIO
                             ) {
                                 // File-like messages: tap opens the
                                 // downloaded file, or starts the
@@ -5257,6 +5343,11 @@ fun MessageBubble(
                         }
                     }
                     MsgKind.CHECKLIST -> ChecklistBubbleContent(msg)
+                    MsgKind.GIVEAWAY -> GiveawayBubbleContent(msg)
+                    MsgKind.AUDIO -> AudioBubbleContent(msg)
+                    MsgKind.INVOICE -> InvoiceBubbleContent(msg)
+                    MsgKind.SHARED -> SharedBubbleContent(msg)
+                    MsgKind.SERVICE -> ServiceChipRow(msg)
                     MsgKind.LOCATION -> LocationBubbleContent(msg)
                     MsgKind.CONTACT -> ContactBubbleContent(msg)
                     MsgKind.VIDEO_NOTE -> VideoNoteBubbleContent(msg)
@@ -6628,11 +6719,23 @@ fun LocationBubbleContent(msg: MsgItem) {
         }
         Spacer(Modifier.height(5.dp))
         Text(
-            if (msg.liveExpiresIn > 0) "实时位置" else "位置",
+            when {
+                msg.venueTitle.isNotEmpty() -> msg.venueTitle
+                msg.liveExpiresIn > 0 -> "实时位置"
+                else -> "位置"
+            },
             color = mainText,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold
         )
+        if (msg.venueAddress.isNotEmpty()) {
+            // Venue address (v0.9.37, D4).
+            Text(
+                msg.venueAddress,
+                color = mainText,
+                fontSize = 12.5.sp
+            )
+        }
         if (msg.liveExpiresIn > 0) {
             // Live state (v0.9.25, R2): expires_in is the
             // seconds left when the message was parsed; the
@@ -6671,6 +6774,413 @@ fun LocationBubbleContent(msg: MsgItem) {
             color = if (outgoing) palette.outText else palette.accentText,
             fontSize = 12.sp
         )
+    }
+}
+
+/** Centered service line (v0.9.37, D4): the whole
+ *  service-message family renders as a chip in the
+ *  official service colors — same chrome as the date
+ *  separator — never as a bubble. The wording was
+ *  composed at parse time (MessageStore.serviceTextFor);
+ *  this row only draws it. */
+@Composable
+fun ServiceChipRow(msg: MsgItem) {
+    val palette = OfficialTheme.current()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            msg.text,
+            color = palette.serviceText,
+            fontSize = 12.5.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier
+                .background(
+                    palette.serviceBg,
+                    RoundedCornerShape(12.dp)
+                )
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+        )
+    }
+}
+
+/** Giveaway card (v0.9.37, D3): the channel announcement
+ *  (prize, winner count, conditions, deadline) and the
+ *  results post (winners, unclaimed count) share this
+ *  shape. Participation is automatic for eligible
+ *  members — there is no join call in TDLib — so the
+ *  only action asks getGiveawayInfo for the current
+ *  user's own status and shows the answer verbatim.
+ *  [showStatusAction] is false in thread/topic hosts:
+ *  a giveaway message lives in its channel, and asking
+ *  the hosting chat about it would query the wrong
+ *  chat. */
+@Composable
+fun GiveawayBubbleContent(msg: MsgItem, showStatusAction: Boolean = true) {
+    val g = msg.giveaway ?: return
+    val palette = OfficialTheme.current()
+    val mainText = if (msg.outgoing) palette.outText else palette.inText
+    val subText = if (msg.outgoing) palette.outTime else palette.inTime
+    var infoText by remember { mutableStateOf<String?>(null) }
+    fun dateTime(sec: Int): String =
+        java.text.SimpleDateFormat(
+            "yyyy年M月d日 HH:mm", java.util.Locale.CHINA
+        ).format(java.util.Date(sec.toLong() * 1000))
+    Column(modifier = Modifier.widthIn(min = 190.dp, max = 264.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("🎁", fontSize = 19.sp)
+            Spacer(Modifier.width(7.dp))
+            Text(
+                if (g.isWinners) "抽奖结果" else "抽奖活动",
+                color = mainText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        val stickerPath = msg.filePath
+        if (stickerPath != null) {
+            val bitmap by produceState<android.graphics.Bitmap?>(
+                initialValue = null, stickerPath
+            ) {
+                value = withContext(Dispatchers.IO) {
+                    decodeCached(stickerPath)
+                }
+            }
+            val bmp = bitmap
+            if (bmp != null) {
+                Spacer(Modifier.height(6.dp))
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.size(96.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            g.prizeText,
+            color = mainText,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        if (g.prizeDescription.isNotEmpty()) {
+            Text(
+                g.prizeDescription,
+                color = mainText,
+                fontSize = 13.sp
+            )
+        }
+        Spacer(Modifier.height(3.dp))
+        if (g.isWinners) {
+            if (g.winnersDateSec > 0) {
+                Text(
+                    "已于 ${dateTime(g.winnersDateSec)} 开奖",
+                    color = subText,
+                    fontSize = 12.5.sp
+                )
+            }
+            Text(
+                "共 ${g.winnerCount} 位中奖者",
+                color = subText,
+                fontSize = 12.5.sp
+            )
+            if (g.winnerNames.isNotEmpty()) {
+                Text(
+                    g.winnerNames.joinToString("、") +
+                        if (g.winnerCount > g.winnerNames.size) {
+                            " 等"
+                        } else {
+                            ""
+                        },
+                    color = mainText,
+                    fontSize = 12.5.sp
+                )
+            }
+            if (g.unclaimedCount > 0) {
+                Text(
+                    "${g.unclaimedCount} 份奖品无人领取",
+                    color = subText,
+                    fontSize = 12.5.sp
+                )
+            }
+        } else {
+            Text(
+                "将抽出 ${g.winnerCount} 位中奖者",
+                color = subText,
+                fontSize = 12.5.sp
+            )
+            if (g.deadlineSec > 0) {
+                Text(
+                    "截止：${dateTime(g.deadlineSec)}",
+                    color = subText,
+                    fontSize = 12.5.sp
+                )
+            }
+            for (condition in g.conditions) {
+                Text(
+                    "· $condition",
+                    color = subText,
+                    fontSize = 12.5.sp
+                )
+            }
+            Text(
+                "符合条件的成员会自动参加，不用报名。",
+                color = subText,
+                fontSize = 12.5.sp
+            )
+            if (showStatusAction) {
+                TextButton(
+                    onClick = {
+                        MessageStore.loadGiveawayInfo(
+                            MessageStore.currentChatId, msg.id
+                        ) { infoText = it }
+                    },
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text(
+                        "查看我的参与状态",
+                        color = if (msg.outgoing) {
+                            palette.outText
+                        } else {
+                            palette.accentText
+                        },
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        }
+    }
+    val info = infoText
+    if (info != null) {
+        AlertDialog(
+            onDismissRequest = { infoText = null },
+            title = { Text("我的参与状态") },
+            text = { Text(info) },
+            confirmButton = {
+                TextButton(onClick = { infoText = null }) {
+                    Text("知道了")
+                }
+            }
+        )
+    }
+}
+
+/** Audio file card (v0.9.37, D4): title/performer from
+ *  the file's own metadata, playback through the same
+ *  VoicePlayer the voice notes use. A file that is not
+ *  on disk yet falls back to the plain file row, whose
+ *  download affordance is the honest one. */
+@Composable
+fun AudioBubbleContent(msg: MsgItem) {
+    val path = msg.filePath
+    if (path == null) {
+        FileBubbleContent(msg)
+        return
+    }
+    val palette = OfficialTheme.current()
+    val mainText = if (msg.outgoing) palette.outText else palette.inText
+    val subText = if (msg.outgoing) palette.outTime else palette.inTime
+    val activePath by VoicePlayer.activePath.collectAsState()
+    val playing by VoicePlayer.playing.collectAsState()
+    val positionMs by VoicePlayer.positionMs.collectAsState()
+    val durationMs by VoicePlayer.durationMs.collectAsState()
+    val active = activePath == path
+    val totalMs = if (active && durationMs > 0) {
+        durationMs
+    } else {
+        msg.durationSec * 1000
+    }
+    Column(modifier = Modifier.widthIn(min = 190.dp, max = 264.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable { VoicePlayer.toggle(path) },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .background(
+                            if (msg.outgoing) {
+                                Color.White.copy(alpha = 0.22f)
+                            } else {
+                                palette.accent
+                            },
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (active && playing) "❚❚" else "▶",
+                        color = Color.White,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+            Spacer(Modifier.width(9.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    msg.audioTitle.ifEmpty { msg.fileName },
+                    color = mainText,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
+                Text(
+                    when {
+                        msg.audioPerformer.isNotEmpty() ->
+                            msg.audioPerformer
+                        active && totalMs > 0 ->
+                            "${formatDuration(positionMs / 1000)} / " +
+                                formatDuration(totalMs / 1000)
+                        else -> formatDuration(msg.durationSec)
+                    },
+                    color = subText,
+                    fontSize = 12.sp,
+                    maxLines = 1
+                )
+                if (active && totalMs > 0) {
+                    Spacer(Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(
+                                Color.Black.copy(alpha = 0.15f),
+                                RoundedCornerShape(2.dp)
+                            )
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(
+                                    (positionMs.toFloat() / totalMs)
+                                        .coerceIn(0f, 1f)
+                                )
+                                .height(3.dp)
+                                .background(
+                                    if (msg.outgoing) {
+                                        Color.White
+                                    } else {
+                                        palette.accent
+                                    },
+                                    RoundedCornerShape(2.dp)
+                                )
+                        )
+                    }
+                }
+            }
+        }
+        if (msg.text.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                msg.text,
+                color = mainText,
+                fontSize = 14.sp
+            )
+        }
+    }
+}
+
+/** Invoice card (v0.9.37, D4): information only. This
+ *  app has no payment flow, so the card shows the
+ *  product and the total and says plainly that paying
+ *  happens elsewhere — there is deliberately no pay
+ *  button to tap. */
+@Composable
+fun InvoiceBubbleContent(msg: MsgItem) {
+    val palette = OfficialTheme.current()
+    val mainText = if (msg.outgoing) palette.outText else palette.inText
+    val subText = if (msg.outgoing) palette.outTime else palette.inTime
+    Column(modifier = Modifier.widthIn(min = 190.dp, max = 264.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("🧾", fontSize = 17.sp)
+            Spacer(Modifier.width(7.dp))
+            Text(
+                "账单",
+                color = mainText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        if (msg.invoiceTitle.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                msg.invoiceTitle,
+                color = mainText,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        if (msg.invoiceDescription.isNotEmpty()) {
+            Text(
+                msg.invoiceDescription,
+                color = mainText,
+                fontSize = 13.sp
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text("总计", color = subText, fontSize = 13.sp)
+            Spacer(Modifier.weight(1f))
+            Text(
+                msg.invoiceTotalText,
+                color = mainText,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Text(
+            "本应用不能支付，这张账单只能查看。",
+            color = subText,
+            fontSize = 11.5.sp
+        )
+    }
+}
+
+/** Shared users / shared chat card (v0.9.37, D4): the
+ *  names ride inside the message payload. A user entry
+ *  opens that user's profile; a chat entry is shown
+ *  as-is (opening an arbitrary chat from here is not
+ *  wired, and the card does not pretend otherwise). */
+@Composable
+fun SharedBubbleContent(msg: MsgItem) {
+    val palette = OfficialTheme.current()
+    val mainText = if (msg.outgoing) palette.outText else palette.inText
+    Column(modifier = Modifier.widthIn(min = 170.dp, max = 264.dp)) {
+        Text(
+            msg.sharedHeader,
+            color = mainText,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        for (entry in msg.sharedEntries) {
+            Text(
+                entry.name,
+                color = if (msg.outgoing) {
+                    palette.outText
+                } else {
+                    palette.accentText
+                },
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .padding(vertical = 3.dp)
+                    .then(
+                        if (entry.userId != 0L) {
+                            Modifier.clickable {
+                                DeepLink.pendingProfileUser.value =
+                                    entry.userId
+                            }
+                        } else {
+                            Modifier
+                        }
+                    )
+            )
+        }
     }
 }
 
