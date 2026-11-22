@@ -184,6 +184,14 @@ fun ProfileScreen(
         .collectAsState()
     val boostError by com.tuxungram.android.td.BoostStore.error
         .collectAsState()
+    val boostList by com.tuxungram.android.td.BoostStore.boosts
+        .collectAsState()
+    val boostListTotal by com.tuxungram.android.td.BoostStore
+        .boostsTotal.collectAsState()
+    val boostListVisible by com.tuxungram.android.td.BoostStore
+        .boostsVisible.collectAsState()
+    val boostListHasMore by com.tuxungram.android.td.BoostStore
+        .boostsHasMore.collectAsState()
     // Profile photo wall + viewer (v0.9.12, S3).
     val profilePhotos by ProfilePhotosStore.state.collectAsState()
     val wallNotice by ProfilePhotosStore.notice.collectAsState()
@@ -1440,6 +1448,163 @@ fun ProfileScreen(
                                             modifier = Modifier
                                                 .padding(top = 2.dp)
                                         )
+                                    }
+                                    if (boostListVisible) {
+                                        // Who boosted (v0.9.34,
+                                        // A3): getChatBoosts rows.
+                                        // The whole block exists
+                                        // only when the server
+                                        // answered the list —
+                                        // administrators in
+                                        // practice; a refusal
+                                        // hides it (see
+                                        // BoostStore).
+                                        Text(
+                                            "助力名单" +
+                                                "（共 ${boostListTotal} 次）",
+                                            fontSize = 13.sp,
+                                            fontWeight =
+                                                FontWeight.SemiBold,
+                                            color =
+                                                profilePalette.accentText,
+                                            modifier = Modifier
+                                                .padding(top = 10.dp)
+                                        )
+                                        if (boostList.isEmpty()) {
+                                            Text(
+                                                "还没有人助力过这个对话。",
+                                                fontSize = 12.sp,
+                                                color = Color.Gray,
+                                                modifier = Modifier
+                                                    .padding(top = 4.dp)
+                                            )
+                                        }
+                                        val boostDateFmt =
+                                            java.text.SimpleDateFormat(
+                                                "yyyy-MM-dd",
+                                                java.util.Locale
+                                                    .getDefault()
+                                            )
+                                        boostList.forEach { entry ->
+                                            val sourceLabel =
+                                                when (entry.sourceKind) {
+                                                    "premium" ->
+                                                        "Premium 助力"
+                                                    "gift_code" ->
+                                                        "礼物码助力"
+                                                    "giveaway" ->
+                                                        "赠送活动助力"
+                                                    else -> "助力"
+                                                }
+                                            Row(
+                                                verticalAlignment =
+                                                    Alignment
+                                                        .CenterVertically,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 3.dp)
+                                            ) {
+                                                val entryPhoto =
+                                                    entry.photoPath
+                                                if (entryPhoto != null) {
+                                                    AvatarImage(
+                                                        path = entryPhoto,
+                                                        sizeDp = 36
+                                                    )
+                                                } else {
+                                                    val pair =
+                                                        OfficialTheme
+                                                            .avatarColors(
+                                                                entry.userId,
+                                                                OfficialTheme
+                                                                    .dark
+                                                            )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(36.dp)
+                                                            .background(
+                                                                Brush
+                                                                    .verticalGradient(
+                                                                        listOf(
+                                                                            pair.first,
+                                                                            pair.second
+                                                                        )
+                                                                    ),
+                                                                CircleShape
+                                                            ),
+                                                        contentAlignment =
+                                                            Alignment.Center
+                                                    ) {
+                                                        Text(
+                                                            entry.name
+                                                                .trim()
+                                                                .firstOrNull()
+                                                                ?.toString()
+                                                                ?: "?",
+                                                            color =
+                                                                Color.White,
+                                                            fontWeight =
+                                                                FontWeight
+                                                                    .Bold,
+                                                            fontSize = 15.sp
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(
+                                                    Modifier.width(10.dp)
+                                                )
+                                                Column {
+                                                    Text(
+                                                        entry.name
+                                                            .ifEmpty {
+                                                                sourceLabel
+                                                            },
+                                                        fontSize = 14.sp
+                                                    )
+                                                    Text(
+                                                        buildString {
+                                                            if (entry.name
+                                                                    .isNotEmpty()
+                                                            ) {
+                                                                append(
+                                                                    sourceLabel
+                                                                )
+                                                                append(" · ")
+                                                            }
+                                                            if (entry.count > 1) {
+                                                                append(
+                                                                    "共 " +
+                                                                        "${entry.count} 次 · "
+                                                                )
+                                                            }
+                                                            append(
+                                                                "到期 "
+                                                            )
+                                                            append(
+                                                                boostDateFmt
+                                                                    .format(
+                                                                        java.util
+                                                                            .Date(
+                                                                                entry.expirationDate * 1000L
+                                                                            )
+                                                                    )
+                                                            )
+                                                        },
+                                                        fontSize = 12.sp,
+                                                        color = Color.Gray
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        if (boostListHasMore) {
+                                            TextButton(onClick = {
+                                                com.tuxungram.android.td
+                                                    .BoostStore
+                                                    .loadMoreBoosts()
+                                            }) {
+                                                Text("加载更多助力")
+                                            }
+                                        }
                                     }
                                     if (st.boostUrl.isNotEmpty()) {
                                         Row(

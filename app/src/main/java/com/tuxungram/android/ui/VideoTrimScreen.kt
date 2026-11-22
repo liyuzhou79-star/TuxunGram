@@ -19,6 +19,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -72,6 +73,10 @@ fun VideoTrimScreen(
     }
     val durationMs = info?.durationMs ?: 0L
     var range by remember { mutableStateOf(0f..1f) }
+    // Drop the audio track on export (v0.9.34, A2): the
+    // muxer simply never gets an audio track. Only offered
+    // when the file actually has one (probe says so).
+    var muteAudio by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
 
@@ -228,6 +233,25 @@ fun VideoTrimScreen(
                         color = Color(0xFF9E9E9E), fontSize = 12.sp,
                         modifier = Modifier.padding(top = 6.dp)
                     )
+                    if (currentInfo.hasAudio) {
+                        Row(
+                            verticalAlignment =
+                                Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp)
+                        ) {
+                            Text(
+                                "去掉声音",
+                                color = Color.White, fontSize = 14.sp
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Switch(
+                                checked = muteAudio,
+                                onCheckedChange = { muteAudio = it }
+                            )
+                        }
+                    }
                     if (errorText != null) {
                         Text(
                             errorText!!,
@@ -264,7 +288,8 @@ fun VideoTrimScreen(
                                             path,
                                             outFile.absolutePath,
                                             startMs,
-                                            endMs
+                                            endMs,
+                                            muteAudio = muteAudio
                                         )
                                     }
                                     exporting = false

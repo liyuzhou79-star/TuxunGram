@@ -191,6 +191,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -937,6 +938,12 @@ fun ChatScreen(
     // confirm dialog and finishing swaps the trimmed file
     // into it.
     var trimmingVideo by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+    // Album-item trimmer (v0.9.34, A2): the index of the
+    // album part being trimmed, or -1. The album preview's
+    // state stays untouched underneath; finishing swaps
+    // the trimmed file into that part, cancelling changes
+    // nothing.
+    var trimmingAlbumIndex by remember { mutableStateOf(-1) }
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
@@ -1699,11 +1706,39 @@ fun ChatScreen(
             return@Column
         }
 
+        val albumTrimIndex = trimmingAlbumIndex
+        if (albumPreviewOpen && albumTrimIndex in albumParts.indices) {
+            val part = albumParts[albumTrimIndex]
+            VideoTrimScreen(
+                path = part.path,
+                fileName = part.fileName,
+                onDone = { newPath ->
+                    val base = part.fileName
+                        .substringBeforeLast('.', part.fileName)
+                    albumParts = albumParts.mapIndexed { i, p ->
+                        if (i == albumTrimIndex) {
+                            p.copy(
+                                path = newPath,
+                                mimeType = "video/mp4",
+                                fileName = "${base}_trim.mp4"
+                            )
+                        } else {
+                            p
+                        }
+                    }
+                    trimmingAlbumIndex = -1
+                },
+                onCancel = { trimmingAlbumIndex = -1 }
+            )
+            return@Column
+        }
+
         if (albumPreviewOpen && albumParts.size >= 2) {
             AlbumPreview(
                 parts = albumParts,
                 caption = albumCaption,
                 onCaptionChange = { albumCaption = it },
+                onTrimPart = { index -> trimmingAlbumIndex = index },
                 onSend = {
                     MessageStore.clearSendError()
                     MessageStore.sendAlbum(
@@ -1711,10 +1746,12 @@ fun ChatScreen(
                     )
                     albumPreviewOpen = false
                     albumParts = emptyList()
+                    trimmingAlbumIndex = -1
                 },
                 onCancel = {
                     albumPreviewOpen = false
                     albumParts = emptyList()
+                    trimmingAlbumIndex = -1
                 }
             )
             return@Column
@@ -3999,9 +4036,11 @@ fun AlbumPreview(
     parts: List<AlbumPart>,
     caption: String,
     onCaptionChange: (String) -> Unit,
+    onTrimPart: (Int) -> Unit,
     onSend: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val context = LocalContext.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -4019,7 +4058,7 @@ fun AlbumPreview(
             verticalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.weight(1f)
         ) {
-            gridItems(parts) { part ->
+            gridItemsIndexed(parts) { index, part ->
                 val bitmap by produceState<android.graphics.Bitmap?>(
                     null, part.path
                 ) {
@@ -4047,7 +4086,25 @@ fun AlbumPreview(
                         // Placeholder (v0.9.20, AA5): the
                         // palette's in-bubble surface instead
                         // of the hardcoded light gray.
-                        .background(OfficialTheme.current().inBubble),
+                        .background(OfficialTheme.current().inBubble)
+                        // Per-item trim (v0.9.34, A2): tapping
+                        // a video cell opens the trimmer for
+                        // that item; non-MP4 videos explain
+                        // themselves instead of dead-ending.
+                        .clickable(
+                            enabled = part.mimeType.startsWith("video/")
+                        ) {
+                            if (part.mimeType == "video/mp4") {
+                                onTrimPart(index)
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "这个格式暂时不能剪辑（仅支持 MP4），" +
+                                        "会按原视频发送。",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     if (bitmap != null) {
@@ -4074,6 +4131,21 @@ fun AlbumPreview(
                                 modifier = Modifier.size(18.dp)
                             )
                         }
+                        Text(
+                            "剪辑",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(4.dp)
+                                .background(
+                                    Color(0x66000000),
+                                    RoundedCornerShape(4.dp)
+                                )
+                                .padding(
+                                    horizontal = 5.dp, vertical = 2.dp
+                                )
+                        )
                     }
                 }
             }

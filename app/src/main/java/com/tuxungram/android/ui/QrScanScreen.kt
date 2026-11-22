@@ -313,6 +313,12 @@ private fun QrCameraPreview(
                     override fun onSurfaceTextureAvailable(
                         surface: SurfaceTexture, width: Int, height: Int
                     ) {
+                        // A re-created surface (v0.9.34, A4):
+                        // close the previous camera first.
+                        // Only the latest closer is remembered,
+                        // so skipping this would leak the old
+                        // camera device, thread and executor.
+                        closerRef.value?.invoke()
                         closerRef.value = startQrCamera(
                             ctx, surface, activeRef,
                             deliveredRef, onCode
@@ -325,7 +331,17 @@ private fun QrCameraPreview(
 
                     override fun onSurfaceTextureDestroyed(
                         surface: SurfaceTexture
-                    ): Boolean = true
+                    ): Boolean {
+                        // The surface is gone: the camera has
+                        // nothing to preview into, so close it
+                        // now instead of waiting for the whole
+                        // composable to dispose (v0.9.34, A4).
+                        // The closer is idempotent, so the
+                        // DisposableEffect may still call it.
+                        closerRef.value?.invoke()
+                        closerRef.value = null
+                        return true
+                    }
 
                     override fun onSurfaceTextureUpdated(
                         surface: SurfaceTexture
@@ -372,7 +388,15 @@ private fun startQrCamera(
         )
         reader = imageReader
         imageReader.setOnImageAvailableListener({ r ->
-            val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
+            // Acquiring can throw when the reader was closed
+            // by the teardown racing an in-flight callback
+            // (v0.9.34, A4) — that must end the callback, not
+            // crash the camera thread.
+            val image = try {
+                r.acquireLatestImage()
+            } catch (t: Throwable) {
+                null
+            } ?: return@setOnImageAvailableListener
             try {
                 if (!activeRef.get() || !decoding.compareAndSet(false, true)) {
                     return@setOnImageAvailableListener

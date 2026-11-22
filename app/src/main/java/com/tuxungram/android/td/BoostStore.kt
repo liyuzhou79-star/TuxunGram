@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 /** One of my own boost slots (chatBoostSlot in td_api.tl). */
 data class BoostSlotUi(
@@ -14,6 +15,25 @@ data class BoostSlotUi(
     val expirationDate: Int,
     /** Unix seconds before which the slot can't move. */
     val cooldownUntilDate: Int
+)
+
+/** One row of a chat's boost list (chatBoost in td_api.tl,
+ *  listed by getChatBoosts; v0.9.34, A3). */
+data class BoostEntryUi(
+    val id: String,
+    /** How many identical boosts this entry stands for. */
+    val count: Int,
+    /** "premium" / "gift_code" / "giveaway"; "" = unknown. */
+    val sourceKind: String,
+    /** The user behind the boost; 0 when the source has
+     *  none (an unclaimed giveaway, say). */
+    val userId: Long,
+    val name: String,
+    val photoPath: String?,
+    /** Unix seconds when the boost was applied. */
+    val startDate: Int,
+    /** Unix seconds when the boost expires. */
+    val expirationDate: Int
 )
 
 /** chatBoostStatus flattened for the profile page. */
@@ -44,6 +64,12 @@ data class BoostStatusUi(
  * not applyChatBoost). Boosting spends the CURRENT user's
  * own Premium slots and is server-gated; a refusal is
  * translated, never papered over.
+ *
+ * The boost LIST (who boosted, v0.9.34 A3) comes from
+ * getChatBoosts (offset/limit paging over foundChatBoosts,
+ * all verified in td_api.tl). The server only answers it
+ * for chat administrators; a refusal hides the list
+ * section entirely instead of showing a dead end.
  */
 object BoostStore {
     private val _status = MutableStateFlow<BoostStatusUi?>(null)
@@ -58,6 +84,38 @@ object BoostStore {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
+    // ---- Boost list (v0.9.34, A3) ----
+
+    private val _boosts = MutableStateFlow<List<BoostEntryUi>>(
+        emptyList()
+    )
+    val boosts: StateFlow<List<BoostEntryUi>> = _boosts
+
+    /** Total boosts applied to the chat (the list's own
+     *  total_count; counts boosts, not list rows). */
+    private val _boostsTotal = MutableStateFlow(0)
+    val boostsTotal: StateFlow<Int> = _boostsTotal
+
+    /** True only once getChatBoosts has answered at least
+     *  one page: the server answers it for administrators,
+     *  and anyone else gets the section hidden, not an
+     *  error wall. */
+    private val _boostsVisible = MutableStateFlow(false)
+    val boostsVisible: StateFlow<Boolean> = _boostsVisible
+
+    private val _boostsHasMore = MutableStateFlow(false)
+    val boostsHasMore: StateFlow<Boolean> = _boostsHasMore
+
+    @Volatile
+    private var boostsOffset = ""
+
+    @Volatile
+    private var boostsLoading = false
+
+    private val boostNameByUser = ConcurrentHashMap<Long, String>()
+    private val boostNamePending =
+        ConcurrentHashMap.newKeySet<Long>()
+
     private var currentChatId = 0L
 
     fun load(chatId: Long) {
@@ -66,6 +124,12 @@ object BoostStore {
         _slots.value = emptyList()
         _loaded.value = false
         _error.value = null
+        _boosts.value = emptyList()
+        _boostsTotal.value = 0
+        _boostsVisible.value = false
+        _boostsHasMore.value = false
+        boostsOffset = ""
+        loadBoostsPage(chatId)
         val query = TdClient.request("getChatBoostStatus").apply {
             put("chat_id", chatId)
         }
@@ -135,6 +199,119 @@ object BoostStore {
                 }
                 onDone(null)
                 load(chatId)
+            }
+        }
+    }
+
+    /** One page of the boost list. The first page decides
+     *  visibility: an error there (not an administrator,
+     *  in practice) hides the section; an error on a later
+     *  page just stops paging where it is. */
+    private fun loadBoostsPage(chatId: Long) {
+        if (boostsLoading) return
+        boostsLoading = true
+        val offset = boostsOffset
+        val query = TdClient.request("getChatBoosts").apply {
+            put("chat_id", chatId)
+            put("only_gift_codes", false)
+            put("offset", offset)
+            put("limit", 50)
+        }
+        TdRepository.sendRaw(query) { response ->
+            boostsLoading = false
+            if (currentChatId != chatId) return@sendRaw
+            if (TdClient.isError(response)) {
+                if (offset.isEmpty()) {
+                    _boostsVisible.value = false
+                }
+                _boostsHasMore.value = false
+                return@sendRaw
+            }
+            _boostsVisible.value = true
+            _boostsTotal.value = response.optInt("total_count")
+            boostsOffset = response.optString("next_offset")
+            _boostsHasMore.value = boostsOffset.isNotEmpty()
+            val arr = response.optJSONArray("boosts") ?: JSONArray()
+            val page = ArrayList<BoostEntryUi>()
+            for (i in 0 until arr.length()) {
+                val boost = arr.optJSONObject(i) ?: continue
+                val source = boost.optJSONObject("source")
+                val kind = when (source?.optString("@type")) {
+                    "chatBoostSourcePremium" -> "premium"
+                    "chatBoostSourceGiftCode" -> "gift_code"
+                    "chatBoostSourceGiveaway" -> "giveaway"
+                    else -> ""
+                }
+                val userId = source?.optLong("user_id") ?: 0L
+                page.add(
+                    BoostEntryUi(
+                        id = boost.optString("id"),
+                        count = boost.optInt("count"),
+                        sourceKind = kind,
+                        userId = userId,
+                        name = boostNameByUser[userId] ?: "",
+                        photoPath = if (userId != 0L) {
+                            AvatarStore.pathForUser(userId)
+                        } else {
+                            null
+                        },
+                        startDate = boost.optInt("start_date"),
+                        expirationDate =
+                            boost.optInt("expiration_date")
+                    )
+                )
+            }
+            _boosts.value = if (offset.isEmpty()) {
+                page
+            } else {
+                _boosts.value + page
+            }
+            for (entry in page) {
+                if (entry.userId != 0L && entry.name.isEmpty()) {
+                    resolveBoostName(entry.userId)
+                }
+            }
+        }
+    }
+
+    /** Next page of the boost list, when the server said
+     *  there is one. */
+    fun loadMoreBoosts() {
+        val chatId = currentChatId
+        if (chatId == 0L || boostsOffset.isEmpty()) return
+        loadBoostsPage(chatId)
+    }
+
+    /** Booster names resolve lazily through getUser, the
+     *  same pattern as the message viewers list. */
+    private fun resolveBoostName(userId: Long) {
+        if (!boostNamePending.add(userId)) return
+        val query = TdClient.request("getUser").apply {
+            put("user_id", userId)
+        }
+        TdRepository.sendRaw(query) { user ->
+            boostNamePending.remove(userId)
+            if (TdClient.isError(user)) return@sendRaw
+            AvatarStore.noteUser(user)
+            val name = listOf(
+                user.optString("first_name"),
+                user.optString("last_name")
+            ).filter { it.isNotEmpty() }.joinToString(" ")
+            if (name.isNotEmpty()) boostNameByUser[userId] = name
+            patchBoostUser(userId)
+        }
+    }
+
+    private fun patchBoostUser(userId: Long) {
+        val name = boostNameByUser[userId] ?: ""
+        val path = AvatarStore.pathForUser(userId)
+        _boosts.value = _boosts.value.map { entry ->
+            if (entry.userId == userId &&
+                (entry.name != name || entry.photoPath != path)
+            ) {
+                entry.copy(name = name, photoPath = path)
+            } else {
+                entry
             }
         }
     }

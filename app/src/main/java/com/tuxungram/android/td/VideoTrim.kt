@@ -30,7 +30,11 @@ object VideoTrim {
     data class Info(
         val durationMs: Long,
         val isMp4: Boolean,
-        val rotation: Int
+        val rotation: Int,
+        /** True when the file carries an audio track; the
+         *  trim screen only offers its mute switch then
+         *  (v0.9.34, A2). */
+        val hasAudio: Boolean
     )
 
     /** Container sniff: an MP4-family file starts with an
@@ -59,7 +63,10 @@ object VideoTrim {
             val rotation = retriever.extractMetadata(
                 MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION
             )?.toIntOrNull() ?: 0
-            Info(duration, isMp4, rotation)
+            val hasAudio = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO
+            ) == "yes"
+            Info(duration, isMp4, rotation, hasAudio)
         } catch (t: Throwable) {
             null
         } finally {
@@ -110,12 +117,26 @@ object VideoTrim {
      * Copy [startMs, endMs) of [srcPath] into [dstPath].
      * Returns null on success or a plain-language failure.
      * Runs entirely on the caller's (background) thread.
+     *
+     * The copy is streaming (v0.9.34, A2 audit): one sample
+     * at a time through a single buffer, so a huge source
+     * file costs no more memory than a small one. The
+     * buffer starts at the tracks' declared max input size
+     * and doubles (to a 64 MB cap) if a sample turns out
+     * bigger than declared — a too-small buffer makes
+     * readSampleData throw BufferOverflowException WITHOUT
+     * consuming the sample, so retrying with a bigger
+     * buffer is safe.
+     *
+     * [muteAudio] drops the audio tracks instead of copying
+     * them (the muxer simply never gets an audio track).
      */
     fun trim(
         srcPath: String,
         dstPath: String,
         startMs: Long,
-        endMs: Long
+        endMs: Long,
+        muteAudio: Boolean = false
     ): String? {
         val info = probe(srcPath)
             ?: return "这个视频读不出来，没法剪辑。"
@@ -138,8 +159,9 @@ object VideoTrim {
                 mux.setOrientationHint(info.rotation)
             }
             // Map extractor tracks onto muxer tracks; only
-            // video/audio tracks ride along. A codec the
-            // muxer refuses fails the whole export honestly.
+            // video/audio tracks ride along (audio only when
+            // not muted). A codec the muxer refuses fails
+            // the whole export honestly.
             val trackMap = HashMap<Int, Int>()
             var maxInputSize = 1024 * 1024
             for (i in 0 until extractor.trackCount) {
@@ -148,6 +170,9 @@ object VideoTrim {
                 if (!mime.startsWith("video/") &&
                     !mime.startsWith("audio/")
                 ) {
+                    continue
+                }
+                if (muteAudio && mime.startsWith("audio/")) {
                     continue
                 }
                 val muxIndex = try {
@@ -178,7 +203,7 @@ object VideoTrim {
             )
             var baseUs = -1L
             mux.start()
-            val buffer = ByteBuffer.allocate(maxInputSize)
+            var buffer = ByteBuffer.allocate(maxInputSize)
             val bufferInfo = MediaCodec.BufferInfo()
             // Tracks whose samples have all passed the picked
             // end; the copy stops once every kept track is
@@ -200,7 +225,22 @@ object VideoTrim {
                     continue
                 }
                 if (baseUs < 0) baseUs = sampleUs
-                val size = extractor.readSampleData(buffer, 0)
+                var size = -1
+                while (true) {
+                    try {
+                        size = extractor.readSampleData(buffer, 0)
+                        break
+                    } catch (e: java.nio.BufferOverflowException) {
+                        // Sample bigger than the declared max
+                        // input size: grow and retry the SAME
+                        // sample (a failed read consumes
+                        // nothing). Past the cap the export
+                        // fails honestly via the outer catch.
+                        val newCapacity = buffer.capacity() * 2
+                        if (newCapacity > 64 * 1024 * 1024) throw e
+                        buffer = ByteBuffer.allocate(newCapacity)
+                    }
+                }
                 if (size < 0) break
                 bufferInfo.offset = 0
                 bufferInfo.size = size
@@ -227,7 +267,13 @@ object VideoTrim {
             } catch (t: Throwable) {
                 // Already reported through the return value.
             }
-            extractor.release()
+            try {
+                extractor.release()
+            } catch (t: Throwable) {
+                // A throwing release must not replace the
+                // result the caller is about to act on
+                // (v0.9.34, A4).
+            }
             // A failed export can leave a half-written file;
             // the caller checks the return value and deletes
             // the destination before falling back to the
