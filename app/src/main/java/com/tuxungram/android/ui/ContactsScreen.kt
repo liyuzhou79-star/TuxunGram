@@ -251,7 +251,6 @@ fun ContactsScreen(
             }
         }
     }
-}
 
     if (syncExplainOpen) {
         // The pre-sync explanation (v0.9.13, T4): what leaves
