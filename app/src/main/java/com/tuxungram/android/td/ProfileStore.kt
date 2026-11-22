@@ -99,7 +99,17 @@ data class ProfileUi(
     /** supergroupFullInfo.has_hidden_members and its gate
      *  can_hide_members (v0.9.13, T6). */
     val membersHidden: Boolean = false,
-    val canHideMembers: Boolean = false
+    val canHideMembers: Boolean = false,
+    /** Structured info fields (v0.9.20, AA2): read-only
+     *  display data for the official label-above-value info
+     *  rows on the profile page. phone only ever carries a
+     *  value when the server hands it out (contacts);
+     *  infoLines remains the header's compact summary. */
+    val username: String = "",
+    val phone: String = "",
+    val commonGroups: Int = 0,
+    val memberCount: Int = 0,
+    val adminCount: Int = 0
 )
 
 /**
@@ -134,6 +144,11 @@ object ProfileStore {
     private var currentCanAntiSpam = false
     private var currentMembersHidden = false
     private var currentCanHideMembers = false
+    private var currentUsername = ""
+    private var currentPhone = ""
+    private var currentCommonGroups = 0
+    private var currentMemberCount = 0
+    private var currentAdminCount = 0
     private var supergroupId = 0L
     private var memberOffset = 0
     private var membersLoading = false
@@ -167,6 +182,11 @@ object ProfileStore {
         currentCanAntiSpam = false
         currentMembersHidden = false
         currentCanHideMembers = false
+        currentUsername = ""
+        currentPhone = ""
+        currentCommonGroups = 0
+        currentMemberCount = 0
+        currentAdminCount = 0
         supergroupId = 0L
         memberOffset = 0
         membersLoading = false
@@ -260,7 +280,12 @@ object ProfileStore {
             antiSpamEnabled = currentAntiSpam,
             canToggleAntiSpam = currentCanAntiSpam,
             membersHidden = currentMembersHidden,
-            canHideMembers = currentCanHideMembers
+            canHideMembers = currentCanHideMembers,
+            username = currentUsername,
+            phone = currentPhone,
+            commonGroups = currentCommonGroups,
+            memberCount = currentMemberCount,
+            adminCount = currentAdminCount
         )
     }
 
@@ -294,6 +319,11 @@ object ProfileStore {
             if (!TdClient.isError(user)) {
                 username = user.optJSONObject("usernames")
                     ?.optJSONArray("active_usernames")?.optString(0) ?: ""
+                currentUsername = username
+                // phone_number is only present when the
+                // server shares it (contacts); absent stays
+                // empty and the info row simply never shows.
+                currentPhone = user.optString("phone_number")
             }
             done()
         }
@@ -303,6 +333,7 @@ object ProfileStore {
             if (!TdClient.isError(full)) {
                 bio = full.optJSONObject("bio")?.optString("text") ?: ""
                 commonGroups = full.optInt("group_in_common_count")
+                currentCommonGroups = commonGroups
                 currentBlocked =
                     full.optJSONObject("block_list")?.optString("@type") ==
                     "blockListMain"
@@ -329,6 +360,7 @@ object ProfileStore {
                     addMember(m)
                 }
             }
+            currentMemberCount = memberSnapshot().size
             publish(
                 chatId, title, "群组",
                 full.optString("description"),
@@ -373,6 +405,8 @@ object ProfileStore {
             currentSlowMode = full.optInt("slow_mode_delay")
             val memberCount = full.optInt("member_count")
             val adminCount = full.optInt("administrator_count")
+            currentMemberCount = memberCount
+            currentAdminCount = adminCount
             val lines = ArrayList<String>()
             if (memberCount > 0) {
                 lines.add(

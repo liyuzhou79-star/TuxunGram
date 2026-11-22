@@ -32,6 +32,10 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.AlternateEmail
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -103,6 +107,14 @@ fun ProfileScreen(
     BackHandler { onBack() }
     val profile by ProfileStore.profile.collectAsState()
     val chatItem = ChatStore.itemOf(chatId)
+    // Live chat item (v0.9.20, AA2): presence, member count
+    // and mute state for the official header + action row
+    // come from the chat-list flow so they stay current
+    // while this page is open; itemOf is the first-frame
+    // fallback.
+    val allChats by ChatStore.chats.collectAsState()
+    val liveItem = allChats.firstOrNull { it.id == chatId } ?: chatItem
+    val profilePalette = OfficialTheme.current()
     // Admin tools (Batch 3, C4): entries appear only when the
     // signed-in user actually holds the matching right here.
     val caps by AdminStore.caps.collectAsState()
@@ -268,16 +280,36 @@ fun ProfileScreen(
         if (isSecretProfile) SecretChatStore.loadForChat(chatId)
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(profilePalette.graySection)
+    ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(profilePalette.actionBarBg)
+                .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = profilePalette.actionBarIcon
+                )
             }
-            Text("资料", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "资料", fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
+                color = profilePalette.actionBarTitle
+            )
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(profilePalette.divider)
+        )
         val p = profile
         if (p == null || p.chatId != chatId) {
             CenterColumn {
@@ -298,32 +330,64 @@ fun ProfileScreen(
                 .lazyListScrollbar(profileListState)
         ) {
             item(key = "head") {
-                // Graphical header banner (v0.9.11, A2): same
-                // seed-gradient banner as the Me tab, identity
-                // in white over the gradient.
-                HeaderBanner {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        if (chatItem?.photoPath != null) {
-                            // Official profile density
-                            // (v0.9.17, X7): 92 dp avatar,
-                            // 20 sp name.
-                            AvatarImage(path = chatItem.photoPath, sizeDp = 92)
+                // Official profile header (v0.9.20, AA2):
+                // the identity block sits on the plain bar
+                // background (the A2 gradient banner is gone
+                // from this page) — a 100 dp avatar (tap opens
+                // the photo wall's viewer when the wall has
+                // photos), the name, and one status line:
+                // presence for users, member count for groups
+                // and channels, the kind label as fallback.
+                val wallReady = p.userId != 0L &&
+                    profilePhotos.userId == p.userId &&
+                    profilePhotos.photos.isNotEmpty()
+                val statusLine = when {
+                    p.isSecretChat -> "秘密聊天"
+                    p.userId != 0L ->
+                        liveItem?.presenceText?.takeIf {
+                            it.isNotEmpty()
+                        } ?: p.kindLabel
+                    p.memberCount > 0 ->
+                        if (p.kindLabel == "频道") {
+                            "${p.memberCount} 位订阅者"
                         } else {
-                            val pair = if (chatItem != null) {
+                            "${p.memberCount} 位成员"
+                        }
+                    (liveItem?.memberCount ?: 0) > 0 ->
+                        if (p.kindLabel == "频道") {
+                            "${liveItem?.memberCount} 位订阅者"
+                        } else {
+                            "${liveItem?.memberCount} 位成员"
+                        }
+                    else -> p.kindLabel
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(profilePalette.actionBarBg)
+                        .padding(vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = if (wallReady) {
+                            Modifier.clickable { photoViewerIndex = 0 }
+                        } else {
+                            Modifier
+                        }
+                    ) {
+                        if (liveItem?.photoPath != null) {
+                            AvatarImage(path = liveItem.photoPath, sizeDp = 100)
+                        } else {
+                            val pair = if (liveItem != null) {
                                 OfficialTheme.avatarColors(
-                                    chatItem.id, OfficialTheme.dark
+                                    liveItem.id, OfficialTheme.dark
                                 )
                             } else {
                                 OfficialTheme.current().savedColors
                             }
                             Box(
                                 modifier = Modifier
-                                    .size(92.dp)
+                                    .size(100.dp)
                                     .background(
                                         Brush.verticalGradient(
                                             listOf(pair.first, pair.second)
@@ -336,53 +400,182 @@ fun ProfileScreen(
                                     p.title.trim().firstOrNull()?.toString() ?: "?",
                                     color = Color.White,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 32.sp
+                                    fontSize = 36.sp
                                 )
                             }
                         }
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            p.title,
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        p.title,
+                        color = profilePalette.textPrimary,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        statusLine,
+                        color = if (
+                            p.userId != 0L && liveItem?.isOnline == true
+                        ) {
+                            profilePalette.accentText
+                        } else {
+                            profilePalette.textSecondary
+                        },
+                        fontSize = 14.sp
+                    )
+                }
+            }
+            item(key = "actions") {
+                // Official action row (v0.9.20, AA2): the
+                // icon-over-label shortcuts under the header.
+                // Every slot is an entry that already exists
+                // somewhere on this page or one tap back (the
+                // chat itself); nothing new is wired, nothing
+                // is only here.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(profilePalette.windowBg)
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (p.userId != 0L) {
+                        ProfileAction(
+                            icon = PlaneIcon,
+                            label = "消息",
+                            modifier = Modifier.weight(1f),
+                            onClick = onBack
                         )
-                        Text(
-                            p.kindLabel,
-                            color = Color.White.copy(alpha = 0.85f),
-                            fontSize = 13.sp
+                    }
+                    if (liveItem != null) {
+                        ProfileAction(
+                            icon = if (liveItem.isMuted) {
+                                MuteBellIcon
+                            } else {
+                                Icons.Filled.Notifications
+                            },
+                            label = if (liveItem.isMuted) {
+                                "已静音"
+                            } else {
+                                "静音"
+                            },
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                ChatStore.toggleMute(liveItem)
+                            }
                         )
-                        for (line in p.infoLines) {
-                            Text(
-                                line,
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontSize = 14.sp
-                            )
-                        }
+                    }
+                    ProfileAction(
+                        icon = ImageIcon,
+                        label = "共享媒体",
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenSharedMedia
+                    )
+                    if (p.canGetMembers) {
+                        ProfileAction(
+                            icon = PeopleIcon,
+                            label = "成员",
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenMembers
+                        )
                     }
                 }
             }
-            if (p.description.isNotEmpty()) {
-                item(key = "desc") {
-                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.Info, contentDescription = null,
-                                tint = Color.Gray, modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                "简介",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.Gray
+            item(key = "div_actions") { ProfileDivider() }
+            val hasInfoRows = p.phone.isNotEmpty() ||
+                p.username.isNotEmpty() ||
+                p.description.isNotEmpty() ||
+                p.commonGroups > 0 ||
+                p.memberCount > 0 ||
+                p.adminCount > 0 ||
+                (p.primaryInviteLink.isNotEmpty() && !caps.canInvite)
+            if (hasInfoRows) {
+                item(key = "info") {
+                    // Official info rows (v0.9.20, AA2): an
+                    // outline icon, the value, and its label
+                    // in small secondary text underneath —
+                    // phone / username / bio for users,
+                    // counts / link / bio for groups and
+                    // channels. The old free-standing 简介
+                    // block is one of these rows now. The
+                    // link row (shown when the invite section
+                    // below is not) copies on tap.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(vertical = 6.dp)
+                    ) {
+                        if (p.userId != 0L && p.phone.isNotEmpty()) {
+                            ProfileInfoRow(
+                                icon = Icons.Filled.Phone,
+                                label = "手机号",
+                                value = if (p.phone.startsWith("+")) {
+                                    p.phone
+                                } else {
+                                    "+${p.phone}"
+                                }
                             )
                         }
-                        Spacer(Modifier.height(4.dp))
-                        Text(p.description, fontSize = 15.sp)
-                        Spacer(Modifier.height(16.dp))
+                        if (p.userId != 0L && p.username.isNotEmpty()) {
+                            ProfileInfoRow(
+                                icon = Icons.Filled.AlternateEmail,
+                                label = "用户名",
+                                value = "@${p.username}",
+                                valueAccent = true
+                            )
+                        }
+                        if (p.memberCount > 0) {
+                            ProfileInfoRow(
+                                icon = PeopleIcon,
+                                label = if (p.kindLabel == "频道") {
+                                    "订阅者"
+                                } else {
+                                    "成员"
+                                },
+                                value = "${p.memberCount} 人"
+                            )
+                        }
+                        if (p.adminCount > 0) {
+                            ProfileInfoRow(
+                                icon = ShieldIcon,
+                                label = "管理员",
+                                value = "${p.adminCount} 人"
+                            )
+                        }
+                        if (p.userId != 0L && p.commonGroups > 0) {
+                            ProfileInfoRow(
+                                icon = PeopleIcon,
+                                label = "共同群组",
+                                value = "${p.commonGroups} 个"
+                            )
+                        }
+                        if (p.primaryInviteLink.isNotEmpty() &&
+                            !caps.canInvite
+                        ) {
+                            ProfileInfoRow(
+                                icon = LinkIcon,
+                                label = "链接",
+                                value = p.primaryInviteLink,
+                                onClick = {
+                                    clipboard.setText(
+                                        AnnotatedString(
+                                            p.primaryInviteLink
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                        if (p.description.isNotEmpty()) {
+                            ProfileInfoRow(
+                                icon = Icons.Filled.Info,
+                                label = "简介",
+                                value = p.description
+                            )
+                        }
                     }
                 }
+                item(key = "div_info") { ProfileDivider() }
             }
             if (p.userId != 0L &&
                 profilePhotos.userId == p.userId &&
@@ -396,7 +589,9 @@ fun ProfileScreen(
                     // group/channel chats.
                     Column(
                         modifier = Modifier
-                            .padding(horizontal = 20.dp)
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
                     ) {
                         Row(
                             verticalAlignment =
@@ -404,7 +599,7 @@ fun ProfileScreen(
                         ) {
                             Icon(
                                 ImageIcon, contentDescription = null,
-                                tint = Color.Gray,
+                                tint = profilePalette.accentText,
                                 modifier = Modifier.size(15.dp)
                             )
                             Spacer(Modifier.width(6.dp))
@@ -449,8 +644,9 @@ fun ProfileScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .background(profilePalette.windowBg)
                         .clickable { onOpenSharedMedia() }
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -483,8 +679,9 @@ fun ProfileScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .background(profilePalette.windowBg)
                         .clickable { exportDialogOpen = true }
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -519,13 +716,17 @@ fun ProfileScreen(
                     // value shown is the one the last getChat
                     // reported, so what another client set is
                     // echoed faithfully too.
-                    Column {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { autoDeleteDialogOpen = true }
                                 .padding(
-                                    horizontal = 20.dp, vertical = 12.dp
+                                    horizontal = 16.dp, vertical = 12.dp
                                 ),
                             verticalAlignment =
                                 Alignment.CenterVertically
@@ -562,7 +763,7 @@ fun ProfileScreen(
                                 autoDeleteNotice!!,
                                 color = Color.Gray, fontSize = 12.5.sp,
                                 modifier = Modifier.padding(
-                                    start = 20.dp, end = 20.dp,
+                                    start = 16.dp, end = 16.dp,
                                     bottom = 8.dp
                                 )
                             )
@@ -576,13 +777,17 @@ fun ProfileScreen(
                     // setChatTheme supports private and
                     // secret chats only (td_api.tl), which is
                     // exactly the userId != 0 population here.
-                    Column {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { themeDialogOpen = true }
                                 .padding(
-                                    horizontal = 20.dp, vertical = 12.dp
+                                    horizontal = 16.dp, vertical = 12.dp
                                 ),
                             verticalAlignment =
                                 Alignment.CenterVertically
@@ -622,7 +827,7 @@ fun ProfileScreen(
                                 themeNotice!!,
                                 color = Color.Gray, fontSize = 12.5.sp,
                                 modifier = Modifier.padding(
-                                    start = 20.dp, end = 20.dp,
+                                    start = 16.dp, end = 16.dp,
                                     bottom = 8.dp
                                 )
                             )
@@ -635,13 +840,17 @@ fun ProfileScreen(
                 // override of the global wallpaper picture,
                 // for this chat only; purely local, nothing
                 // is sent to the server or the peer.
-                Column {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(profilePalette.windowBg)
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { wallpaperDialogOpen = true }
                             .padding(
-                                horizontal = 20.dp, vertical = 12.dp
+                                horizontal = 16.dp, vertical = 12.dp
                             ),
                         verticalAlignment =
                             Alignment.CenterVertically
@@ -676,7 +885,7 @@ fun ProfileScreen(
                             wallpaperNotice!!,
                             color = Color.Gray, fontSize = 12.5.sp,
                             modifier = Modifier.padding(
-                                start = 20.dp, end = 20.dp,
+                                start = 16.dp, end = 16.dp,
                                 bottom = 8.dp
                             )
                         )
@@ -685,7 +894,12 @@ fun ProfileScreen(
             }
             if (p.userId != 0L && !p.isSecretChat) {
                 item(key = "secret_start") {
-                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
                         Button(
                             onClick = {
                                 SecretChatStore.create(p.userId) { newChatId ->
@@ -712,7 +926,12 @@ fun ProfileScreen(
             }
             if (p.userId != 0L && p.userId != me.id) {
                 item(key = "block") {
-                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
                         TextButton(onClick = {
                             if (p.isBlocked) {
                                 BlockStore.setUserBlocked(p.userId, false) { error ->
@@ -753,12 +972,17 @@ fun ProfileScreen(
             }
             if (p.isSecretChat) {
                 item(key = "encryption") {
-                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
                         Text(
                             "加密",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.Gray
+                            color = profilePalette.accentText
                         )
                         val info =
                             if (secretInfo?.chatId == chatId) secretInfo else null
@@ -856,7 +1080,12 @@ fun ProfileScreen(
             }
             if (caps.canManage) {
                 item(key = "admin") {
-                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 Icons.Filled.Build, contentDescription = null,
@@ -867,7 +1096,7 @@ fun ProfileScreen(
                                 "管理",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.Gray
+                                color = profilePalette.accentText
                             )
                         }
                         if (adminNotice != null) {
@@ -986,7 +1215,12 @@ fun ProfileScreen(
                 // or channel); the page itself translates a
                 // server refusal into plain language.
                 item(key = "stats") {
-                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
                         TextButton(onClick = { onOpenStats() }) {
                             Icon(
                                 PollIcon, contentDescription = null,
@@ -1008,7 +1242,12 @@ fun ProfileScreen(
                 // primary link plus every link I created here,
                 // active and revoked.
                 item(key = "invite") {
-                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 LinkIcon, contentDescription = null,
@@ -1019,7 +1258,7 @@ fun ProfileScreen(
                                 "邀请链接",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.Gray
+                                color = profilePalette.accentText
                             )
                         }
                         if (p.primaryInviteLink.isNotEmpty()) {
@@ -1133,8 +1372,9 @@ fun ProfileScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .background(profilePalette.windowBg)
                             .clickable { onOpenMembers() }
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
@@ -1165,10 +1405,13 @@ fun ProfileScreen(
                 item(key = "members_header") {
                     Text(
                         "成员",
-                        fontSize = 13.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.Gray,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                        color = profilePalette.accentText,
+                        modifier = Modifier.padding(
+                            start = 16.dp, end = 16.dp,
+                            top = 14.dp, bottom = 6.dp
+                        )
                     )
                 }
                 items(items = p.members, key = { it.userId }) { member ->
@@ -1178,6 +1421,7 @@ fun ProfileScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .background(profilePalette.windowBg)
                             .then(
                                 if (actionable) {
                                     Modifier.clickable { memberAction = member }
@@ -1185,13 +1429,24 @@ fun ProfileScreen(
                                     Modifier
                                 }
                             )
-                            .padding(horizontal = 20.dp, vertical = 7.dp),
+                            .padding(horizontal = 16.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        val memberPair = OfficialTheme.avatarColors(
+                            member.userId, OfficialTheme.dark
+                        )
                         Box(
                             modifier = Modifier
                                 .size(38.dp)
-                                .background(Color(0xFFB0BEC5), CircleShape),
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            memberPair.first,
+                                            memberPair.second
+                                        )
+                                    ),
+                                    CircleShape
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -1214,7 +1469,10 @@ fun ProfileScreen(
                     item(key = "members_more") {
                         TextButton(
                             onClick = { ProfileStore.loadMoreMembers() },
-                            modifier = Modifier.padding(horizontal = 12.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(profilePalette.windowBg)
+                                .padding(horizontal = 12.dp)
                         ) {
                             Text("加载更多成员")
                         }
@@ -1225,7 +1483,10 @@ fun ProfileScreen(
                     Text(
                         "正在加载成员…",
                         color = Color.Gray, fontSize = 13.sp,
-                        modifier = Modifier.padding(horizontal = 20.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
             }
@@ -1890,6 +2151,54 @@ fun ProfileScreen(
                     Text("取消")
                 }
             }
+        )
+    }
+}
+
+/** One slot of the profile action row (v0.9.20, AA2):
+ *  an outline icon over a small label, the official
+ *  profile page's shortcut shape. */
+@Composable
+private fun ProfileAction(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val palette = OfficialTheme.current()
+    Column(
+        modifier = modifier
+            .clickable { onClick() }
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            icon, contentDescription = null,
+            tint = palette.accentText,
+            modifier = Modifier.size(26.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(label, fontSize = 12.sp, color = palette.textSecondary)
+    }
+}
+
+/** Hairline on the profile page's white blocks
+ *  (v0.9.20, AA2): full-width white strip carrying a
+ *  divider inset by the content margin. */
+@Composable
+private fun ProfileDivider() {
+    val palette = OfficialTheme.current()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(palette.windowBg)
+            .padding(start = 16.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(palette.divider)
         )
     }
 }
