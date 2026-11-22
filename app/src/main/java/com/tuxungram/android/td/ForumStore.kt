@@ -440,7 +440,6 @@ object ForumStore {
 
     private val byId = ConcurrentHashMap<Long, MsgItem>()
 
-    @Volatile
     // Exhaustion of the loaded window, exposed as a
     // flow since v0.9.32 (Y6) for the media viewer.
     private val _allLoaded = MutableStateFlow(false)
