@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material3.Checkbox
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
@@ -172,6 +173,17 @@ fun ProfileScreen(
     var blockNotice by remember { mutableStateOf<String?>(null) }
     var deleteContactConfirm by remember { mutableStateOf(false) }
     var contactNotice by remember { mutableStateOf<String?>(null) }
+    var boostExpanded by remember { mutableStateOf(false) }
+    var boostSelection by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var boostNotice by remember { mutableStateOf<String?>(null) }
+    val boostStatus by com.tuxungram.android.td.BoostStore.status
+        .collectAsState()
+    val boostSlots by com.tuxungram.android.td.BoostStore.slots
+        .collectAsState()
+    val boostLoaded by com.tuxungram.android.td.BoostStore.loaded
+        .collectAsState()
+    val boostError by com.tuxungram.android.td.BoostStore.error
+        .collectAsState()
     // Profile photo wall + viewer (v0.9.12, S3).
     val profilePhotos by ProfilePhotosStore.state.collectAsState()
     val wallNotice by ProfilePhotosStore.notice.collectAsState()
@@ -1304,6 +1316,288 @@ fun ProfileScreen(
                             "成员、消息、浏览这些数字，和官方客户端里看到的是同一份服务器统计。",
                             fontSize = 12.sp, color = Color.Gray
                         )
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
+            if (p.isSupergroup) {
+                // Boost status (v0.9.33, Z2): level, count
+                // and the distance to the next level come
+                // from getChatBoostStatus; my own slots from
+                // getAvailableChatBoostSlots. Free accounts
+                // simply have no slots — the section says so
+                // and shows no dead button. Boosting spends
+                // MY Premium slots via boostChat and stays
+                // server-gated end to end.
+                item(key = "boost") {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        TextButton(onClick = {
+                            boostExpanded = !boostExpanded
+                            if (boostExpanded) {
+                                com.tuxungram.android.td.BoostStore
+                                    .load(chatId)
+                            }
+                        }) {
+                            Icon(
+                                BoltIcon, contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("助力状态")
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                if (boostExpanded) "收起" else "展开",
+                                fontSize = 12.sp, color = Color.Gray
+                            )
+                        }
+                        if (boostExpanded) {
+                            val st = boostStatus
+                            when {
+                                boostError != null -> Text(
+                                    boostError!!,
+                                    fontSize = 13.sp, color = Color.Gray
+                                )
+                                !boostLoaded || st == null -> Text(
+                                    "正在加载…",
+                                    fontSize = 13.sp, color = Color.Gray
+                                )
+                                else -> {
+                                    Text(
+                                        "当前等级 ${st.level} 级 · " +
+                                            "已有 ${st.boostCount} 次助力",
+                                        fontSize = 14.sp
+                                    )
+                                    if (st.giftCodeBoostCount > 0) {
+                                        Text(
+                                            "其中 ${st.giftCodeBoostCount} 次" +
+                                                "来自礼物码和赠送活动。",
+                                            fontSize = 12.sp,
+                                            color = Color.Gray,
+                                            modifier = Modifier
+                                                .padding(top = 2.dp)
+                                        )
+                                    }
+                                    if (st.nextLevelBoostCount > 0) {
+                                        val span = st.nextLevelBoostCount -
+                                            st.currentLevelBoostCount
+                                        val done = st.boostCount -
+                                            st.currentLevelBoostCount
+                                        val frac = if (span > 0) {
+                                            (done.toFloat() / span)
+                                                .coerceIn(0f, 1f)
+                                        } else {
+                                            0f
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 8.dp)
+                                                .height(8.dp)
+                                                .background(
+                                                    Color(0xFFE0E0E0),
+                                                    RoundedCornerShape(4.dp)
+                                                )
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth(frac)
+                                                    .height(8.dp)
+                                                    .background(
+                                                        profilePalette.accent,
+                                                        RoundedCornerShape(4.dp)
+                                                    )
+                                            )
+                                        }
+                                        Text(
+                                            "距离 ${st.level + 1} 级还差 " +
+                                                "${st.nextLevelBoostCount - st.boostCount} 次助力。",
+                                            fontSize = 12.sp,
+                                            color = Color.Gray,
+                                            modifier = Modifier
+                                                .padding(top = 4.dp)
+                                        )
+                                    } else {
+                                        Text(
+                                            "已经是最高等级了。",
+                                            fontSize = 12.sp,
+                                            color = Color.Gray,
+                                            modifier = Modifier
+                                                .padding(top = 4.dp)
+                                        )
+                                    }
+                                    if (st.premiumMemberCount > 0) {
+                                        Text(
+                                            "群里约 ${st.premiumMemberCount} 位 " +
+                                                "Premium 成员" +
+                                                "（占 ${st.premiumMemberPercentage.toInt()}%）。",
+                                            fontSize = 12.sp,
+                                            color = Color.Gray,
+                                            modifier = Modifier
+                                                .padding(top = 2.dp)
+                                        )
+                                    }
+                                    if (st.boostUrl.isNotEmpty()) {
+                                        Row(
+                                            verticalAlignment =
+                                                Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .padding(top = 6.dp)
+                                        ) {
+                                            Text(
+                                                st.boostUrl,
+                                                fontSize = 12.sp,
+                                                color = Color.Gray,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                            )
+                                            TextButton(onClick = {
+                                                clipboard.setText(
+                                                    AnnotatedString(
+                                                        st.boostUrl
+                                                    )
+                                                )
+                                                boostNotice = "助力链接已复制。"
+                                            }) {
+                                                Text("复制链接")
+                                            }
+                                        }
+                                    }
+                                    Text(
+                                        "我的助力",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = profilePalette.accentText,
+                                        modifier = Modifier
+                                            .padding(top = 10.dp)
+                                    )
+                                    if (boostSlots.isEmpty()) {
+                                        Text(
+                                            "你还没有可用的助力。助力是 " +
+                                                "Telegram Premium 的权益：" +
+                                                "订阅后会得到助力次数，" +
+                                                "可以来这里用在" +
+                                                "这个对话上。",
+                                            fontSize = 12.sp,
+                                            color = Color.Gray,
+                                            modifier = Modifier
+                                                .padding(top = 4.dp)
+                                        )
+                                    } else {
+                                        val nowSec =
+                                            System.currentTimeMillis() / 1000
+                                        val dateFmt =
+                                            java.text.SimpleDateFormat(
+                                                "yyyy-MM-dd",
+                                                java.util.Locale.getDefault()
+                                            )
+                                        boostSlots.forEach { slot ->
+                                            val appliedHere =
+                                                slot.slotId in
+                                                    st.appliedSlotIds &&
+                                                    slot.boostedChatId == chatId
+                                            val usable = !appliedHere &&
+                                                slot.boostedChatId == 0L &&
+                                                slot.cooldownUntilDate <= nowSec
+                                            Row(
+                                                verticalAlignment =
+                                                    Alignment.CenterVertically,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 2.dp)
+                                            ) {
+                                                if (usable) {
+                                                    Checkbox(
+                                                        checked =
+                                                            slot.slotId in
+                                                                boostSelection,
+                                                        onCheckedChange = {
+                                                            checked ->
+                                                            boostSelection =
+                                                                if (checked) {
+                                                                    boostSelection +
+                                                                        slot.slotId
+                                                                } else {
+                                                                    boostSelection -
+                                                                        slot.slotId
+                                                                }
+                                                        }
+                                                    )
+                                                }
+                                                Text(
+                                                    when {
+                                                        appliedHere ->
+                                                            "已助力这个对话" +
+                                                                "（到期 " +
+                                                                dateFmt.format(
+                                                                    java.util.Date(
+                                                                        slot.expirationDate * 1000L
+                                                                    )
+                                                                ) + "）"
+                                                        slot.boostedChatId != 0L ->
+                                                            "正用在其他对话上" +
+                                                                "（到期 " +
+                                                                dateFmt.format(
+                                                                    java.util.Date(
+                                                                        slot.expirationDate * 1000L
+                                                                    )
+                                                                ) + "）"
+                                                        slot.cooldownUntilDate > nowSec ->
+                                                            "冷却中（" +
+                                                                dateFmt.format(
+                                                                    java.util.Date(
+                                                                        slot.cooldownUntilDate * 1000L
+                                                                    )
+                                                                ) + " 后可用）"
+                                                        else -> "可用"
+                                                    },
+                                                    fontSize = 13.sp,
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                        }
+                                        if (boostSelection.isNotEmpty()) {
+                                            Button(
+                                                onClick = {
+                                                    val ids =
+                                                        boostSelection.toList()
+                                                    com.tuxungram.android.td
+                                                        .BoostStore.boost(
+                                                            chatId, ids
+                                                        ) { error ->
+                                                            boostNotice = error
+                                                                ?: "助力成功。"
+                                                            if (error == null) {
+                                                                boostSelection =
+                                                                    emptySet()
+                                                            }
+                                                        }
+                                                },
+                                                modifier = Modifier
+                                                    .padding(top = 6.dp)
+                                            ) {
+                                                Text(
+                                                    "用选中的 ${boostSelection.size} 个助力"
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (boostNotice != null) {
+                                        Text(
+                                            boostNotice!!,
+                                            fontSize = 12.sp,
+                                            color = Color.Gray,
+                                            modifier = Modifier
+                                                .padding(top = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         Spacer(Modifier.height(16.dp))
                     }
                 }
