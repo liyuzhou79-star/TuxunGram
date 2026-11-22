@@ -9,6 +9,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.togetherWith
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -132,6 +137,7 @@ import com.tuxungram.android.ui.EditProfileScreen
 import com.tuxungram.android.ui.GroupPermissionsScreen
 import com.tuxungram.android.ui.LockScreen
 import com.tuxungram.android.ui.MembersScreen
+import com.tuxungram.android.ui.Motion
 import com.tuxungram.android.ui.ChatScreen
 import com.tuxungram.android.ui.ClosedScreen
 import com.tuxungram.android.ui.CodeScreen
@@ -167,6 +173,10 @@ class MainActivity : ComponentActivity() {
         // App lock (v0.6.0, E2): read the persisted state before
         // the UI composes; a set PIN means the app starts locked.
         AppLock.init(applicationContext)
+        // Motion system (v0.9.11, A1): read the system
+        // animator duration scale once, so every transition
+        // in the app honours the reduced-motion setting.
+        Motion.init(applicationContext)
         // Edge-to-edge (Phase D, D2): content draws behind the
         // system bars; every screen gets its safe distance from
         // the windowInsetsPadding applied in AppRoot/ReadyHost,
@@ -270,16 +280,6 @@ private fun AppRoot() {
     // App lock gate (v0.6.0, E2): when locked, the lock screen
     // covers everything — chat list, login flow, all of it.
     val locked by AppLock.locked.collectAsState()
-    if (locked) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.systemBars)
-        ) {
-            LockScreen()
-        }
-        return
-    }
     // First-run onboarding (v0.9.6, P2): on the very first
     // launch (no version ever marked seen) the full guide
     // comes before everything else; finishing or skipping
@@ -289,19 +289,47 @@ private fun AppRoot() {
     var guideDone by remember {
         mutableStateOf(UiSettings.seenVersion().isNotEmpty())
     }
-    if (!guideDone) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.systemBars)
-        ) {
-            GuideScreen(onDone = {
-                UiSettings.markSeenVersion(BuildConfig.VERSION_NAME)
-                guideDone = true
-            })
-        }
-        return
+    // Gate transitions (v0.9.11, A1): the lock screen, the
+    // guide and the main flow used to replace each other in a
+    // hard cut; they now crossfade through one AnimatedContent.
+    val gate = when {
+        locked -> 0
+        !guideDone -> 1
+        else -> 2
     }
+    AnimatedContent(
+        targetState = gate,
+        transitionSpec = {
+            fadeIn(Motion.tween(260)) togetherWith
+                fadeOut(Motion.tween(180))
+        },
+        label = "appGate"
+    ) { g ->
+        when (g) {
+            0 -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.systemBars)
+            ) {
+                LockScreen()
+            }
+            1 -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.systemBars)
+            ) {
+                GuideScreen(onDone = {
+                    UiSettings.markSeenVersion(BuildConfig.VERSION_NAME)
+                    guideDone = true
+                })
+            }
+            else -> AuthHost()
+        }
+    }
+}
+
+@Composable
+private fun AuthHost() {
     val authState by TdRepository.authState.collectAsState()
     var enteredPhone by remember { mutableStateOf("") }
     var forcePhone by remember { mutableStateOf(false) }
@@ -318,34 +346,46 @@ private fun AppRoot() {
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
-    when (val state = authState) {
-        is AuthState.WaitTdlibParameters -> SplashScreen()
-        is AuthState.WaitPhone -> PhoneScreen { fullNumber ->
-            enteredPhone = fullNumber
-            forcePhone = false
-            TdRepository.setPhone(fullNumber)
-        }
-        is AuthState.WaitCode -> {
-            if (forcePhone) {
-                PhoneScreen { fullNumber ->
+        // Auth-flow transitions (v0.9.11, A1): splash -> phone
+        // -> code -> password used to hard-cut; crossfade now.
+        AnimatedContent(
+            targetState = authState,
+            transitionSpec = {
+                fadeIn(Motion.tween(280)) togetherWith
+                    fadeOut(Motion.tween(200))
+            },
+            label = "authState"
+        ) { state ->
+            when (state) {
+                is AuthState.WaitTdlibParameters -> SplashScreen()
+                is AuthState.WaitPhone -> PhoneScreen { fullNumber ->
                     enteredPhone = fullNumber
                     forcePhone = false
                     TdRepository.setPhone(fullNumber)
                 }
-            } else {
-                CodeScreen(
-                    phone = enteredPhone,
-                    onChangePhone = { forcePhone = true }
-                )
+                is AuthState.WaitCode -> {
+                    if (forcePhone) {
+                        PhoneScreen { fullNumber ->
+                            enteredPhone = fullNumber
+                            forcePhone = false
+                            TdRepository.setPhone(fullNumber)
+                        }
+                    } else {
+                        CodeScreen(
+                            phone = enteredPhone,
+                            onChangePhone = { forcePhone = true }
+                        )
+                    }
+                }
+                is AuthState.WaitPassword ->
+                    PasswordScreen(hint = state.hint)
+                is AuthState.WaitRegistration -> RegistrationScreen()
+                is AuthState.Ready -> ReadyHost()
+                is AuthState.LoggingOut -> TransitionScreen("正在退出…")
+                is AuthState.Closed -> ClosedScreen()
+                is AuthState.Other -> TransitionScreen("正在处理…")
             }
         }
-        is AuthState.WaitPassword -> PasswordScreen(hint = state.hint)
-        is AuthState.WaitRegistration -> RegistrationScreen()
-        is AuthState.Ready -> ReadyHost()
-        is AuthState.LoggingOut -> TransitionScreen("正在退出…")
-        is AuthState.Closed -> ClosedScreen()
-        is AuthState.Other -> TransitionScreen("正在处理…")
-    }
     }
 }
 
@@ -598,39 +638,53 @@ private fun ReadyHost() {
         )
         chatId == null -> Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
-                when (homeTab) {
-                    1 -> ContactsScreen(
-                        onBack = { homeTab = 0 },
-                        onOpenChat = { openChatId = it }
-                    )
-                    2 -> SettingsScreen(
-                        onBack = { homeTab = 0 },
-                        onOpenSessions = { showSessions = true },
-                        onOpenStickerSets = { showStickerSets = true },
-                        onOpenEditProfile = { showEditProfile = true },
-                        onOpenBlocked = { showBlocked = true },
-                        onOpenChangelog = { showChangelog = true },
-                        onOpenGuide = { showGuideReplay = true }
-                    )
-                    3 -> MeScreen(
-                        onEditProfile = { showEditProfile = true },
-                        onOpenSavedChat = { openChatId = it },
-                        onOpenSettingsTab = { homeTab = 2 },
-                        onOpenChangelog = { showChangelog = true }
-                    )
-                    else -> ChatListScreen(
-                        onOpenChat = { openChatId = it },
-                        onOpenSettings = { homeTab = 2 },
-                        onOpenChatLocated = { cid, mid ->
-                            MessageStore.pendingLocateId = mid
-                            openChatId = cid
-                        },
-                        onOpenArchive = { showArchive = true },
-                        onOpenCreate = { showCreate = true },
-                        onOpenStory = { storyChatId = it },
-                        onOpenContacts = { homeTab = 1 },
-                        listState = homeListState
-                    )
+                // Tab transitions (v0.9.11, A1): switching the
+                // bottom-nav tabs used to hard-cut; now a short
+                // fade with a slight horizontal drift.
+                AnimatedContent(
+                    targetState = homeTab,
+                    transitionSpec = {
+                        (fadeIn(Motion.tween(220)) +
+                            slideInHorizontally(Motion.tween(220)) {
+                                it / 8
+                            }) togetherWith fadeOut(Motion.tween(150))
+                    },
+                    label = "homeTab"
+                ) { tab ->
+                    when (tab) {
+                        1 -> ContactsScreen(
+                            onBack = { homeTab = 0 },
+                            onOpenChat = { openChatId = it }
+                        )
+                        2 -> SettingsScreen(
+                            onBack = { homeTab = 0 },
+                            onOpenSessions = { showSessions = true },
+                            onOpenStickerSets = { showStickerSets = true },
+                            onOpenEditProfile = { showEditProfile = true },
+                            onOpenBlocked = { showBlocked = true },
+                            onOpenChangelog = { showChangelog = true },
+                            onOpenGuide = { showGuideReplay = true }
+                        )
+                        3 -> MeScreen(
+                            onEditProfile = { showEditProfile = true },
+                            onOpenSavedChat = { openChatId = it },
+                            onOpenSettingsTab = { homeTab = 2 },
+                            onOpenChangelog = { showChangelog = true }
+                        )
+                        else -> ChatListScreen(
+                            onOpenChat = { openChatId = it },
+                            onOpenSettings = { homeTab = 2 },
+                            onOpenChatLocated = { cid, mid ->
+                                MessageStore.pendingLocateId = mid
+                                openChatId = cid
+                            },
+                            onOpenArchive = { showArchive = true },
+                            onOpenCreate = { showCreate = true },
+                            onOpenStory = { storyChatId = it },
+                            onOpenContacts = { homeTab = 1 },
+                            listState = homeListState
+                        )
+                    }
                 }
             }
             NavigationBar {
