@@ -1,6 +1,10 @@
 package com.tuxungram.android.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -19,13 +23,17 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -36,11 +44,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.tuxungram.android.td.ContactEntry
 import com.tuxungram.android.td.ContactsStore
+import com.tuxungram.android.td.DeviceContactsSync
 
 /**
  * Contacts page (v0.9.1, J4): the full Telegram address book
@@ -63,6 +74,35 @@ fun ContactsScreen(
     val listState = rememberLazyListState()
 
     LaunchedEffect(Unit) { ContactsStore.loadContacts() }
+
+    // Device address-book sync (v0.9.13, T4): strictly
+    // manual — an explanation dialog first, then the
+    // READ_CONTACTS runtime permission, then the read +
+    // importContacts run in DeviceContactsSync. A refused
+    // permission stops the flow with an honest line.
+    val context = LocalContext.current
+    val syncStatus by DeviceContactsSync.status.collectAsState()
+    val syncBusy by DeviceContactsSync.busy.collectAsState()
+    var syncExplainOpen by remember { mutableStateOf(false) }
+    val syncPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            DeviceContactsSync.sync(context)
+        } else {
+            DeviceContactsSync.notePermissionDenied()
+        }
+    }
+    fun startSync() {
+        val granted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            DeviceContactsSync.sync(context)
+        } else {
+            syncPermission.launch(Manifest.permission.READ_CONTACTS)
+        }
+    }
 
     val shown = if (query.isBlank()) {
         contacts
@@ -119,6 +159,45 @@ fun ContactsScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
         )
+        // Sync entry (v0.9.13, T4): one tap, one explanation,
+        // one permission ask — never automatic.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = !syncBusy) {
+                    syncExplainOpen = true
+                }
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+        ) {
+            Icon(
+                Icons.Filled.Refresh,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "同步手机通讯录",
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            if (syncBusy) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+        if (syncStatus != null) {
+            Text(
+                syncStatus!!,
+                fontSize = 12.5.sp, color = Color.Gray,
+                modifier = Modifier.padding(
+                    start = 16.dp, end = 16.dp, bottom = 4.dp
+                )
+            )
+        }
         Spacer(Modifier.height(8.dp))
         if (shown.isEmpty()) {
             val loadFinished by ContactsStore.loadFinished.collectAsState()
@@ -171,6 +250,35 @@ fun ContactsScreen(
                 }
             }
         }
+    }
+}
+
+    if (syncExplainOpen) {
+        // The pre-sync explanation (v0.9.13, T4): what leaves
+        // the phone, said before anything is read or sent.
+        AlertDialog(
+            onDismissRequest = { syncExplainOpen = false },
+            title = { Text("同步手机通讯录？") },
+            text = {
+                Text(
+                    "同步会把手机通讯录里的姓名和手机号提交给 " +
+                        "Telegram 服务器做匹配：对得上的人会被加进你的 " +
+                        "Telegram 通讯录，对不上的不会有任何变化。" +
+                        "只在这一次点按时同步，不会自动同步。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    syncExplainOpen = false
+                    startSync()
+                }) { Text("开始同步") }
+            },
+            dismissButton = {
+                TextButton(onClick = { syncExplainOpen = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 

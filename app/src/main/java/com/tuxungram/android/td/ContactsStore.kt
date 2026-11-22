@@ -69,6 +69,16 @@ object ContactsStore {
         }
     }
 
+    /** Re-run getContacts after an importContacts sync
+     *  (v0.9.13, T4): the one-shot [loaded] guard would
+     *  otherwise keep the newly added contacts out of the
+     *  book until the next process start. Existing entries
+     *  are kept and refreshed in place by fetchUser. */
+    fun refreshAfterImport() {
+        loaded = false
+        loadContacts()
+    }
+
     fun loadContacts() {
         attach()
         if (loaded) return
