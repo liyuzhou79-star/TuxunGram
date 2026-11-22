@@ -206,7 +206,11 @@ object Notifier {
         }
     }
 
-    private fun summaryOf(content: JSONObject?): String {
+    /** One-line notification text for a message content
+     *  object. Shared with BackgroundAccounts (v0.9.10),
+     *  which summarizes background accounts' messages the
+     *  exact same way. */
+    fun summaryOf(content: JSONObject?): String {
         if (content == null) return "新消息"
         return when (content.optString("@type")) {
             "messageText" -> content.optJSONObject("text")

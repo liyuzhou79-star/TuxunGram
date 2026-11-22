@@ -191,6 +191,21 @@ object TdRepository {
                 // My own profile for the settings card / edit
                 // page / blocked-list self check (v0.9.3, M1).
                 MeStore.refresh()
+                // Background accounts online (v0.9.10): every
+                // other logged-in slot gets its own client for
+                // notifications + unread counts. Idempotent —
+                // later Ready events find the sessions running.
+                appContext?.let { ctx -> BackgroundAccounts.startAll(ctx) }
+                // A background account's notification tap
+                // persisted the (slot, chat) it wants opened
+                // before switching to this account: land there
+                // now, through DeepLink so the app-lock gate
+                // still applies first.
+                AccountStore.consumePendingOpen()?.let { (slot, chatId) ->
+                    if (slot == AccountStore.currentSlot()) {
+                        DeepLink.pendingChat.value = chatId
+                    }
+                }
                 // Remember who this account is, for the account
                 // switcher in settings (Batch 3, C6).
                 sendRaw(TdClient.request("getMe")) { me ->

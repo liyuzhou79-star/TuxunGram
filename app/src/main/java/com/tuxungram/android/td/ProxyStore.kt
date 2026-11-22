@@ -286,6 +286,21 @@ object ProxyStore {
         }
     }
 
+    /** The addProxy query for the active entry, or null when
+     *  no proxy is active. The foreground client applies it
+     *  through [sendAddProxy]; background-account clients
+     *  (v0.9.10) send this query through their own client —
+     *  the proxy configuration is app-global, so every
+     *  account's client needs the same entry applied. */
+    fun activeProxyQuery(): JSONObject? {
+        val entry = activeEntry() ?: return null
+        return TdClient.request("addProxy").apply {
+            put("proxy", proxyJson(entry))
+            put("enable", true)
+            put("comment", entry.name)
+        }
+    }
+
     private fun sendAddProxy(config: ProxyConfig) {
         val query = TdClient.request("addProxy").apply {
             put("proxy", proxyJson(config))

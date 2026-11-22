@@ -20,6 +20,9 @@ object AccountStore {
     private const val KEY_CURRENT = "current_slot"
     private const val KEY_COUNT = "slot_count"
 
+    private const val KEY_PENDING_SLOT = "pending_open_slot"
+    private const val KEY_PENDING_CHAT = "pending_open_chat"
+
     private fun labelKey(slot: Int) = "label_$slot"
 
     private fun avatarKey(slot: Int) = "avatar_$slot"
@@ -96,6 +99,34 @@ object AccountStore {
     fun setCurrent(slot: Int) {
         _current.value = slot
         prefs().edit().putInt(KEY_CURRENT, slot).apply()
+    }
+
+    /** A notification tap on a background account (v0.9.10):
+     *  the (slot, chat) it wants to open, persisted because
+     *  reaching that chat means switching accounts — on a
+     *  warm start via the restart-based switch, on a cold
+     *  start by booting straight into the slot. TdRepository
+     *  consumes it once the target account reaches Ready and
+     *  hands the chat to DeepLink, so the app-lock gate still
+     *  applies before anything opens. */
+    fun setPendingOpen(slot: Int, chatId: Long) {
+        prefs().edit()
+            .putInt(KEY_PENDING_SLOT, slot)
+            .putLong(KEY_PENDING_CHAT, chatId)
+            .apply()
+    }
+
+    /** Read and clear the pending open, if any. */
+    fun consumePendingOpen(): Pair<Int, Long>? {
+        val prefs = prefs()
+        if (!prefs.contains(KEY_PENDING_SLOT)) return null
+        val slot = prefs.getInt(KEY_PENDING_SLOT, -1)
+        val chatId = prefs.getLong(KEY_PENDING_CHAT, 0L)
+        prefs.edit()
+            .remove(KEY_PENDING_SLOT)
+            .remove(KEY_PENDING_CHAT)
+            .apply()
+        return if (slot >= 0 && chatId != 0L) slot to chatId else null
     }
 
     private fun prefs() =
