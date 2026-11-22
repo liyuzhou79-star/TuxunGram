@@ -382,10 +382,10 @@ fun ScrollToLatestButton(
 ) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(Motion.tween(180)) +
-            scaleIn(Motion.tween(180), initialScale = 0.7f),
-        exit = fadeOut(Motion.tween(140)) +
-            scaleOut(Motion.tween(140), targetScale = 0.7f),
+        enter = fadeIn(Motion.tween(Motion.SCROLL_BTN_IN)) +
+            scaleIn(Motion.tween(Motion.SCROLL_BTN_IN), initialScale = 0.7f),
+        exit = fadeOut(Motion.tween(Motion.SCROLL_BTN_OUT)) +
+            scaleOut(Motion.tween(Motion.SCROLL_BTN_OUT), targetScale = 0.7f),
         modifier = modifier
     ) {
         Box {

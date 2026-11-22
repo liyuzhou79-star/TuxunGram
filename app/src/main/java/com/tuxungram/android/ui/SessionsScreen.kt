@@ -96,16 +96,21 @@ fun SessionsScreen(onBack: () -> Unit) {
                 .lazyListScrollbar(listState)
         ) {
             items(items = sessions, key = { it.id }) { session ->
+                // Device card (v0.9.29, V3): each session sits
+                // on its own card, and the glyph says what kind
+                // of device it is (phone / desktop / web)
+                // instead of every row wearing the same phone.
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .padding(horizontal = 16.dp, vertical = 5.dp)
                 ) {
+                GroupCard {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            Icons.Filled.Phone, contentDescription = null,
+                            sessionIcon(session), contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(21.dp)
+                            modifier = Modifier.size(23.dp)
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
@@ -154,6 +159,7 @@ fun SessionsScreen(onBack: () -> Unit) {
                             Text("结束会话", color = Color(0xFFC62828))
                         }
                     }
+                }
                 }
             }
             if (sessions.count { !it.isCurrent } > 0) {
@@ -223,6 +229,25 @@ fun SessionsScreen(onBack: () -> Unit) {
                 }
             }
         )
+    }
+}
+
+/** The glyph for a session's device kind (v0.9.29, V3):
+ *  judged from the platform / type / model strings TDLib
+ *  reports — web and browser sessions get the globe, phones
+ *  the handset, everything else the desktop monitor. */
+private fun sessionIcon(
+    session: SessionEntry
+): androidx.compose.ui.graphics.vector.ImageVector {
+    val haystack = listOf(
+        session.platform, session.deviceTypeLabel,
+        session.deviceModel, session.applicationName
+    ).joinToString(" ").lowercase()
+    return when {
+        "web" in haystack || "browser" in haystack -> GlobeIcon
+        "android" in haystack || "iphone" in haystack ||
+            "ios" in haystack || "phone" in haystack -> Icons.Filled.Phone
+        else -> DesktopIcon
     }
 }
 

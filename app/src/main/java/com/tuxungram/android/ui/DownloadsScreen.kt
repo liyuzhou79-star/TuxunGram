@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -258,11 +259,25 @@ private fun DownloadRow(entry: DownloadEntryUi) {
                 .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    DownloadIcon, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(21.dp)
-                )
+                // File-type tile (v0.9.29, V3): a coloured
+                // rounded tile whose glyph says what the file
+                // is, replacing the one download arrow every
+                // row used to wear.
+                val (tileIcon, tileColor) = downloadTileFor(entry)
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(
+                            tileColor, RoundedCornerShape(10.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        tileIcon, contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -348,6 +363,31 @@ private fun DownloadRow(entry: DownloadEntryUi) {
                 )
             }
         }
+    }
+}
+
+/** Icon + tile colour for a download row (v0.9.29, V3),
+ *  judged by MIME type first and the file extension when
+ *  the MIME is missing or generic. */
+private fun downloadTileFor(
+    entry: DownloadEntryUi
+): Pair<androidx.compose.ui.graphics.vector.ImageVector, Color> {
+    val mime = entry.mime.lowercase()
+    val name = entry.name.lowercase()
+    fun ext(vararg suffixes: String): Boolean =
+        suffixes.any { name.endsWith(it) }
+    return when {
+        mime.startsWith("image/") || ext(".jpg", ".jpeg", ".png", ".webp", ".gif") ->
+            ImageIcon to Color(0xFF7E57C2)
+        mime.startsWith("video/") || ext(".mp4", ".mkv", ".mov", ".webm", ".avi") ->
+            Icons.Filled.PlayArrow to Color(0xFFEF6C00)
+        mime.startsWith("audio/") || ext(".mp3", ".ogg", ".opus", ".m4a", ".flac", ".wav") ->
+            MicIcon to Color(0xFF43A047)
+        mime.contains("zip") || mime.contains("rar") ||
+            mime.contains("7z") || mime.contains("tar") ||
+            ext(".zip", ".rar", ".7z", ".tar", ".gz") ->
+            FolderIcon to Color(0xFF6D4C41)
+        else -> DownloadIcon to Color(0xFF229AF0)
     }
 }
 

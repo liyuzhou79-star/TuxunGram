@@ -111,10 +111,26 @@ fun BlockedScreen(onBack: () -> Unit) {
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Official gradient placeholder avatar
+                    // (v0.9.29, V3): same colour-by-id rule as
+                    // the chat list, replacing the flat
+                    // gray-blue disc this page kept.
+                    val avatarPair = OfficialTheme.avatarColors(
+                        entry.senderId, OfficialTheme.dark
+                    )
                     Box(
                         modifier = Modifier
                             .size(40.dp)
-                            .background(Color(0xFFB0BEC5), CircleShape),
+                            .background(
+                                androidx.compose.ui.graphics.Brush
+                                    .verticalGradient(
+                                        listOf(
+                                            avatarPair.first,
+                                            avatarPair.second
+                                        )
+                                    ),
+                                CircleShape
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(

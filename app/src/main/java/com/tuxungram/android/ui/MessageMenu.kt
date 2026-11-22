@@ -87,12 +87,21 @@ fun OfficialMessageMenu(
     }
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { shown = true }
+    // Popup motion (v0.9.29, V2): the card scales up from
+    // 0.85 at its anchor by the bubble and fades in on the
+    // shared MENU spec (in slower than out, like the
+    // official client's message menu).
+    val menuSpec = if (shown) {
+        Motion.tween(Motion.MENU_IN)
+    } else {
+        Motion.tween(Motion.MENU_OUT)
+    }
     val scale by animateFloatAsState(
-        if (shown) 1f else 0.85f, Motion.tween(150),
+        if (shown) 1f else 0.85f, menuSpec,
         label = "menuScale"
     )
     val alpha by animateFloatAsState(
-        if (shown) 1f else 0f, Motion.tween(150),
+        if (shown) 1f else 0f, menuSpec,
         label = "menuAlpha"
     )
     Popup(

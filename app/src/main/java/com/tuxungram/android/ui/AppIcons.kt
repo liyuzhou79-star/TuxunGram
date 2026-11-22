@@ -595,6 +595,54 @@ val StorageIcon: ImageVector = icon("Storage") {
     close()
 }
 
+/** Desktop monitor (session list, v0.9.29 V3): a screen on
+ *  a stand, drawn as frame + stand with the screen punched
+ *  out (EvenOdd). */
+val DesktopIcon: ImageVector = icon("Desktop", evenOdd = true) {
+    moveTo(3f, 4f)
+    lineTo(21f, 4f)
+    lineTo(21f, 18f)
+    lineTo(14.8f, 18f)
+    lineTo(15.6f, 20.5f)
+    lineTo(20.5f, 20.5f)
+    lineTo(20.5f, 22f)
+    lineTo(3.5f, 22f)
+    lineTo(3.5f, 20.5f)
+    lineTo(8.4f, 20.5f)
+    lineTo(9.2f, 18f)
+    lineTo(3f, 18f)
+    close()
+    moveTo(5f, 6f)
+    lineTo(5f, 16f)
+    lineTo(19f, 16f)
+    lineTo(19f, 6f)
+    close()
+}
+
+/** Speaker with level bars (the 音效 settings row,
+ *  v0.9.29 V1): material-icons-core has no VolumeUp glyph,
+ *  so the speaker is drawn here — body plus two bars of
+ *  rising height for the sound. */
+val SpeakerIcon: ImageVector = icon("Speaker") {
+    moveTo(4f, 9.2f)
+    lineTo(7.2f, 9.2f)
+    lineTo(12.2f, 4.6f)
+    lineTo(12.2f, 19.4f)
+    lineTo(7.2f, 14.8f)
+    lineTo(4f, 14.8f)
+    close()
+    moveTo(15.2f, 10.2f)
+    lineTo(16.9f, 10.2f)
+    lineTo(16.9f, 13.8f)
+    lineTo(15.2f, 13.8f)
+    close()
+    moveTo(18.6f, 8.4f)
+    lineTo(20.3f, 8.4f)
+    lineTo(20.3f, 15.6f)
+    lineTo(18.6f, 15.6f)
+    close()
+}
+
 /** No-entry circle (block list). */
 val BlockIcon: ImageVector = icon("Block", evenOdd = true) {
     moveTo(12f, 2f)

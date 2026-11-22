@@ -53,7 +53,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -1588,7 +1587,7 @@ fun SettingsScreen(
         val soundFx by UiSettings.soundFx.collectAsState()
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                Icons.Filled.VolumeUp, contentDescription = null,
+                SpeakerIcon, contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(23.dp)
             )
@@ -1717,6 +1716,82 @@ fun SettingsScreen(
                 title = "下载的文件",
                 subtitle = "${formatBytes(storageInfo.filesBytes)}，共 ${storageInfo.fileCount} 个"
             )
+            // Usage bar (v0.9.29, V3): database vs downloaded
+            // files as one proportional bar under the two
+            // numbers, so where the space went reads at a
+            // glance.
+            val totalStorage =
+                storageInfo.databaseBytes + storageInfo.filesBytes
+            if (totalStorage > 0) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant
+                        )
+                ) {
+                    if (storageInfo.databaseBytes > 0) {
+                        Box(
+                            modifier = Modifier
+                                .weight(
+                                    storageInfo.databaseBytes.toFloat()
+                                )
+                                .height(8.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.primary
+                                )
+                        )
+                    }
+                    if (storageInfo.filesBytes > 0) {
+                        Box(
+                            modifier = Modifier
+                                .weight(
+                                    storageInfo.filesBytes.toFloat()
+                                )
+                                .height(8.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.tertiary
+                                )
+                        )
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(
+                                MaterialTheme.colorScheme.primary,
+                                androidx.compose.foundation.shape
+                                    .CircleShape
+                            )
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        "数据库", fontSize = 11.sp, color = Color.Gray
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(
+                                MaterialTheme.colorScheme.tertiary,
+                                androidx.compose.foundation.shape
+                                    .CircleShape
+                            )
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        "下载的文件", fontSize = 11.sp,
+                        color = Color.Gray
+                    )
+                }
+            }
         }
         SettingsDivider()
         IconRow(

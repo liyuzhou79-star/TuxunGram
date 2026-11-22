@@ -245,7 +245,7 @@ fun ForwardPickerScreen(
                 items(items = chats, key = { it.id }) { chat ->
                     Box(
                         modifier = Modifier.animateItemPlacement(
-                            Motion.tween(250)
+                            Motion.tween(Motion.LIST_PLACEMENT)
                         )
                     ) {
                         ChatRow(chat, onClick = { forwardTo(chat.id) })
@@ -1037,7 +1037,7 @@ fun ChatListScreen(
                     // the list instead of teleporting.
                     Box(
                         modifier = Modifier.animateItemPlacement(
-                            Motion.tween(250)
+                            Motion.tween(Motion.LIST_PLACEMENT)
                         )
                     ) {
                         SwipeableChatRow(
@@ -1981,7 +1981,7 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                     // animating Box the main list uses.
                     Box(
                         modifier = Modifier.animateItemPlacement(
-                            Motion.tween(250)
+                            Motion.tween(Motion.LIST_PLACEMENT)
                         )
                     ) {
                     SwipeActionsContainer(
@@ -2245,7 +2245,7 @@ fun FolderTab(
     // parent.
     val underlineProgress by animateFloatAsState(
         targetValue = if (selected) 1f else 0f,
-        animationSpec = Motion.tween(200),
+        animationSpec = Motion.tween(Motion.TAB_UNDERLINE),
         label = "folderTabUnderline"
     )
     Column(

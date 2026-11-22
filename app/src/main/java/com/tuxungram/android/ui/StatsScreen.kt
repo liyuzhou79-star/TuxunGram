@@ -292,10 +292,24 @@ private fun TopSenderRow(sender: TopSenderUi, maxSent: Int) {
             if (sender.photoPath != null) {
                 AvatarImage(path = sender.photoPath, sizeDp = 32)
             } else {
+                // Official gradient placeholder (v0.9.29, V3),
+                // same colour-by-id rule as the chat list.
+                val avatarPair = OfficialTheme.avatarColors(
+                    sender.userId, OfficialTheme.dark
+                )
                 Box(
                     modifier = Modifier
                         .size(32.dp)
-                        .background(Color(0xFFB0BEC5), CircleShape),
+                        .background(
+                            androidx.compose.ui.graphics.Brush
+                                .verticalGradient(
+                                    listOf(
+                                        avatarPair.first,
+                                        avatarPair.second
+                                    )
+                                ),
+                            CircleShape
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(

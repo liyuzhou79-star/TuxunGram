@@ -357,8 +357,8 @@ private fun AppRoot() {
     AnimatedContent(
         targetState = gate,
         transitionSpec = {
-            fadeIn(Motion.tween(260)) togetherWith
-                fadeOut(Motion.tween(180))
+            fadeIn(Motion.tween(Motion.CROSSFADE_IN)) togetherWith
+                fadeOut(Motion.tween(Motion.CROSSFADE_OUT))
         },
         label = "appGate"
     ) { g ->
@@ -423,8 +423,8 @@ private fun AuthHost() {
         AnimatedContent(
             targetState = authState,
             transitionSpec = {
-                fadeIn(Motion.tween(280)) togetherWith
-                    fadeOut(Motion.tween(200))
+                fadeIn(Motion.tween(Motion.CROSSFADE_IN)) togetherWith
+                    fadeOut(Motion.tween(Motion.PAGE_OUT))
             },
             label = "authState"
         ) { state ->
@@ -792,22 +792,22 @@ private fun ReadyHost() {
             transitionSpec = {
                 when {
                     targetState.depth > initialState.depth ->
-                        (slideInHorizontally(Motion.tween(280)) {
+                        (slideInHorizontally(Motion.tween(Motion.PAGE_IN)) {
                             it
-                        } + fadeIn(Motion.tween(280))) togetherWith
-                            (slideOutHorizontally(Motion.tween(280)) {
+                        } + fadeIn(Motion.tween(Motion.PAGE_IN))) togetherWith
+                            (slideOutHorizontally(Motion.tween(Motion.PAGE_IN)) {
                                 -it / 3
-                            } + fadeOut(Motion.tween(200)))
+                            } + fadeOut(Motion.tween(Motion.PAGE_OUT)))
                     targetState.depth < initialState.depth ->
-                        (slideInHorizontally(Motion.tween(280)) {
+                        (slideInHorizontally(Motion.tween(Motion.PAGE_IN)) {
                             -it / 3
-                        } + fadeIn(Motion.tween(280))) togetherWith
-                            (slideOutHorizontally(Motion.tween(280)) {
+                        } + fadeIn(Motion.tween(Motion.PAGE_IN))) togetherWith
+                            (slideOutHorizontally(Motion.tween(Motion.PAGE_IN)) {
                                 it
-                            } + fadeOut(Motion.tween(200)))
+                            } + fadeOut(Motion.tween(Motion.PAGE_OUT)))
                     else ->
-                        fadeIn(Motion.tween(220)) togetherWith
-                            fadeOut(Motion.tween(180))
+                        fadeIn(Motion.tween(Motion.CROSSFADE_IN)) togetherWith
+                            fadeOut(Motion.tween(Motion.CROSSFADE_OUT))
                 }
             },
             label = "route",
@@ -983,10 +983,10 @@ private fun ReadyHost() {
                 AnimatedContent(
                     targetState = homeTab,
                     transitionSpec = {
-                        (fadeIn(Motion.tween(220)) +
-                            slideInHorizontally(Motion.tween(220)) {
+                        (fadeIn(Motion.tween(Motion.TAB_IN)) +
+                            slideInHorizontally(Motion.tween(Motion.TAB_IN)) {
                                 it / 8
-                            }) togetherWith fadeOut(Motion.tween(150))
+                            }) togetherWith fadeOut(Motion.tween(Motion.TAB_OUT))
                     },
                     label = "homeTab"
                 ) { tab ->

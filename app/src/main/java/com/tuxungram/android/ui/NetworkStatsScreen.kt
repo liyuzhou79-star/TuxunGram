@@ -1,6 +1,8 @@
 package com.tuxungram.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,6 +10,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -19,6 +26,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -125,6 +133,80 @@ fun NetworkStatsScreen(onBack: () -> Unit) {
                             NetworkStatsStore.totalSent()
                         )
                     )
+                    // Split bar (v0.9.29, V3): the download /
+                    // upload share of all traffic as one bar,
+                    // so the totals read at a glance, not only
+                    // as two numbers.
+                    val totalRx = NetworkStatsStore.totalReceived()
+                    val totalTx = NetworkStatsStore.totalSent()
+                    if (totalRx + totalTx > 0) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(
+                                    MaterialTheme.colorScheme
+                                        .surfaceVariant
+                                )
+                        ) {
+                            if (totalRx > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(totalRx.toFloat())
+                                        .height(8.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme
+                                                .primary
+                                        )
+                                )
+                            }
+                            if (totalTx > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(totalTx.toFloat())
+                                        .height(8.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme
+                                                .tertiary
+                                        )
+                                )
+                            }
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.primary,
+                                        CircleShape
+                                    )
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                "下载", fontSize = 11.sp,
+                                color = Color.Gray
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.tertiary,
+                                        CircleShape
+                                    )
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                "上传", fontSize = 11.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
                 }
                 if (rows.isEmpty()) {
                     Spacer(Modifier.height(16.dp))
@@ -133,6 +215,9 @@ fun NetworkStatsScreen(onBack: () -> Unit) {
                         color = Color.Gray, fontSize = 13.sp
                     )
                 }
+                val maxRowTotal = rows.maxOfOrNull {
+                    it.receivedBytes + it.sentBytes
+                }?.coerceAtLeast(1L) ?: 1L
                 for (row in rows) {
                     Spacer(Modifier.height(10.dp))
                     GroupCard {
@@ -153,6 +238,40 @@ fun NetworkStatsScreen(onBack: () -> Unit) {
                                 fontSize = 12.sp, color = Color.Gray,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
+                            // Share bar (v0.9.29, V3): this
+                            // row's traffic against the biggest
+                            // row, so heavy categories stand out
+                            // without reading the numbers.
+                            val rowTotal =
+                                row.receivedBytes + row.sentBytes
+                            if (rowTotal > 0) {
+                                Spacer(Modifier.height(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(5.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme
+                                                .surfaceVariant,
+                                            RoundedCornerShape(3.dp)
+                                        )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(
+                                                (rowTotal.toFloat() /
+                                                    maxRowTotal)
+                                                    .coerceIn(0f, 1f)
+                                            )
+                                            .height(5.dp)
+                                            .background(
+                                                MaterialTheme.colorScheme
+                                                    .primary,
+                                                RoundedCornerShape(3.dp)
+                                            )
+                                    )
+                                }
+                            }
                         }
                     }
                 }

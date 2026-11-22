@@ -173,10 +173,10 @@ fun HomeDrawerContent(
         // account rows) ----
         AnimatedVisibility(
             visible = accountsExpanded,
-            enter = expandVertically(Motion.tween(220)) +
-                fadeIn(Motion.tween(220)),
-            exit = shrinkVertically(Motion.tween(180)) +
-                fadeOut(Motion.tween(180))
+            enter = expandVertically(Motion.tween(Motion.PANEL_IN)) +
+                fadeIn(Motion.tween(Motion.PANEL_IN)),
+            exit = shrinkVertically(Motion.tween(Motion.PANEL_OUT)) +
+                fadeOut(Motion.tween(Motion.PANEL_OUT))
         ) {
             Column {
                 val slots by AccountStore.slots.collectAsState()

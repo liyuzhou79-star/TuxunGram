@@ -987,12 +987,12 @@ fun ChatScreen(
         AnimatedContent(
             targetState = selectionMode,
             transitionSpec = {
-                (fadeIn(Motion.tween()) +
-                    slideInVertically(Motion.tween()) {
+                (fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+                    slideInVertically(Motion.tween(Motion.CROSSFADE_IN)) {
                         if (targetState) it / 3 else -it / 3
                     }) togetherWith
-                    (fadeOut(Motion.tween()) +
-                        slideOutVertically(Motion.tween()) {
+                    (fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+                        slideOutVertically(Motion.tween(Motion.CROSSFADE_OUT)) {
                             if (targetState) -it / 3 else it / 3
                         })
             },
@@ -1949,7 +1949,7 @@ fun ChatScreen(
                 }
                 LaunchedEffect(msg.id) {
                     if (entryFresh) {
-                        entry.animateTo(1f, Motion.tween(260))
+                        entry.animateTo(1f, Motion.tween(Motion.ITEM_APPEAR))
                     }
                 }
                 Column(
@@ -2139,10 +2139,10 @@ fun ChatScreen(
         val selectedItems = messages.filter { it.id in selectedIds }
         AnimatedVisibility(
             visible = selectionMode,
-            enter = expandVertically(Motion.tween(200)) +
-                fadeIn(Motion.tween(200)),
-            exit = shrinkVertically(Motion.tween(160)) +
-                fadeOut(Motion.tween(160))
+            enter = expandVertically(Motion.tween(Motion.PANEL_IN)) +
+                fadeIn(Motion.tween(Motion.PANEL_IN)),
+            exit = shrinkVertically(Motion.tween(Motion.PANEL_OUT)) +
+                fadeOut(Motion.tween(Motion.PANEL_OUT))
         ) {
             Row(
                 modifier = Modifier
@@ -2359,10 +2359,10 @@ fun ChatScreen(
                     visible = bot?.isBot == true &&
                         messages.none { it.outgoing } &&
                         (messages.isNotEmpty() || showEmptyHistory),
-                    enter = expandVertically(Motion.tween(200)) +
-                        fadeIn(Motion.tween(200)),
-                    exit = shrinkVertically(Motion.tween(160)) +
-                        fadeOut(Motion.tween(160))
+                    enter = expandVertically(Motion.tween(Motion.PANEL_IN)) +
+                        fadeIn(Motion.tween(Motion.PANEL_IN)),
+                    exit = shrinkVertically(Motion.tween(Motion.PANEL_OUT)) +
+                        fadeOut(Motion.tween(Motion.PANEL_OUT))
                 ) {
                     Button(
                         onClick = {
@@ -2398,10 +2398,10 @@ fun ChatScreen(
                 }
                 AnimatedVisibility(
                     visible = forceHint != null,
-                    enter = expandVertically(Motion.tween(180)) +
-                        fadeIn(Motion.tween(180)),
-                    exit = shrinkVertically(Motion.tween(140)) +
-                        fadeOut(Motion.tween(140))
+                    enter = expandVertically(Motion.tween(Motion.PANEL_IN)) +
+                        fadeIn(Motion.tween(Motion.PANEL_IN)),
+                    exit = shrinkVertically(Motion.tween(Motion.PANEL_OUT)) +
+                        fadeOut(Motion.tween(Motion.PANEL_OUT))
                 ) {
                     if (forceHint != null) {
                     Row(
@@ -2436,13 +2436,13 @@ fun ChatScreen(
                 AnimatedVisibility(
                     visible = inlineActive,
                     enter = expandVertically(
-                        Motion.tween(200),
+                        Motion.tween(Motion.PANEL_IN),
                         expandFrom = Alignment.Bottom
-                    ) + fadeIn(Motion.tween(200)),
+                    ) + fadeIn(Motion.tween(Motion.PANEL_IN)),
                     exit = shrinkVertically(
-                        Motion.tween(160),
+                        Motion.tween(Motion.PANEL_OUT),
                         shrinkTowards = Alignment.Bottom
-                    ) + fadeOut(Motion.tween(160))
+                    ) + fadeOut(Motion.tween(Motion.PANEL_OUT))
                 ) {
                     Column(
                         modifier = Modifier
@@ -2616,13 +2616,13 @@ fun ChatScreen(
                     visible = slashMatches.isNotEmpty() && !inlineActive &&
                         suggestKind.isEmpty(),
                     enter = expandVertically(
-                        Motion.tween(180),
+                        Motion.tween(Motion.PANEL_IN),
                         expandFrom = Alignment.Bottom
-                    ) + fadeIn(Motion.tween(180)),
+                    ) + fadeIn(Motion.tween(Motion.PANEL_IN)),
                     exit = shrinkVertically(
-                        Motion.tween(140),
+                        Motion.tween(Motion.PANEL_OUT),
                         shrinkTowards = Alignment.Bottom
-                    ) + fadeOut(Motion.tween(140))
+                    ) + fadeOut(Motion.tween(Motion.PANEL_OUT))
                 ) {
                     Column(
                         modifier = Modifier
@@ -2830,13 +2830,13 @@ fun ChatScreen(
                         !inlineActive && slashMatches.isEmpty() &&
                         !suggestActive,
                     enter = expandVertically(
-                        Motion.tween(200),
+                        Motion.tween(Motion.PANEL_IN),
                         expandFrom = Alignment.Bottom
-                    ) + fadeIn(Motion.tween(200)),
+                    ) + fadeIn(Motion.tween(Motion.PANEL_IN)),
                     exit = shrinkVertically(
-                        Motion.tween(160),
+                        Motion.tween(Motion.PANEL_OUT),
                         shrinkTowards = Alignment.Bottom
-                    ) + fadeOut(Motion.tween(160))
+                    ) + fadeOut(Motion.tween(Motion.PANEL_OUT))
                 ) {
                     if (kb is ReplyKb.Shown) {
                     Column(
@@ -3191,7 +3191,7 @@ fun ChatScreen(
                     .collectIsPressedAsState()
                 val sendScale by animateFloatAsState(
                     if (sendPressed) 0.86f else 1f,
-                    Motion.tween(120),
+                    Motion.tween(Motion.PRESS),
                     label = "sendScale"
                 )
                 if (canBasic && input.isBlank()) {
@@ -3356,10 +3356,10 @@ fun ChatScreen(
             // instead of popping in and out.
             AnimatedVisibility(
                 visible = stickerPanelOpen && !recording,
-                enter = expandVertically(Motion.tween(240)) +
-                    fadeIn(Motion.tween(240)),
-                exit = shrinkVertically(Motion.tween(200)) +
-                    fadeOut(Motion.tween(200))
+                enter = expandVertically(Motion.tween(Motion.PANEL_IN)) +
+                    fadeIn(Motion.tween(Motion.PANEL_IN)),
+                exit = shrinkVertically(Motion.tween(Motion.PANEL_OUT)) +
+                    fadeOut(Motion.tween(Motion.PANEL_OUT))
             ) {
               Box(
                 modifier = Modifier
