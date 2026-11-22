@@ -189,18 +189,22 @@ private fun ContactRow(contact: ContactEntry, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .background(colors[hue.toInt()], CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                contact.name.trim().firstOrNull()?.toString() ?: "?",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 17.sp
-            )
+        if (contact.photoPath != null) {
+            AvatarImage(path = contact.photoPath, sizeDp = 44)
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(colors[hue.toInt()], CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    contact.name.trim().firstOrNull()?.toString() ?: "?",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
+            }
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {

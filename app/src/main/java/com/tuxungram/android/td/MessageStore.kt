@@ -93,6 +93,10 @@ data class MsgItem(
     val entities: List<TextEntityUi> = emptyList(),
     val senderName: String,
     val senderUserId: Long,
+    // Sender's small profile photo (group chats render it
+    // beside the bubble, v0.9.9 W0); resolved through
+    // AvatarStore and backfilled by publish() as it lands.
+    val senderPhotoPath: String? = null,
     val photoFileId: Int,
     val photoPath: String?,
     val photoWidth: Int,
@@ -532,6 +536,9 @@ object MessageStore {
     private fun attach() {
         if (attached) return
         attached = true
+        // Sender photos resolve in AvatarStore; republish so
+        // group bubbles gain their avatars as paths land (W0).
+        AvatarStore.addListener { publish() }
         TdRepository.addUpdateListener { update -> handleUpdate(update) }
     }
 
@@ -1333,6 +1340,7 @@ object MessageStore {
             }
             "updateUser" -> {
                 val user = update.optJSONObject("user") ?: return
+                AvatarStore.noteUser(user)
                 val name = userNameOf(user)
                 if (name.isNotEmpty()) {
                     userNames[user.optLong("id")] = name
@@ -1369,6 +1377,7 @@ object MessageStore {
         TdRepository.sendRaw(query) { response ->
             userFetchPending.remove(userId)
             if (TdClient.isError(response)) return@sendRaw
+            AvatarStore.noteUser(response)
             val name = userNameOf(response)
             if (name.isNotEmpty()) {
                 userNames[userId] = name
@@ -1477,6 +1486,13 @@ object MessageStore {
             senderUserId = msg.optJSONObject("sender_id")
                 ?.takeIf { it.optString("@type") == "messageSenderUser" }
                 ?.optLong("user_id") ?: 0L,
+            // Resolved at parse time when the sender's photo is
+            // already on disk; the main store's publish() keeps
+            // backfilling it afterwards (W0).
+            senderPhotoPath = msg.optJSONObject("sender_id")
+                ?.takeIf { it.optString("@type") == "messageSenderUser" }
+                ?.optLong("user_id")
+                ?.let { AvatarStore.pathForUser(it) },
             photoFileId = 0,
             photoPath = null,
             photoWidth = 0,
@@ -2293,10 +2309,23 @@ object MessageStore {
             } else {
                 null
             }
-            val withName = if (name != null && name != item.senderName) {
+            val named = if (name != null && name != item.senderName) {
                 item.copy(senderName = name)
             } else {
                 item
+            }
+            // Backfill the sender's avatar path the same way
+            // (group bubbles, W0); null until AvatarStore has
+            // the file on disk.
+            val senderPath = if (named.senderUserId != 0L) {
+                AvatarStore.pathForUser(named.senderUserId)
+            } else {
+                null
+            }
+            val withName = if (senderPath != named.senderPhotoPath) {
+                named.copy(senderPhotoPath = senderPath)
+            } else {
+                named
             }
             // Delivery ticks follow the chat's read position, not a
             // one-off flag set at send time.

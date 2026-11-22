@@ -32,13 +32,9 @@ object MeStore {
     private val _me = MutableStateFlow(MeUi())
     val me: StateFlow<MeUi> = _me
 
-    /** The small rendition's file id for the current photo;
-     *  updateFile completions are matched against it. */
-    @Volatile
-    private var photoFileId = 0
-
-    @Volatile
-    private var photoDownloadPending = false
+    // Avatar downloads and paths are owned by AvatarStore
+    // since v0.9.9 (W0); this store only mirrors the resolved
+    // path for the signed-in user.
 
     @Volatile
     private var listenerRegistered = false
@@ -46,26 +42,26 @@ object MeStore {
     private fun registerListener() {
         if (listenerRegistered) return
         listenerRegistered = true
+        AvatarStore.addListener {
+            // My photo's path landed in the resolver (download
+            // finished, or an already-downloaded file answered):
+            // fill the settings card and remember the path for
+            // the account switcher, which shows it while this
+            // account is in the background (W0).
+            val path = AvatarStore.pathForUser(_me.value.id)
+            if (path != null && path != _me.value.photoPath) {
+                _me.value = _me.value.copy(photoPath = path)
+                AccountStore.setAvatarPath(AccountStore.currentSlot(), path)
+            }
+        }
         TdRepository.addUpdateListener { update ->
-            when (update.optString("@type")) {
-                "updateUser" -> {
-                    val user = update.optJSONObject("user") ?: return@addUpdateListener
-                    if (user.optLong("id") == _me.value.id && _me.value.id != 0L) {
-                        applyUser(user, keepBio = true)
-                    }
-                }
-                "updateFile" -> {
-                    val file = update.optJSONObject("file") ?: return@addUpdateListener
-                    if (file.optInt("id") != photoFileId) return@addUpdateListener
-                    val local = file.optJSONObject("local") ?: return@addUpdateListener
-                    if (local.optBoolean("is_downloading_completed")) {
-                        photoDownloadPending = false
-                        val path = local.optString("path")
-                        if (path.isNotEmpty()) {
-                            _me.value = _me.value.copy(photoPath = path)
-                        }
-                    }
-                }
+            if (update.optString("@type") != "updateUser") {
+                return@addUpdateListener
+            }
+            val user = update.optJSONObject("user")
+                ?: return@addUpdateListener
+            if (user.optLong("id") == _me.value.id && _me.value.id != 0L) {
+                applyUser(user, keepBio = true)
             }
         }
     }
@@ -92,18 +88,12 @@ object MeStore {
 
     private fun applyUser(user: JSONObject, keepBio: Boolean) {
         val photo = user.optJSONObject("profile_photo")
-        val small = photo?.optJSONObject("small")
-        val smallFileId = small?.optInt("id") ?: 0
-        val local = small?.optJSONObject("local")
-        val localPath = if (
-            local != null && local.optBoolean("is_downloading_completed")
-        ) {
-            local.optString("path").ifEmpty { null }
-        } else {
-            null
-        }
         val previous = _me.value
-        photoFileId = smallFileId
+        // The shared resolver records a completed path on sight
+        // and starts the download otherwise (W0); the listener
+        // registered in registerListener fills photoPath in the
+        // moment the path lands.
+        val resolved = AvatarStore.noteUser(user)
         _me.value = MeUi(
             id = user.optLong("id"),
             firstName = user.optString("first_name"),
@@ -113,29 +103,15 @@ object MeStore {
             phone = user.optString("phone_number"),
             bio = if (keepBio) previous.bio else "",
             photoId = photo?.optLong("id") ?: 0L,
-            photoPath = localPath
+            photoPath = resolved
                 ?: if (previous.photoId == (photo?.optLong("id") ?: 0L)) {
                     previous.photoPath
                 } else {
                     null
                 }
         )
-        if (localPath == null && smallFileId != 0) {
-            ensurePhotoDownload(smallFileId)
-        }
-    }
-
-    private fun ensurePhotoDownload(fileId: Int) {
-        if (photoDownloadPending) return
-        photoDownloadPending = true
-        TdRepository.sendRaw(TdClient.request("downloadFile").apply {
-            put("file_id", fileId)
-            put("priority", 1)
-            put("offset", 0L)
-            put("limit", 0L)
-            put("synchronous", false)
-        }) { response ->
-            if (TdClient.isError(response)) photoDownloadPending = false
+        _me.value.photoPath?.let { path ->
+            AccountStore.setAvatarPath(AccountStore.currentSlot(), path)
         }
     }
 

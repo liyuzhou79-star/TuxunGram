@@ -59,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AppLock
+import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.PollUi
@@ -103,8 +104,18 @@ fun SimpleMessageBubble(
             Arrangement.End
         } else {
             Arrangement.Start
-        }
+        },
+        verticalAlignment = Alignment.Bottom
     ) {
+        // Sender avatar (v0.9.9, W0): comments are a group-like
+        // context — every incoming comment carries its author's
+        // photo (or initial disc), tapping it opens the profile.
+        if (isGroup && !outgoing && msg.senderUserId != 0L) {
+            SenderAvatarBubble(msg = msg) { userId ->
+                DeepLink.pendingProfileUser.value = userId
+            }
+            Spacer(Modifier.width(8.dp))
+        }
         Box {
             Column(
                 modifier = Modifier
@@ -148,7 +159,15 @@ fun SimpleMessageBubble(
                         msg.senderName,
                         color = Color(0xFF5B7C99),
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = if (msg.senderUserId != 0L) {
+                            Modifier.clickable {
+                                DeepLink.pendingProfileUser.value =
+                                    msg.senderUserId
+                            }
+                        } else {
+                            Modifier
+                        }
                     )
                 }
                 if (msg.replyToId != 0L) {

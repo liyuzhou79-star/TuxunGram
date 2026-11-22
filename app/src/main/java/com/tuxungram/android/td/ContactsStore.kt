@@ -14,7 +14,10 @@ data class ContactEntry(
     val name: String,
     val username: String,
     val statusText: String = "",
-    val isOnline: Boolean = false
+    val isOnline: Boolean = false,
+    /** Local path of the small profile photo once AvatarStore
+     *  has it on disk (v0.9.9, W0); null = initial-letter disc. */
+    val photoPath: String? = null
 )
 
 /**
@@ -41,6 +44,9 @@ object ContactsStore {
     private fun attach() {
         if (attached) return
         attached = true
+        // Avatar paths resolve asynchronously in AvatarStore;
+        // republish so rows swap letters for photos as they land.
+        AvatarStore.addListener { publish() }
         TdRepository.addUpdateListener { update ->
             if (update.optString("@type") != "updateUser") {
                 return@addUpdateListener
@@ -86,6 +92,7 @@ object ContactsStore {
      *  nor a username worth listing. */
     private fun entryFromUser(user: JSONObject): ContactEntry? {
         val userId = user.optLong("id")
+        AvatarStore.noteUser(user)
         val first = user.optString("first_name")
         val last = user.optString("last_name")
         val name = listOf(first, last).filter { it.isNotEmpty() }
@@ -158,7 +165,16 @@ object ContactsStore {
     }
 
     private fun publish() {
-        _contacts.value = byId.values.sortedBy { it.name.lowercase() }
+        _contacts.value = byId.values
+            .map { entry ->
+                val path = AvatarStore.pathForUser(entry.userId)
+                if (path != entry.photoPath) {
+                    entry.copy(photoPath = path)
+                } else {
+                    entry
+                }
+            }
+            .sortedBy { it.name.lowercase() }
     }
 
     /** Local filter over the loaded address book (instant, no

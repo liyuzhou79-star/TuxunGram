@@ -12,7 +12,10 @@ data class MemberEntry(
     val userId: Long,
     val name: String,
     val statusText: String,
-    val statusKind: String = "member"
+    val statusKind: String = "member",
+    /** Local path of the small profile photo once AvatarStore
+     *  has it on disk (v0.9.9, W0); null = initial-letter disc. */
+    val photoPath: String? = null
 )
 
 /** The chat's default member permissions, all 16

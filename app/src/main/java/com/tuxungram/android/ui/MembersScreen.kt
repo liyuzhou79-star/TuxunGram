@@ -332,18 +332,22 @@ private fun MemberRow(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(42.dp)
-                .background(Color(0xFFB0BEC5), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                member.name.trim().firstOrNull()?.toString() ?: "?",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp
-            )
+        if (member.photoPath != null) {
+            AvatarImage(path = member.photoPath, sizeDp = 42)
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .background(Color(0xFFB0BEC5), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    member.name.trim().firstOrNull()?.toString() ?: "?",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
         }
         Spacer(Modifier.width(11.dp))
         Text(

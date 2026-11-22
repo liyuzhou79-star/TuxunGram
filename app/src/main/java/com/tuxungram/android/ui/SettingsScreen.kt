@@ -887,6 +887,7 @@ fun SettingsScreen(
         val accountSlots by AccountStore.slots.collectAsState()
         val currentSlot by AccountStore.current.collectAsState()
         val accountLabels by AccountStore.labels.collectAsState()
+        val accountAvatars by AccountStore.avatars.collectAsState()
         for (slot in accountSlots) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -899,11 +900,40 @@ fun SettingsScreen(
                     }
                     .padding(vertical = 8.dp)
             ) {
-                Text(if (slot == currentSlot) "● " else "○ ")
-                Text(
-                    accountLabels[slot] ?: "账号 ${slot + 1}",
-                    fontSize = 15.sp
-                )
+                // Avatar per slot (v0.9.9, W0): the running
+                // account's photo comes from MeStore live; the
+                // other slots show the path remembered while
+                // they were last active (their clients are not
+                // running). A stale path whose file is gone
+                // falls back to the initial letter.
+                val slotLabel = accountLabels[slot] ?: "账号 ${slot + 1}"
+                val slotPath = (
+                    if (slot == currentSlot) {
+                        me.photoPath ?: accountAvatars[slot]
+                    } else {
+                        accountAvatars[slot]
+                    }
+                    )?.takeIf { java.io.File(it).exists() }
+                if (slotPath != null) {
+                    AvatarImage(path = slotPath, sizeDp = 40)
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(Color(0xFF90CAF9), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            slotLabel.trim().firstOrNull()?.toString()
+                                ?: "?",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Text(slotLabel, fontSize = 15.sp)
                 if (slot == currentSlot) {
                     Text(
                         "（当前）",

@@ -809,6 +809,32 @@ fun ChatScreen(
                 }
             }
         }
+        // Sender-avatar runs (v0.9.9, W0): in a group, an
+        // incoming message carries its sender's avatar only
+        // when it opens a run — the chronologically previous
+        // message (`messages` is ascending) is outgoing, from
+        // another sender, or on an earlier day. The rest of the
+        // run leaves the avatar slot blank so the bubbles stay
+        // aligned, the way mature clients group them.
+        val avatarShowIds = remember(messages, chat?.isGroup) {
+            val show = HashSet<Long>()
+            if (chat?.isGroup == true) {
+                var prev: MsgItem? = null
+                for (m in messages) {
+                    if (!m.outgoing && m.senderUserId != 0L) {
+                        val p = prev
+                        if (p == null || p.outgoing ||
+                            p.senderUserId != m.senderUserId ||
+                            m.id in separatorIds
+                        ) {
+                            show.add(m.id)
+                        }
+                    }
+                    prev = m
+                }
+            }
+            show
+        }
         // Chat wallpaper (v0.7.0, F3): a solid color behind the
         // message area only; the top bar and the dock keep the
         // theme surface. 默认 leaves it transparent.
@@ -1013,7 +1039,11 @@ fun ChatScreen(
                         onOpenVideo = { m -> videoItem = m },
                         canComment = chat?.isChannel == true &&
                             linkedChatId != 0L && msg.isChannelPost,
-                        onOpenThread = { m -> onOpenThread(m.id) }
+                        onOpenThread = { m -> onOpenThread(m.id) },
+                        showSenderAvatar = msg.id in avatarShowIds,
+                        onOpenSenderProfile = { userId ->
+                            DeepLink.pendingProfileUser.value = userId
+                        }
                     )
                 }
             }
@@ -1799,6 +1829,48 @@ fun InlineButtonGrid(msg: MsgItem, chatId: Long) {
     }
 }
 
+/** Sender avatar beside a group bubble (v0.9.9, W0): the
+ *  resolved photo, or a colored initial disc while it is still
+ *  downloading / the user has none. Tapping opens the sender's
+ *  profile page through the caller's route. */
+@Composable
+fun SenderAvatarBubble(
+    msg: MsgItem,
+    onOpenSenderProfile: (Long) -> Unit
+) {
+    val hue = (msg.senderUserId % 8 + 8) % 8
+    val colors = listOf(
+        Color(0xFFEF9A9A), Color(0xFFF48FB1), Color(0xFFCE93D8),
+        Color(0xFF90CAF9), Color(0xFF80CBC4), Color(0xFFA5D6A7),
+        Color(0xFFFFCC80), Color(0xFFBCAAA4)
+    )
+    Box(
+        modifier = Modifier.clickable {
+            onOpenSenderProfile(msg.senderUserId)
+        }
+    ) {
+        val path = msg.senderPhotoPath
+        if (path != null) {
+            AvatarImage(path = path, sizeDp = 32)
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .background(colors[hue.toInt()], CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    msg.senderName.trim().firstOrNull()?.toString()
+                        ?: "?",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubble(
@@ -1815,7 +1887,13 @@ fun MessageBubble(
     onOpenPhoto: (MsgItem) -> Unit = {},
     onOpenVideo: (MsgItem) -> Unit = {},
     canComment: Boolean = false,
-    onOpenThread: (MsgItem) -> Unit = {}
+    onOpenThread: (MsgItem) -> Unit = {},
+    // Group sender avatar (v0.9.9, W0): the caller decides
+    // from the whole list whether this message opens a
+    // same-sender run; the tap route opens the sender's
+    // profile page.
+    showSenderAvatar: Boolean = false,
+    onOpenSenderProfile: (Long) -> Unit = {}
 ) {
     val outgoing = msg.outgoing
     val context = LocalContext.current
@@ -1913,8 +1991,24 @@ fun MessageBubble(
                     )
                 }
             },
-        horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
+        horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Bottom
     ) {
+        // Sender avatar slot (v0.9.9, W0): group incoming
+        // messages reserve a 32 dp column at the left — the
+        // photo on the first message of a same-sender run, a
+        // blank spacer on the rest, so bubbles align.
+        if (isGroup && !outgoing) {
+            if (showSenderAvatar && msg.senderUserId != 0L) {
+                SenderAvatarBubble(
+                    msg = msg,
+                    onOpenSenderProfile = onOpenSenderProfile
+                )
+            } else {
+                Spacer(Modifier.width(32.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+        }
         Box {
             // Bubble corner style (v0.7.0, F3): 现代/经典 from
             // settings, applied live.
@@ -2000,7 +2094,14 @@ fun MessageBubble(
                         msg.senderName,
                         color = Color(0xFF5B7C99),
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = if (msg.senderUserId != 0L) {
+                            Modifier.clickable {
+                                onOpenSenderProfile(msg.senderUserId)
+                            }
+                        } else {
+                            Modifier
+                        }
                     )
                 }
                 if (msg.replyToId != 0L) {

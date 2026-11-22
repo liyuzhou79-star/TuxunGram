@@ -54,12 +54,10 @@ object ChatStore {
 
     private val cache = ConcurrentHashMap<Long, JSONObject>()
 
-    /** Avatar bookkeeping: downloaded small photos by TDLib file id,
-     *  downloads already requested, and — for private chats, whose
-     *  avatar is the other user's profile photo — chat id -> the
-     *  file id of that user's small profile photo. */
-    private val photoPathByFileId = ConcurrentHashMap<Int, String>()
-    private val photoDownloadPending = ConcurrentHashMap.newKeySet<Int>()
+    /** Avatar bookkeeping: local paths and downloads live in
+     *  [AvatarStore] since v0.9.9 (W0) — this store only keeps
+     *  the private-chat fallback mapping, chat id -> the file
+     *  id of the other user's small profile photo. */
     private val userPhotoFileByChat = ConcurrentHashMap<Long, Int>()
     private val chatIdByUserId = ConcurrentHashMap<Long, Long>()
 
@@ -129,6 +127,11 @@ object ChatStore {
     fun attach() {
         if (attached) return
         attached = true
+        AvatarStore.attach()
+        // A path landing in the resolver (download finished, or
+        // an already-downloaded file answered) republishes the
+        // list with avatars filled in — no other update needed.
+        AvatarStore.addListener { requestRecompute() }
         TdRepository.addUpdateListener { update -> handleUpdate(update) }
     }
 
@@ -383,12 +386,11 @@ object ChatStore {
         val chatId = update.optLong("chat_id", 0L)
         when (update.optString("@type")) {
             "updateFile" -> {
+                // Avatar completions land in the shared resolver
+                // (v0.9.9, W0); the blanket recompute at the end
+                // of handleUpdate republishes rows with the path.
                 val file = update.optJSONObject("file") ?: return
-                val local = file.optJSONObject("local") ?: return
-                if (!local.optBoolean("is_downloading_completed")) return
-                val fileId = file.optInt("id")
-                photoDownloadPending.remove(fileId)
-                photoPathByFileId[fileId] = local.optString("path")
+                AvatarStore.noteFile(file)
             }
             "updateNewChat" -> {
                 val chat = update.optJSONObject("chat") ?: return
@@ -410,12 +412,12 @@ object ChatStore {
             }
             "updateUser" -> {
                 val user = update.optJSONObject("user") ?: return
+                AvatarStore.noteUser(user)
                 val chatIdForUser = chatIdByUserId[user.optLong("id")] ?: return
                 val smallId = user.optJSONObject("profile_photo")
                     ?.optJSONObject("small")?.optInt("id", 0) ?: 0
                 if (smallId != 0) {
                     userPhotoFileByChat[chatIdForUser] = smallId
-                    ensurePhotoDownload(smallId)
                 }
             }
             "updateChatPhoto" -> {
@@ -595,14 +597,7 @@ object ChatStore {
             isSecret = typeName == "chatTypeSecret",
             isMarkedAsUnread = chat.optBoolean("is_marked_as_unread"),
             photoFileId = avatarFileId(chat),
-            photoPath = avatarFileId(chat).let { id ->
-                if (id == 0) {
-                    null
-                } else {
-                    ensurePhotoDownload(id)
-                    photoPathByFileId[id]
-                }
-            },
+            photoPath = avatarPath(chat),
             allowedReactions = allowedReactionsOf(chat)
         )
     }
@@ -640,32 +635,35 @@ object ChatStore {
         return userPhotoFileByChat[chat.optLong("id")] ?: 0
     }
 
+    /** The chat's avatar path via the shared resolver (W0):
+     *  the chat's own small photo first (the file object itself
+     *  may already carry the completed path); private chats fall
+     *  back to the other user's profile photo file. */
+    private fun avatarPath(chat: JSONObject): String? {
+        val own = chat.optJSONObject("photo")?.optJSONObject("small")
+        val fromOwn = AvatarStore.pathForFileObj(own)
+        if (fromOwn != null) return fromOwn
+        val fallbackId = userPhotoFileByChat[chat.optLong("id")] ?: 0
+        if (fallbackId != 0) {
+            AvatarStore.ensureDownload(fallbackId)
+            return AvatarStore.pathForFile(fallbackId)
+        }
+        return null
+    }
+
     private fun fetchUserPhoto(chatId: Long, userId: Long) {
         if (userPhotoFileByChat.containsKey(chatId)) return
         val query = TdClient.request("getUser").apply { put("user_id", userId) }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) return@sendRaw
+            AvatarStore.noteUser(response)
             val smallId = response.optJSONObject("profile_photo")
                 ?.optJSONObject("small")?.optInt("id", 0) ?: 0
             if (smallId != 0) {
                 userPhotoFileByChat[chatId] = smallId
-                ensurePhotoDownload(smallId)
                 requestRecompute()
             }
         }
-    }
-
-    private fun ensurePhotoDownload(fileId: Int) {
-        if (fileId == 0) return
-        if (photoPathByFileId.containsKey(fileId)) return
-        if (!photoDownloadPending.add(fileId)) return
-        TdRepository.sendRaw(TdClient.request("downloadFile").apply {
-            put("file_id", fileId)
-            put("priority", 1)
-            put("offset", 0L)
-            put("limit", 0L)
-            put("synchronous", false)
-        }) {}
     }
 
     // ---- Chat-list long-press actions (all verified in td_api.tl) ----

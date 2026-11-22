@@ -59,6 +59,7 @@ object MemberListStore {
     private val membersLock = Any()
 
     fun load(chatId: Long) {
+        registerAvatarListener()
         currentChatId = chatId
         supergroupId = 0L
         offset = 0
@@ -133,10 +134,12 @@ object MemberListStore {
                         }
                     )
                 )
-                if (!nameByUser.containsKey(userId)) fetchName(userId)
+                if (!nameByUser.containsKey(userId) || !AvatarStore.hasUser(userId)) fetchName(userId)
             }
             if (currentChatId != chatId) return@sendRaw
-            _state.value = _state.value.copy(admins = admins)
+            _state.value = _state.value.copy(
+                admins = admins.map { withPhoto(it) }
+            )
             publishMembers()
         }
     }
@@ -280,11 +283,40 @@ object MemberListStore {
     private fun memberSnapshot(): List<MemberEntry> =
         synchronized(membersLock) { ArrayList(memberList) }
 
+    /** Fill a row's avatar path from the shared resolver (W0);
+     *  the path is re-read at every publish, so a photo that
+     *  lands late simply appears on the next publish. */
+    private fun withPhoto(entry: MemberEntry): MemberEntry {
+        val path = AvatarStore.pathForUser(entry.userId)
+        return if (path != entry.photoPath) {
+            entry.copy(photoPath = path)
+        } else {
+            entry
+        }
+    }
+
+    @Volatile
+    private var avatarListenerRegistered = false
+
+    private fun registerAvatarListener() {
+        if (avatarListenerRegistered) return
+        avatarListenerRegistered = true
+        AvatarStore.addListener {
+            if (currentChatId == 0L) return@addListener
+            _state.value = _state.value.copy(
+                admins = _state.value.admins.map { withPhoto(it) }
+            )
+            publishMembers()
+        }
+    }
+
     /** Publish the member rows minus the administrators —
      *  they are pinned in their own section above. */
     private fun publishMembers() {
         val ids = synchronized(membersLock) { HashSet(adminIds) }
-        val rows = memberSnapshot().filter { it.userId !in ids }
+        val rows = memberSnapshot()
+            .filter { it.userId !in ids }
+            .map { withPhoto(it) }
         _state.value = _state.value.copy(members = rows)
     }
 
@@ -319,7 +351,7 @@ object MemberListStore {
                 MemberEntry(userId, nameByUser[userId] ?: "", status, kind)
             )
         }
-        if (!nameByUser.containsKey(userId)) fetchName(userId)
+        if (!nameByUser.containsKey(userId) || !AvatarStore.hasUser(userId)) fetchName(userId)
         return true
     }
 
@@ -331,6 +363,7 @@ object MemberListStore {
         TdRepository.sendRaw(query) { user ->
             nameFetchPending.remove(userId)
             if (TdClient.isError(user)) return@sendRaw
+            AvatarStore.noteUser(user)
             val name = listOf(
                 user.optString("first_name"), user.optString("last_name")
             ).filter { it.isNotEmpty() }.joinToString(" ")

@@ -22,6 +22,8 @@ object AccountStore {
 
     private fun labelKey(slot: Int) = "label_$slot"
 
+    private fun avatarKey(slot: Int) = "avatar_$slot"
+
     @Volatile
     private var appContext: Context? = null
 
@@ -34,6 +36,15 @@ object AccountStore {
     private val _labels = MutableStateFlow<Map<Int, String>>(emptyMap())
     val labels: StateFlow<Map<Int, String>> = _labels
 
+    /** Downloaded avatar file path per slot (v0.9.9, W0): the
+     *  account switcher can only show a non-current account's
+     *  photo from a path remembered while that account was the
+     *  running one — its TDLib client is not alive otherwise.
+     *  The path points into that slot's own files directory,
+     *  which persists across restarts. */
+    private val _avatars = MutableStateFlow<Map<Int, String>>(emptyMap())
+    val avatars: StateFlow<Map<Int, String>> = _avatars
+
     fun init(context: Context) {
         appContext = context.applicationContext
         val prefs = prefs()
@@ -42,6 +53,9 @@ object AccountStore {
         _slots.value = (0 until count).toList()
         _labels.value = _slots.value.mapNotNull { slot ->
             prefs.getString(labelKey(slot), null)?.let { slot to it }
+        }.toMap()
+        _avatars.value = _slots.value.mapNotNull { slot ->
+            prefs.getString(avatarKey(slot), null)?.let { slot to it }
         }.toMap()
     }
 
@@ -58,6 +72,15 @@ object AccountStore {
         prefs().edit().putString(labelKey(slot), label).apply()
         _labels.value = _labels.value + (slot to label)
     }
+
+    fun setAvatarPath(slot: Int, path: String) {
+        if (path.isEmpty()) return
+        if (_avatars.value[slot] == path) return
+        prefs().edit().putString(avatarKey(slot), path).apply()
+        _avatars.value = _avatars.value + (slot to path)
+    }
+
+    fun avatarPath(slot: Int): String? = _avatars.value[slot]
 
     /** Reserve a fresh slot; returns its index. The caller is
      *  expected to switch to it (which restarts the process into
