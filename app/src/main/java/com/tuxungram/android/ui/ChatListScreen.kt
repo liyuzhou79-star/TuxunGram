@@ -9,7 +9,12 @@ import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -432,33 +437,50 @@ fun ChatListScreen(
         // Folder tabs (B7 + editor): selecting one swaps the
         // list below to that folder's chats; long-press opens
         // the editor (rename / members / delete), and the
-        // trailing chip creates a new folder.
+        // trailing button creates a new folder. Since v0.9.19
+        // (Z3) these are the official text tabs — accent
+        // semibold label with an animated underline — not
+        // pills; the archive is not a tab (it has its own
+        // list-top row, Z1), as in the official client.
         var folderEditTarget by remember { mutableStateOf<Int?>(null) }
         var folderCreateOpen by remember { mutableStateOf(false) }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            FolderChip(
-                label = "全部",
-                selected = selectedFolder == null,
-                onClick = { ChatStore.selectFolder(null) }
-            )
-            for (folder in folders) {
-                FolderChip(
-                    label = folder.name.ifEmpty { "文件夹" },
-                    selected = selectedFolder == folder.id,
-                    onClick = { ChatStore.selectFolder(folder.id) },
-                    onLongClick = { folderEditTarget = folder.id }
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                FolderTab(
+                    label = "全部",
+                    selected = selectedFolder == null,
+                    onClick = { ChatStore.selectFolder(null) }
                 )
+                for (folder in folders) {
+                    FolderTab(
+                        label = folder.name.ifEmpty { "文件夹" },
+                        selected = selectedFolder == folder.id,
+                        onClick = { ChatStore.selectFolder(folder.id) },
+                        onLongClick = { folderEditTarget = folder.id }
+                    )
+                }
+                IconButton(
+                    onClick = { folderCreateOpen = true },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Add, contentDescription = "新建文件夹",
+                        tint = OfficialTheme.current().textSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
-            FolderChip(
-                label = "＋ 新建",
-                selected = false,
-                onClick = { folderCreateOpen = true }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(OfficialTheme.current().divider)
             )
         }
         if (folderCreateOpen) {
@@ -1538,26 +1560,24 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
     }
 }
 
-/** One folder tab in the chat-list header row. */
+/** One folder tab in the chat-list tab strip (v0.9.19,
+ *  Z3): the official text tab — secondary-gray label, accent
+ *  semibold when selected, and an accent underline that
+ *  grows in on selection (durations run through Motion, so
+ *  the system reduced-motion setting still wins). A
+ *  long-press opens the folder editor, as the old pill
+ *  chips did. Replaces FolderChip. */
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-fun FolderChip(
+fun FolderTab(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
-    Box(
+    val palette = OfficialTheme.current()
+    Column(
         modifier = Modifier
-            .padding(end = 8.dp)
-            .background(
-                if (selected) {
-                    androidx.compose.material3.MaterialTheme.colorScheme.primary
-                } else {
-                    Color(0xFFE8E8E8)
-                },
-                RoundedCornerShape(16.dp)
-            )
             .then(
                 if (onLongClick != null) {
                     Modifier.combinedClickable(
@@ -1568,24 +1588,41 @@ fun FolderChip(
                     Modifier.clickable { onClick() }
                 }
             )
-            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .padding(horizontal = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (label != "全部") {
-                Icon(
-                    FolderIcon, contentDescription = null,
-                    tint = if (selected) Color.White else Color(0xFF757575),
-                    modifier = Modifier.size(14.dp)
+        Text(
+            label,
+            color = if (selected) {
+                palette.accent
+            } else {
+                palette.textSecondary
+            },
+            fontSize = 15.sp,
+            fontWeight = if (selected) {
+                FontWeight.SemiBold
+            } else {
+                FontWeight.Normal
+            },
+            maxLines = 1,
+            modifier = Modifier.padding(vertical = 10.dp)
+        )
+        Box(modifier = Modifier.fillMaxWidth().height(3.dp)) {
+            AnimatedVisibility(
+                visible = selected,
+                enter = expandHorizontally(Motion.tween(200)) +
+                    fadeIn(Motion.tween(200)),
+                exit = shrinkHorizontally(Motion.tween(160)) +
+                    fadeOut(Motion.tween(160))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            palette.accent, RoundedCornerShape(2.dp)
+                        )
                 )
-                Spacer(Modifier.width(5.dp))
             }
-            Text(
-                label,
-                color = if (selected) Color.White else Color(0xFF424242),
-                fontSize = 13.sp,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                maxLines = 1
-            )
         }
     }
 }
