@@ -885,6 +885,11 @@ fun ChatScreen(
         val headerPalette = OfficialTheme.current()
         if (selecting) {
             // Selection-mode header (v0.7.0, F1): count + exit.
+            // Official action arrangement (v0.9.20, AA4): the
+            // forward and delete actions also sit in this bar
+            // as icons, running the exact handlers the bottom
+            // batch bar uses; the bottom bar itself stays.
+            val topSelected = messages.filter { it.id in selectedIds }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -904,6 +909,28 @@ fun ChatScreen(
                     fontSize = 17.sp,
                     fontWeight = FontWeight.SemiBold
                 )
+                Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        onForward(topSelected.sortedBy { it.id })
+                        selectedIds = emptySet()
+                    },
+                    enabled = topSelected.isNotEmpty()
+                ) {
+                    Icon(
+                        ForwardIcon, contentDescription = "转发所选",
+                        tint = headerPalette.actionBarIcon
+                    )
+                }
+                IconButton(
+                    onClick = { pendingDelete = topSelected },
+                    enabled = topSelected.isNotEmpty()
+                ) {
+                    Icon(
+                        Icons.Filled.Delete, contentDescription = "删除所选",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         } else {
         Row(
@@ -4222,70 +4249,54 @@ fun MessageBubble(
                 }
                 TranslationArea(chatId, msg)
             }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    leadingIcon = {
-                        Icon(ReplyIcon, contentDescription = null, modifier = Modifier.size(20.dp))
-                    },
-                    text = { Text("回复") },
-                    onClick = {
+            // Official floating menu (v0.9.20, AA4): the
+            // Material dropdown became a popup card anchored
+            // to this bubble, with the quick reactions as a
+            // strip on top (the set the reaction dialog
+            // offered). Every entry below is the same action
+            // the dropdown item ran, same order, same
+            // conditions.
+            val pickerEmojis = MessageStore.COMMON_REACTIONS.filter {
+                allowedReactions == null || it in allowedReactions
+            }
+            OfficialMessageMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                anchorOnRight = outgoing,
+                reactions = pickerEmojis,
+                onReaction = { emoji ->
+                    menuOpen = false
+                    MessageStore.toggleReaction(msg, emoji)
+                },
+                entries = buildList {
+                    add(MessageMenuEntry(ReplyIcon, "回复") {
                         menuOpen = false
                         MessageStore.setReplyTarget(msg)
-                    }
-                )
-                if (msg.text.isNotEmpty()) {
-                    // Quote reply (v0.9.15, V2): the reply
-                    // carries the message's text as a quote
-                    // (inputTextQuote), not just a pointer.
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(QuoteIcon, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text("引用回复") },
-                        onClick = {
+                    })
+                    if (msg.text.isNotEmpty()) {
+                        // Quote reply (v0.9.15, V2).
+                        add(MessageMenuEntry(QuoteIcon, "引用回复") {
                             menuOpen = false
                             MessageStore.setReplyTarget(
                                 msg, quote = true
                             )
-                        }
-                    )
-                }
-                if (canComment) {
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(Icons.Filled.List, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text("评论") },
-                        onClick = {
+                        })
+                    }
+                    if (canComment) {
+                        add(MessageMenuEntry(Icons.Filled.List, "评论") {
                             menuOpen = false
                             onOpenThread(msg)
-                        }
-                    )
-                }
-                if (msg.text.isNotEmpty()) {
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(CopyIcon, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text("复制") },
-                        onClick = {
+                        })
+                    }
+                    if (msg.text.isNotEmpty()) {
+                        add(MessageMenuEntry(CopyIcon, "复制") {
                             menuOpen = false
                             clipboard.setText(AnnotatedString(msg.text))
-                        }
-                    )
-                }
-                if (msg.sendingState.isEmpty()) {
-                    // Copy message link (v0.9.15, V1): the
-                    // store asks TDLib for the link; public
-                    // chats/channels get a t.me link on the
-                    // clipboard, everywhere else the answer is
-                    // a plain sentence, never a raw error.
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(LinkIcon, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text("复制链接") },
-                        onClick = {
+                        })
+                    }
+                    if (msg.sendingState.isEmpty()) {
+                        // Copy message link (v0.9.15, V1).
+                        add(MessageMenuEntry(LinkIcon, "复制链接") {
                             menuOpen = false
                             MessageStore.fetchMessageLink(
                                 msg,
@@ -4305,96 +4316,66 @@ fun MessageBubble(
                                     ).show()
                                 }
                             )
-                        }
-                    )
-                }
-                if (msg.text.isNotEmpty() && msg.sendingState.isEmpty()) {
-                    // Translate (v0.9.5, O4): the result lands
-                    // under the bubble via TranslationArea.
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(GlobeIcon, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text("翻译") },
-                        onClick = {
+                        })
+                    }
+                    if (msg.text.isNotEmpty() &&
+                        msg.sendingState.isEmpty()
+                    ) {
+                        // Translate (v0.9.5, O4).
+                        add(MessageMenuEntry(GlobeIcon, "翻译") {
                             menuOpen = false
                             MessageStore.clearTranslateError()
                             MessageStore.translateMessage(chatId, msg)
-                        }
-                    )
-                }
-                if (outgoing && msg.kind == MsgKind.TEXT && msg.sendingState.isEmpty()) {
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text("编辑") },
-                        onClick = {
+                        })
+                    }
+                    if (outgoing && msg.kind == MsgKind.TEXT &&
+                        msg.sendingState.isEmpty()
+                    ) {
+                        add(MessageMenuEntry(Icons.Filled.Edit, "编辑") {
                             menuOpen = false
                             editOpen = true
-                        }
-                    )
-                }
-                // Channels commonly restrict reactions to a
-                // short admin-picked list, or turn them off
-                // entirely; with an empty allowed list the entry
-                // is not shown at all.
-                if (allowedReactions == null || allowedReactions.isNotEmpty()) {
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(Icons.Filled.Face, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text("添加回应") },
-                        onClick = {
+                        })
+                    }
+                    // Restricted-reaction chats whose allowed
+                    // list contains none of the quick set: the
+                    // strip is empty, so the dialog entry stays
+                    // (it explains the restriction, as before).
+                    // A fully closed list shows neither, also
+                    // as before.
+                    if (pickerEmojis.isEmpty() &&
+                        !allowedReactions.isNullOrEmpty()
+                    ) {
+                        add(MessageMenuEntry(Icons.Filled.Face, "添加回应") {
                             menuOpen = false
                             reactionOpen = true
-                        }
-                    )
-                }
-                if (msg.kind == MsgKind.VIDEO && msg.filePath != null) {
-                    // The system player stays available here now
-                    // that a tap opens the in-app player (J3).
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text("用其他播放器打开") },
-                        onClick = {
+                        })
+                    }
+                    if (msg.kind == MsgKind.VIDEO &&
+                        msg.filePath != null
+                    ) {
+                        add(MessageMenuEntry(
+                            Icons.Filled.PlayArrow, "用其他播放器打开"
+                        ) {
                             menuOpen = false
                             openFileWithSystem(
                                 context, msg.filePath!!, msg.fileMime
                             )
-                        }
-                    )
-                }
-                if (canGetViewers) {
-                    // Read-by list (v0.9.13, T1): who in this
-                    // group/channel has seen my message. The
-                    // server refuses where it cannot answer
-                    // (too old, privacy); ViewersStore turns
-                    // that into a plain sentence in the dialog.
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(EyeIcon, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text("谁看过") },
-                        onClick = {
+                        })
+                    }
+                    if (canGetViewers) {
+                        // Read-by list (v0.9.13, T1).
+                        add(MessageMenuEntry(EyeIcon, "谁看过") {
                             menuOpen = false
                             viewersOpen = true
                             ViewersStore.load(chatId, msg.id)
-                        }
-                    )
-                }
-                if (msg.sendingState.isEmpty()) {
-                    // Pin / unpin (v0.9.4, N3). The server
-                    // refuses without rights; the store turns
-                    // that into a plain sentence.
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(PinIcon, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        text = { Text(if (msg.isPinned) "取消置顶" else "置顶") },
-                        onClick = {
+                        })
+                    }
+                    if (msg.sendingState.isEmpty()) {
+                        // Pin / unpin (v0.9.4, N3).
+                        add(MessageMenuEntry(
+                            PinIcon,
+                            if (msg.isPinned) "取消置顶" else "置顶"
+                        ) {
                             menuOpen = false
                             MessageStore.clearSendError()
                             if (msg.isPinned) {
@@ -4402,40 +4383,26 @@ fun MessageBubble(
                             } else {
                                 MessageStore.pinMessage(msg)
                             }
-                        }
-                    )
-                }
-                DropdownMenuItem(
-                    leadingIcon = {
-                        Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
-                    },
-                    text = { Text("多选") },
-                    onClick = {
+                        })
+                    }
+                    add(MessageMenuEntry(
+                        Icons.Filled.CheckCircle, "多选"
+                    ) {
                         menuOpen = false
                         onEnterSelection(msg)
-                    }
-                )
-                DropdownMenuItem(
-                    leadingIcon = {
-                        Icon(ForwardIcon, contentDescription = null, modifier = Modifier.size(20.dp))
-                    },
-                    text = { Text("转发") },
-                    onClick = {
+                    })
+                    add(MessageMenuEntry(ForwardIcon, "转发") {
                         menuOpen = false
                         onForward(listOf(msg))
-                    }
-                )
-                DropdownMenuItem(
-                    leadingIcon = {
-                        Icon(Icons.Filled.Delete, contentDescription = null, tint = Color(0xFFC62828), modifier = Modifier.size(20.dp))
-                    },
-                    text = { Text("删除", color = Color(0xFFC62828)) },
-                    onClick = {
+                    })
+                    add(MessageMenuEntry(
+                        Icons.Filled.Delete, "删除", danger = true
+                    ) {
                         menuOpen = false
                         deleteOpen = true
-                    }
-                )
-            }
+                    })
+                }
+            )
         }
     }
     }

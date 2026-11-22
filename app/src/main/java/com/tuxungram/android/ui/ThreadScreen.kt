@@ -32,6 +32,8 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -435,57 +437,57 @@ fun SimpleMessageBubble(
                 }
                 TranslationArea(chatId, msg)
             }
-            DropdownMenu(
+            // Official floating menu (v0.9.20, AA4): same
+            // shared component as the main chat, this
+            // bubble's own entry set, no reaction strip.
+            OfficialMessageMenu(
                 expanded = menuOpen,
-                onDismissRequest = { menuOpen = false }
-            ) {
-                DropdownMenuItem(
-                    text = { Text("回复") },
-                    onClick = {
+                onDismissRequest = { menuOpen = false },
+                anchorOnRight = outgoing,
+                entries = buildList {
+                    add(MessageMenuEntry(ReplyIcon, "回复") {
                         menuOpen = false
                         onReply(msg)
-                    }
-                )
-                if (msg.text.isNotEmpty()) {
-                    DropdownMenuItem(
-                        text = { Text("复制") },
-                        onClick = {
+                    })
+                    if (msg.text.isNotEmpty()) {
+                        add(MessageMenuEntry(CopyIcon, "复制") {
                             menuOpen = false
-                            clipboard.setText(AnnotatedString(msg.text))
-                        }
-                    )
-                }
-                if (msg.text.isNotEmpty() && msg.sendingState.isEmpty()) {
-                    // Translate (v0.9.5, O4): same shared
-                    // MessageStore path as the main chat.
-                    DropdownMenuItem(
-                        text = { Text("翻译") },
-                        onClick = {
+                            clipboard.setText(
+                                AnnotatedString(msg.text)
+                            )
+                        })
+                    }
+                    if (msg.text.isNotEmpty() &&
+                        msg.sendingState.isEmpty()
+                    ) {
+                        // Translate (v0.9.5, O4): same shared
+                        // MessageStore path as the main chat.
+                        add(MessageMenuEntry(GlobeIcon, "翻译") {
                             menuOpen = false
                             MessageStore.clearTranslateError()
                             MessageStore.translateMessage(chatId, msg)
-                        }
-                    )
-                }
-                if (msg.kind == MsgKind.VIDEO && msg.filePath != null) {
-                    DropdownMenuItem(
-                        text = { Text("用其他播放器打开") },
-                        onClick = {
+                        })
+                    }
+                    if (msg.kind == MsgKind.VIDEO &&
+                        msg.filePath != null
+                    ) {
+                        add(MessageMenuEntry(
+                            Icons.Filled.PlayArrow, "用其他播放器打开"
+                        ) {
                             menuOpen = false
                             openFileWithSystem(
                                 context, msg.filePath!!, msg.fileMime
                             )
-                        }
-                    )
-                }
-                DropdownMenuItem(
-                    text = { Text("删除", color = Color(0xFFC62828)) },
-                    onClick = {
+                        })
+                    }
+                    add(MessageMenuEntry(
+                        Icons.Filled.Delete, "删除", danger = true
+                    ) {
                         menuOpen = false
                         deleteOpen = true
-                    }
-                )
-            }
+                    })
+                }
+            )
         }
     }
     if (deleteOpen) {
