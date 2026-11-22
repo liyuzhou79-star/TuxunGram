@@ -326,6 +326,28 @@ object ThreadStore {
         }
     }
 
+    /** Re-send a failed comment (v0.9.31, X5): the thread
+     *  bubble showed 发送失败 with no retry path — the main
+     *  chat has had MessageStore.resend since v0.9.9, this
+     *  store never grew its own. Same resendMessages shape,
+     *  against the discussion group's chat id; success lands
+     *  through this store's updateMessageSendSucceeded. */
+    fun resend(item: MsgItem) {
+        val chatId = threadChatId
+        if (chatId == 0L || item.id == 0L) return
+        val query = TdClient.request("resendMessages").apply {
+            put("chat_id", chatId)
+            put("message_ids", JSONArray().put(item.id))
+            put("quote", JSONObject.NULL)
+            put("paid_message_star_count", 0)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _error.value = "重发失败，再试一次。"
+            }
+        }
+    }
+
     fun deleteMessage(item: MsgItem) {
         val chatId = threadChatId
         if (chatId == 0L) return

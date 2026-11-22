@@ -685,6 +685,7 @@ fun ForumTopicView(
                         onToggleChecklistTask = { m, task ->
                             ForumStore.markChecklistTask(m, task)
                         },
+                        onResend = { ForumStore.resend(it) },
                         showTail = msg.id in tailIds
                     )
                 }

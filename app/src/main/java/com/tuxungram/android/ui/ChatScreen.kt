@@ -4329,9 +4329,16 @@ fun MediaTimeCapsule(msg: MsgItem, modifier: Modifier = Modifier) {
             }
         }
         when (msg.sendingState) {
-            "pending" -> Text(
-                " 发送中…", color = Color.White, fontSize = 11.sp
-            )
+            "pending" -> {
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    ClockIcon, contentDescription = null,
+                    tint = Color.White, modifier = Modifier.size(11.dp)
+                )
+                Text(
+                    " 发送中…", color = Color.White, fontSize = 11.sp
+                )
+            }
             "failed" -> Text(
                 " 发送失败", color = Color(0xFFFF8A80),
                 fontSize = 11.sp
@@ -4904,17 +4911,34 @@ fun MessageBubble(
                         }
                     }
                     when (msg.sendingState) {
-                        "pending" -> Text(
-                            "  发送中…",
-                            // Footer palette (v0.9.18, Y5): the
-                            // pending note takes the time color.
-                            color = if (outgoing) {
-                                palette.outTime
-                            } else {
-                                palette.inTime
-                            },
-                            fontSize = 11.sp
-                        )
+                        // Pending gets the clock glyph the
+                        // official client stamps on unsent
+                        // messages (v0.9.31, X5); the failed
+                        // flag stays red and tappable.
+                        "pending" -> {
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                ClockIcon, contentDescription = null,
+                                tint = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                " 发送中…",
+                                // Footer palette (v0.9.18, Y5):
+                                // the pending note takes the
+                                // time color.
+                                color = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                fontSize = 11.sp
+                            )
+                        }
                         "failed" -> Text(
                             "  发送失败，点这里重发",
                             color = Color(0xFFC62828),

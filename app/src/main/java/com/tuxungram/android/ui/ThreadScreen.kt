@@ -130,6 +130,10 @@ fun SimpleMessageBubble(
     // chat id; the default keeps any other caller read-only.
     onToggleChecklistTask: (MsgItem, ChecklistTaskUi) -> Unit =
         { _, _ -> },
+    // Failed-send retry (v0.9.31, X5): the hosting store
+    // resends against its own chat id. The default keeps any
+    // other caller read-only, like the checklist toggle.
+    onResend: (MsgItem) -> Unit = {},
     // Grouped-run tail (v0.9.18, Y3): the caller marks the
     // last message of a same-sender run; its own-side bottom
     // corner shrinks to the tail radius, like the main chat.
@@ -454,20 +458,40 @@ fun SimpleMessageBubble(
                         fontSize = 11.sp
                     )
                     when (msg.sendingState) {
-                        "pending" -> Text(
-                            "  发送中…",
-                            // Footer palette (v0.9.18, Y5).
-                            color = if (outgoing) {
-                                palette.outTime
-                            } else {
-                                palette.inTime
-                            },
-                            fontSize = 11.sp
-                        )
+                        // Sending state (v0.9.31, X5): the
+                        // pending state gets the clock glyph
+                        // the official client uses, and a
+                        // failed send is tappable to resend —
+                        // before this version the red flag here
+                        // was display-only.
+                        "pending" -> {
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                ClockIcon, contentDescription = null,
+                                tint = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                " 发送中…",
+                                color = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                fontSize = 11.sp
+                            )
+                        }
                         "failed" -> Text(
-                            "  发送失败",
+                            "  发送失败，点这里重发",
                             color = Color(0xFFC62828),
-                            fontSize = 11.sp
+                            fontSize = 11.sp,
+                            modifier = Modifier.clickable {
+                                onResend(msg)
+                            }
                         )
                     }
                 }
@@ -963,6 +987,7 @@ fun ThreadScreen(
                         onToggleChecklistTask = { m, task ->
                             ThreadStore.markChecklistTask(m, task)
                         },
+                        onResend = { ThreadStore.resend(it) },
                         showTail = msg.id in tailIds
                     )
                 }
