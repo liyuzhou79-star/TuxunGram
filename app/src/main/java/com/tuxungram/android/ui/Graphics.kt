@@ -199,14 +199,19 @@ fun GroupCard(content: @Composable () -> Unit) {
     }
 }
 
-/** One icon-led row: the icon sits in a coloured rounded
- *  tile (v0.9.11, A2 — the Nekogram preference-row look),
- *  then title, optional gray subtitle, optional trailing
- *  content (current value, switch, chevron). The whole row
- *  is tappable when [onClick] is set. [tileColor] pins the
- *  tile colour; an explicit [iconTint] from older call sites
- *  is honoured as the tile colour; otherwise the colour is
- *  picked stably from the title. */
+/** One icon-led row. Two renderings share this call shape:
+ *  under the official preset (v0.9.20, AA1) the row is the
+ *  official settings row — the icon is a bare outline glyph
+ *  in the secondary text colour, no coloured tile (the
+ *  official settings list carries no icon chips); under the
+ *  custom accent mode it keeps the coloured rounded tile
+ *  (v0.9.11, A2 — the Nekogram preference-row look).
+ *  [tileColor] pins the tile colour in the custom rendering;
+ *  an explicit [iconTint] from older call sites is honoured
+ *  as the tile colour there and as the glyph colour in the
+ *  official rendering; otherwise the tile colour is picked
+ *  stably from the title. [danger] paints the title (and the
+ *  official-mode glyph) in the error colour. */
 @Composable
 fun IconRow(
     icon: ImageVector,
@@ -215,21 +220,63 @@ fun IconRow(
     iconTint: Color? = null,
     tileColor: Color? = null,
     onClick: (() -> Unit)? = null,
+    danger: Boolean = false,
     trailing: @Composable (() -> Unit)? = null
 ) {
+    val accentMode by UiSettings.accentMode.collectAsState()
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .then(
+            if (onClick != null) {
+                Modifier.clickable { onClick() }
+            } else {
+                Modifier
+            }
+        )
+        .padding(vertical = 10.dp)
+    if (accentMode == UiSettings.ACCENT_OFFICIAL) {
+        val palette = OfficialTheme.current()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = rowModifier
+        ) {
+            Icon(
+                icon, contentDescription = null,
+                tint = if (danger) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    iconTint ?: palette.textSecondary
+                },
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title, fontSize = 15.sp,
+                    color = if (danger) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        palette.textPrimary
+                    }
+                )
+                if (subtitle != null) {
+                    Text(
+                        subtitle,
+                        color = palette.textSecondary,
+                        fontSize = 12.5.sp
+                    )
+                }
+            }
+            if (trailing != null) {
+                trailing()
+            }
+        }
+        return
+    }
     val tile = tileColor ?: iconTint ?: tileColorFor(title)
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (onClick != null) {
-                    Modifier.clickable { onClick() }
-                } else {
-                    Modifier
-                }
-            )
-            .padding(vertical = 10.dp)
+        modifier = rowModifier
     ) {
         Box(
             modifier = Modifier
@@ -246,13 +293,139 @@ fun IconRow(
         }
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 15.sp)
+            Text(
+                title, fontSize = 15.sp,
+                color = if (danger) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    Color.Unspecified
+                }
+            )
             if (subtitle != null) {
                 Text(subtitle, color = Color.Gray, fontSize = 12.5.sp)
             }
         }
         if (trailing != null) {
             trailing()
+        }
+    }
+}
+
+/** Official settings section header (v0.9.20, AA1): the
+ *  small accent label that sits on the page's gray band
+ *  above a settings group — no icon, no tile (the official
+ *  settings page heads its sections with a plain coloured
+ *  caption). Under the custom accent mode the same slot
+ *  renders as a plain bold caption in the theme's primary. */
+@Composable
+fun SettingsSectionHeader(text: String) {
+    val accentMode by UiSettings.accentMode.collectAsState()
+    Text(
+        text,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = if (accentMode == UiSettings.ACCENT_OFFICIAL) {
+            OfficialTheme.current().accentText
+        } else {
+            MaterialTheme.colorScheme.primary
+        },
+        modifier = Modifier.padding(
+            start = 16.dp, end = 16.dp, top = 18.dp, bottom = 6.dp
+        )
+    )
+}
+
+/** Official settings group (v0.9.20, AA1): under the
+ *  official preset a full-bleed white block on the page's
+ *  graySection band — square corners, content padded 16 dp,
+ *  rows inside separated by [SettingsDivider] hairlines.
+ *  Under the custom accent mode it delegates to the older
+ *  rounded [GroupCard] so the custom look keeps its cards. */
+@Composable
+fun SettingsGroup(content: @Composable () -> Unit) {
+    val accentMode by UiSettings.accentMode.collectAsState()
+    if (accentMode == UiSettings.ACCENT_OFFICIAL) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(OfficialTheme.current().windowBg)
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+        ) {
+            content()
+        }
+    } else {
+        Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+            GroupCard(content)
+        }
+    }
+}
+
+/** Hairline between two rows inside a settings group
+ *  (v0.9.20, AA1): the official divider colour under the
+ *  official preset, the Material outline elsewhere. */
+@Composable
+fun SettingsDivider() {
+    val accentMode by UiSettings.accentMode.collectAsState()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(0.5.dp)
+            .background(
+                if (accentMode == UiSettings.ACCENT_OFFICIAL) {
+                    OfficialTheme.current().divider
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                }
+            )
+    )
+}
+
+/** Profile info row (v0.9.20, AA2): the official profile
+ *  info layout — an outline icon, then the label in small
+ *  secondary text ABOVE the value (phone / username / bio
+ *  on a profile page). Tappable when [onClick] is set. */
+@Composable
+fun ProfileInfoRow(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    valueAccent: Boolean = false,
+    onClick: (() -> Unit)? = null
+) {
+    val palette = OfficialTheme.current()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable { onClick() }
+                } else {
+                    Modifier
+                }
+            )
+            .padding(horizontal = 16.dp, vertical = 9.dp)
+    ) {
+        Icon(
+            icon, contentDescription = null,
+            tint = palette.textSecondary,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                value, fontSize = 15.sp,
+                color = if (valueAccent) {
+                    palette.accentText
+                } else {
+                    palette.textPrimary
+                }
+            )
+            Text(
+                label,
+                color = palette.textSecondary,
+                fontSize = 12.5.sp
+            )
         }
     }
 }

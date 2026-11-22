@@ -384,36 +384,86 @@ fun SettingsScreen(
     }
 
     val settingsScroll = rememberScrollState()
-    // Page band (v0.9.17, X7): under the official preset the
-    // settings page sits on the official graySection band
-    // and the GroupCards carry the window background.
+    // Official single-column layout (v0.9.20, AA1): the
+    // page is a gray band (official graySection under the
+    // official preset, the Material surface variant under
+    // the custom accent mode); sections are full-bleed
+    // white groups (SettingsGroup) headed by plain accent
+    // captions (SettingsSectionHeader) — the Nekogram-style
+    // floating cards are gone from this page.
     val settingsAccentMode by UiSettings.accentMode.collectAsState()
+    val settingsOfficial =
+        settingsAccentMode == UiSettings.ACCENT_OFFICIAL
+    val settingsPalette = OfficialTheme.current()
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .then(
-                if (settingsAccentMode == UiSettings.ACCENT_OFFICIAL) {
-                    Modifier.background(
-                        OfficialTheme.current().graySection
-                    )
+            .background(
+                if (settingsOfficial) {
+                    settingsPalette.graySection
                 } else {
-                    Modifier
+                    MaterialTheme.colorScheme.surfaceVariant
                 }
             )
             .columnScrollbar(settingsScroll)
             .verticalScroll(settingsScroll)
-            .padding(16.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("返回") }
-            Text("设置", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        // Action-bar header row: back arrow + title on the
+        // bar background, hairline underneath.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    if (settingsOfficial) {
+                        settingsPalette.actionBarBg
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    }
+                )
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = if (settingsOfficial) {
+                        settingsPalette.actionBarIcon
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    }
+                )
+            }
+            Text(
+                "设置",
+                fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
+                color = if (settingsOfficial) {
+                    settingsPalette.actionBarTitle
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+            )
         }
-        // Personal card (v0.9.3, M1): my avatar + name +
-        // @username; tapping opens the edit-profile page.
-        // Everything renders from MeStore, so an edit shows
-        // here the moment it lands.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(
+                    if (settingsOfficial) {
+                        settingsPalette.divider
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant
+                    }
+                )
+        )
+        // Account header (v0.9.3, M1; official form in
+        // v0.9.20, AA1): big avatar + name + phone +
+        // @username at the top of the page, the way the
+        // official settings screen opens; tapping opens the
+        // edit-profile page. Everything renders from
+        // MeStore, so an edit shows here the moment it lands.
         val me by MeStore.me.collectAsState()
-        GroupCard {
+        SettingsGroup {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -422,38 +472,72 @@ fun SettingsScreen(
                 .padding(vertical = 10.dp)
         ) {
             if (me.photoPath != null) {
-                AvatarImage(path = me.photoPath!!, sizeDp = 52)
+                AvatarImage(path = me.photoPath!!, sizeDp = 66)
             } else {
+                val pair = OfficialTheme.avatarColors(
+                    me.id, OfficialTheme.dark
+                )
                 Box(
                     modifier = Modifier
-                        .size(52.dp)
-                        .background(Color(0xFF90CAF9), CircleShape),
+                        .size(66.dp)
+                        .background(
+                            androidx.compose.ui.graphics.Brush
+                                .verticalGradient(
+                                    listOf(pair.first, pair.second)
+                                ),
+                            CircleShape
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         me.displayName.trim().firstOrNull()?.toString() ?: "?",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
+                        fontSize = 26.sp
                     )
                 }
             }
             Column(modifier = Modifier
                 .weight(1f)
-                .padding(start = 12.dp)) {
+                .padding(start = 14.dp)) {
                 Text(
                     me.displayName.ifEmpty { "我的资料" },
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (settingsOfficial) {
+                        settingsPalette.textPrimary
+                    } else {
+                        Color.Unspecified
+                    }
                 )
-                Text(
-                    when {
-                        me.username.isNotEmpty() -> "@${me.username}"
-                        me.phone.isNotEmpty() -> me.phone
-                        else -> "点这里编辑资料"
-                    },
-                    color = Color.Gray, fontSize = 13.sp
-                )
+                if (me.phone.isNotEmpty()) {
+                    Text(
+                        "+${me.phone}",
+                        color = if (settingsOfficial) {
+                            settingsPalette.textSecondary
+                        } else {
+                            Color.Gray
+                        },
+                        fontSize = 14.sp
+                    )
+                }
+                if (me.username.isNotEmpty()) {
+                    Text(
+                        "@${me.username}",
+                        color = if (settingsOfficial) {
+                            settingsPalette.accentText
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        fontSize = 14.sp
+                    )
+                }
+                if (me.phone.isEmpty() && me.username.isEmpty()) {
+                    Text(
+                        "点这里编辑资料",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                }
             }
             Icon(
                 Icons.Filled.KeyboardArrowRight,
@@ -463,9 +547,8 @@ fun SettingsScreen(
             )
         }
         }
-        Spacer(Modifier.height(8.dp))
-        SectionTitle(GlobeIcon, "代理")
-        GroupCard {
+        SettingsSectionHeader("代理")
+        SettingsGroup {
         Spacer(Modifier.height(4.dp))
         Text(
             "连不上 Telegram 时用。可以存多个代理，点哪个就用哪个，立刻生效，下次打开 App 也会自动用上次那个，不用再靠全局 VPN。",
@@ -478,7 +561,8 @@ fun SettingsScreen(
                 color = Color.Gray, fontSize = 13.sp
             )
         }
-        for (entry in proxyEntries) {
+        for ((entryIndex, entry) in proxyEntries.withIndex()) {
+            if (entryIndex > 0) SettingsDivider()
             val isActive = entry.id == activeProxyId
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -550,19 +634,22 @@ fun SettingsScreen(
                 }
             }
         }
-        Row {
-            Button(onClick = {
+        SettingsDivider()
+        IconRow(
+            icon = Icons.Filled.Add,
+            title = "添加代理",
+            onClick = {
                 proxyEditor = null
                 proxyEditorOpen = true
-            }) {
-                Text("添加代理")
             }
-            if (activeProxyId != 0L) {
-                Spacer(Modifier.width(10.dp))
-                TextButton(onClick = { ProxyStore.disableActive() }) {
-                    Text("停用代理（直连）")
-                }
-            }
+        )
+        if (activeProxyId != 0L) {
+            SettingsDivider()
+            IconRow(
+                icon = GlobeIcon,
+                title = "停用代理（直连）",
+                onClick = { ProxyStore.disableActive() }
+            )
         }
         // Auto-failover (v0.9.14, U6): off by default. The
         // probe runs once when the app starts and when a
@@ -802,9 +889,8 @@ fun SettingsScreen(
             )
         }
         }
-        Spacer(Modifier.height(28.dp))
-        SectionTitle(Icons.Filled.List, "显示")
-        GroupCard {
+        SettingsSectionHeader("显示")
+        SettingsGroup {
         Spacer(Modifier.height(4.dp))
         Text(
             "未读数上限：对话很多时，角标数字太长不好看。超过上限就显示成「上限+」。",
@@ -822,9 +908,8 @@ fun SettingsScreen(
             }
         }
         }
-        Spacer(Modifier.height(28.dp))
-        SectionTitle(PaletteIcon, "外观")
-        GroupCard {
+        SettingsSectionHeader("外观")
+        SettingsGroup {
         Spacer(Modifier.height(4.dp))
         Text(
             "深浅模式和主题色，选完立刻生效，不用重启。",
@@ -1062,9 +1147,8 @@ fun SettingsScreen(
             )
         }
         }
-        Spacer(Modifier.height(28.dp))
-        SectionTitle(Icons.Filled.AccountCircle, "账号")
-        GroupCard {
+        SettingsSectionHeader("账号")
+        SettingsGroup {
         Spacer(Modifier.height(4.dp))
         Text(
             "可以登录多个 Telegram 账号，每个账号的数据各自独立。其他账号会保持在线：来了新消息会带着账号名通知你，每个账号的未读数显示在这一行右边。切换账号时 App 会自动重启一下，稍等片刻就好。",
@@ -1080,7 +1164,8 @@ fun SettingsScreen(
         // total is the live sum over its chat list.
         val bgUnread by BackgroundAccounts.unreadBySlot.collectAsState()
         val fgChats by ChatStore.chats.collectAsState()
-        for (slot in accountSlots) {
+        for ((slotIndex, slot) in accountSlots.withIndex()) {
+            if (slotIndex > 0) SettingsDivider()
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -1109,10 +1194,22 @@ fun SettingsScreen(
                 if (slotPath != null) {
                     AvatarImage(path = slotPath, sizeDp = 40)
                 } else {
+                    val slotPair = OfficialTheme.avatarColors(
+                        slot.toLong() + 1, OfficialTheme.dark
+                    )
                     Box(
                         modifier = Modifier
                             .size(40.dp)
-                            .background(Color(0xFF90CAF9), CircleShape),
+                            .background(
+                                androidx.compose.ui.graphics.Brush
+                                    .verticalGradient(
+                                        listOf(
+                                            slotPair.first,
+                                            slotPair.second
+                                        )
+                                    ),
+                                CircleShape
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -1158,13 +1255,15 @@ fun SettingsScreen(
                 }
             }
         }
-        TextButton(onClick = { TdRepository.addAccount() }) {
-            Text("添加账号")
+        SettingsDivider()
+        IconRow(
+            icon = Icons.Filled.Add,
+            title = "添加账号",
+            onClick = { TdRepository.addAccount() }
+        )
         }
-        }
-        Spacer(Modifier.height(28.dp))
-        SectionTitle(Icons.Filled.Lock, "安全")
-        GroupCard {
+        SettingsSectionHeader("安全")
+        SettingsGroup {
         Spacer(Modifier.height(4.dp))
         Text(
             "应用锁：设一个 4-6 位数字密码，打开 App 和切回来时要先解锁。密码只存哈希，不存明文，Telegram 那边也看不到。",
@@ -1176,28 +1275,24 @@ fun SettingsScreen(
         var pinDialog by remember { mutableStateOf<String?>(null) }
         var lockNotice by remember { mutableStateOf<String?>(null) }
         if (!pinSet) {
-            Button(
-                onClick = { pinDialog = "set" },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp)
-            ) {
-                Icon(
-                    Icons.Filled.Lock, contentDescription = null,
-                    modifier = Modifier.size(19.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("设置应用锁密码")
-            }
+            IconRow(
+                icon = Icons.Filled.Lock,
+                title = "设置应用锁密码",
+                onClick = { pinDialog = "set" }
+            )
         } else {
-            Row(modifier = Modifier.padding(top = 6.dp)) {
-                TextButton(onClick = { pinDialog = "change" }) {
-                    Text("修改密码")
-                }
-                TextButton(onClick = { pinDialog = "clear" }) {
-                    Text("关闭应用锁", color = Color(0xFFC62828))
-                }
-            }
+            IconRow(
+                icon = Icons.Filled.Lock,
+                title = "修改密码",
+                onClick = { pinDialog = "change" }
+            )
+            SettingsDivider()
+            IconRow(
+                icon = Icons.Filled.Lock,
+                title = "关闭应用锁",
+                danger = true,
+                onClick = { pinDialog = "clear" }
+            )
             val biometricOk = remember {
                 AppLock.biometricAvailable(settingsContext)
             }
@@ -1249,7 +1344,7 @@ fun SettingsScreen(
                 modifier = Modifier.padding(top = 6.dp)
             )
         }
-        Spacer(Modifier.height(10.dp))
+        SettingsDivider()
         IconRow(
             icon = Icons.Filled.Phone,
             title = "已登录设备（会话管理）",
@@ -1263,9 +1358,9 @@ fun SettingsScreen(
                 )
             }
         )
+        SettingsDivider()
         TwoFactorSection()
-        PrivacySection()
-        Spacer(Modifier.height(10.dp))
+        SettingsDivider()
         IconRow(
             icon = BlockIcon,
             title = "已拉黑名单",
@@ -1400,9 +1495,16 @@ fun SettingsScreen(
             )
         }
         }
-        Spacer(Modifier.height(28.dp))
-        SectionTitle(Icons.Filled.Notifications, "通知")
-        GroupCard {
+        // Privacy is its own section now (v0.9.20, AA1):
+        // it used to live inside the 安全 card; the entries
+        // are unchanged, only the grouping follows the
+        // official page (privacy has its own section there).
+        SettingsSectionHeader("隐私")
+        SettingsGroup {
+            PrivacySection()
+        }
+        SettingsSectionHeader("通知")
+        SettingsGroup {
         Spacer(Modifier.height(4.dp))
         Text(
             "打开后，App 切到后台也会留一个服务继续收消息，有新消息就弹通知，点通知直接进对话。",
@@ -1434,8 +1536,8 @@ fun SettingsScreen(
             color = Color.Gray, fontSize = 13.sp
         )
         }
-        Spacer(Modifier.height(16.dp))
-        GroupCard {
+        Spacer(Modifier.height(14.dp))
+        SettingsGroup {
         Spacer(Modifier.height(4.dp))
         Text(
             "按类别同步的通知偏好（与服务器同步）",
@@ -1458,12 +1560,17 @@ fun SettingsScreen(
                 modifier = Modifier.padding(top = 6.dp)
             )
         }
-        for ((scopeType, scopeLabel) in listOf(
+        for ((scopeIndex, scopePair) in listOf(
             ScopeNotifyStore.SCOPE_PRIVATE to "私聊",
             ScopeNotifyStore.SCOPE_GROUPS to "群组",
             ScopeNotifyStore.SCOPE_CHANNELS to "频道"
-        )) {
+        ).withIndex()) {
+            val (scopeType, scopeLabel) = scopePair
             val st = scopeStates[scopeType]
+            if (scopeIndex > 0) {
+                Spacer(Modifier.height(10.dp))
+                SettingsDivider()
+            }
             Spacer(Modifier.height(14.dp))
             Text(
                 scopeLabel, fontSize = 14.sp,
@@ -1491,31 +1598,28 @@ fun SettingsScreen(
             }
         }
         }
-        Spacer(Modifier.height(28.dp))
-        SectionTitle(Icons.Filled.Face, "贴纸包")
-        GroupCard {
+        SettingsSectionHeader("贴纸包")
+        SettingsGroup {
         Spacer(Modifier.height(4.dp))
         Text(
             "查看已装的贴纸包、移除不用的，或者用链接添加新的。",
             color = Color.Gray, fontSize = 13.sp
         )
-        Button(
+        IconRow(
+            icon = Icons.Filled.Face,
+            title = "管理贴纸包",
             onClick = onOpenStickerSets,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp)
-        ) {
-            Icon(
-                Icons.Filled.Face, contentDescription = null,
-                modifier = Modifier.size(19.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text("管理贴纸包")
+            trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        )
         }
-        }
-        Spacer(Modifier.height(28.dp))
-        SectionTitle(StorageIcon, "存储空间")
-        GroupCard {
+        SettingsSectionHeader("存储空间")
+        SettingsGroup {
         Spacer(Modifier.height(4.dp))
         var storageTick by remember { mutableIntStateOf(0) }
         val storageState = produceState<Pair<com.tuxungram.android.td.StorageInfo?, List<com.tuxungram.android.td.DownloadedEntry>>>(
@@ -1537,38 +1641,41 @@ fun SettingsScreen(
                 title = "聊天数据库",
                 subtitle = "${formatBytes(storageInfo.databaseBytes)}（聊天记录的索引，不会清）"
             )
+            SettingsDivider()
             IconRow(
                 icon = FolderIcon,
                 title = "下载的文件",
                 subtitle = "${formatBytes(storageInfo.filesBytes)}，共 ${storageInfo.fileCount} 个"
             )
         }
-        Button(
+        SettingsDivider()
+        IconRow(
+            icon = DownloadIcon,
+            title = "下载管理",
+            subtitle = "进行中 / 已完成",
             onClick = onOpenDownloads,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp)
-        ) {
-            Icon(
-                DownloadIcon, contentDescription = null,
-                modifier = Modifier.size(19.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text("下载管理（进行中 / 已完成）")
-        }
-        Button(
+            trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        )
+        SettingsDivider()
+        IconRow(
+            icon = PollIcon,
+            title = "流量统计",
+            subtitle = "TDLib 本地计数",
             onClick = onOpenNetworkStats,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp)
-        ) {
-            Icon(
-                PollIcon, contentDescription = null,
-                modifier = Modifier.size(19.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text("流量统计（TDLib 本地计数）")
-        }
+            trailing = {
+                Icon(
+                    Icons.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        )
         // Media auto-download (v0.9.16, W1): per network
         // type, how large a photo / video / file may be and
         // still download itself. The presets come from the
@@ -1667,19 +1774,12 @@ fun SettingsScreen(
         }
         var confirmClear by remember { mutableStateOf(false) }
         var clearedTip by remember { mutableStateOf<String?>(null) }
-        Button(
-            onClick = { confirmClear = true },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp)
-        ) {
-            Icon(
-                Icons.Filled.Delete, contentDescription = null,
-                modifier = Modifier.size(19.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text("清理下载的文件缓存")
-        }
+        SettingsDivider()
+        IconRow(
+            icon = Icons.Filled.Delete,
+            title = "清理下载的文件缓存",
+            onClick = { confirmClear = true }
+        )
         if (clearedTip != null) {
             Text(
                 clearedTip!!, color = Color.Gray, fontSize = 13.sp,
@@ -1732,7 +1832,8 @@ fun SettingsScreen(
                 fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                 color = Color.Gray
             )
-            for (entry in downloaded.take(50)) {
+            for ((fileIndex, entry) in downloaded.take(50).withIndex()) {
+                if (fileIndex > 0) SettingsDivider()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1784,31 +1885,26 @@ fun SettingsScreen(
             }
         }
         }
-        Spacer(Modifier.height(28.dp))
         // About + update check (v0.9.5, O5). The check is
         // the app's only network call outside TDLib and runs
         // only when this button is tapped — stated on the
         // page itself, in small print under the button.
-        SectionTitle(Icons.Filled.Info, "关于")
-        GroupCard {
+        SettingsSectionHeader("关于")
+        SettingsGroup {
         val updateInfo by UpdateChecker.state.collectAsState()
-        TextButton(
-            onClick = { UpdateChecker.check(BuildConfig.VERSION_NAME) },
-            enabled = updateInfo.state != "checking"
-        ) {
-            Icon(
-                Icons.Filled.Refresh, contentDescription = null,
-                modifier = Modifier.size(19.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                if (updateInfo.state == "checking") {
-                    "正在检查…"
-                } else {
-                    "检查更新"
+        IconRow(
+            icon = Icons.Filled.Refresh,
+            title = if (updateInfo.state == "checking") {
+                "正在检查…"
+            } else {
+                "检查更新"
+            },
+            onClick = {
+                if (updateInfo.state != "checking") {
+                    UpdateChecker.check(BuildConfig.VERSION_NAME)
                 }
-            )
-        }
+            }
+        )
         when (updateInfo.state) {
             "latest" -> Text(
                 "已是最新版本（${updateInfo.latestVersion}）。",
@@ -1846,6 +1942,7 @@ fun SettingsScreen(
             "检查更新只在你点上面这一项时才会联网，去 GitHub 看一眼有没有新版；平时不会自己联网。",
             color = Color.Gray, fontSize = 12.sp
         )
+        SettingsDivider()
         // Changelog + guide replay (v0.9.6, P2/P3).
         IconRow(
             icon = Icons.Filled.List,
@@ -1859,6 +1956,7 @@ fun SettingsScreen(
                 )
             }
         )
+        SettingsDivider()
         IconRow(
             icon = Icons.Filled.Info,
             title = "新手引导（再看一遍）",
@@ -1871,6 +1969,7 @@ fun SettingsScreen(
                 )
             }
         )
+        SettingsDivider()
         // Settings backup (v0.9.6, P4).
         IconRow(
             icon = Icons.Filled.Share,
@@ -1884,6 +1983,7 @@ fun SettingsScreen(
                 )
             }
         )
+        SettingsDivider()
         IconRow(
             icon = DownloadIcon,
             title = "导入设置",
@@ -1925,17 +2025,15 @@ fun SettingsScreen(
                 color = Color.Gray, fontSize = 12.sp
             )
         }
-        Spacer(Modifier.height(8.dp))
-        TextButton(onClick = { TdRepository.logOut() }) {
-            Icon(
-                Icons.Filled.ExitToApp, contentDescription = null,
-                tint = Color(0xFFC62828),
-                modifier = Modifier.size(19.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text("退出登录", color = Color(0xFFC62828))
+        SettingsDivider()
+        IconRow(
+            icon = Icons.Filled.ExitToApp,
+            title = "退出登录",
+            danger = true,
+            onClick = { TdRepository.logOut() }
+        )
         }
-        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -1954,8 +2052,6 @@ fun PrivacySection() {
     LaunchedEffect(Unit) { PrivacyStore.load() }
     var editing by remember { mutableStateOf<PrivacySettingDef?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    Spacer(Modifier.height(18.dp))
-    SectionTitle(EyeIcon, "隐私")
     Spacer(Modifier.height(4.dp))
     Text(
         "这些是账号级设置，在哪个客户端改都算数。点一项就能改。",
@@ -1969,7 +2065,8 @@ fun PrivacySection() {
         )
         TextButton(onClick = { PrivacyStore.load() }) { Text("重试") }
     }
-    for (def in PrivacyStore.SETTINGS) {
+    for ((defIndex, def) in PrivacyStore.SETTINGS.withIndex()) {
+        if (defIndex > 0) SettingsDivider()
         val tier = tiers[def.type] ?: PrivacyTier.UNKNOWN
         Row(
             verticalAlignment = Alignment.CenterVertically,
