@@ -682,6 +682,9 @@ fun ForumTopicView(
                         },
                         onOpenVideo = { m -> videoItem = m },
                         onBotCommand = { ForumStore.sendText(it) },
+                        onToggleChecklistTask = { m, task ->
+                            ForumStore.markChecklistTask(m, task)
+                        },
                         showTail = msg.id in tailIds
                     )
                 }

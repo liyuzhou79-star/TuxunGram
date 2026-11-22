@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -64,12 +65,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.UiSettings
+import com.tuxungram.android.td.ChecklistTaskUi
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.PollUi
@@ -121,6 +125,11 @@ fun SimpleMessageBubble(
     onVotePoll: (MsgItem, List<Int>) -> Unit,
     onOpenVideo: (MsgItem) -> Unit,
     onBotCommand: (String) -> Unit = {},
+    // Checklist toggling (v0.9.30, W4): the hosting store
+    // (thread / forum topic) marks tasks against its own
+    // chat id; the default keeps any other caller read-only.
+    onToggleChecklistTask: (MsgItem, ChecklistTaskUi) -> Unit =
+        { _, _ -> },
     // Grouped-run tail (v0.9.18, Y3): the caller marks the
     // last message of a same-sender run; its own-side bottom
     // corner shrinks to the tail radius, like the main chat.
@@ -224,7 +233,11 @@ fun SimpleMessageBubble(
                                 }
                             }
                         },
-                        onLongClick = { menuOpen = true }
+                        onLongClick = {
+                            // Touch feedback (v0.9.30, W6).
+                            com.tuxungram.android.td.Haptics.tick()
+                            menuOpen = true
+                        }
                     )
                     .padding(horizontal = 11.dp, vertical = 8.dp)
             ) {
@@ -361,18 +374,14 @@ fun SimpleMessageBubble(
                     MsgKind.VIDEO_NOTE -> VideoNoteBubbleContent(msg)
                     MsgKind.DICE -> DiceBubbleContent(msg)
                     MsgKind.GAME -> GameBubbleContent(msg)
-                    // Checklists render read-only here
-                    // (v0.9.24, Q7): toggling lives in the
-                    // main chat, whose store owns the open
-                    // chat id markChecklistTasksAsDone needs.
-                    MsgKind.CHECKLIST -> Text(
-                        "[清单] ${msg.checklistTitle}",
-                        color = if (outgoing) {
-                            palette.outText
-                        } else {
-                            palette.inText
-                        },
-                        fontSize = 14.sp
+                    // Checklists are interactive here too
+                    // (v0.9.30, W4; was a read-only summary
+                    // line): title, done/total line and one
+                    // tappable row per task, same rendering
+                    // rules as the main chat's checklist.
+                    MsgKind.CHECKLIST -> SimpleChecklistContent(
+                        msg = msg,
+                        onToggleTask = onToggleChecklistTask
                     )
                     MsgKind.OTHER -> Text(
                         "[消息]",
@@ -951,6 +960,9 @@ fun ThreadScreen(
                         },
                         onOpenVideo = { m -> videoItem = m },
                         onBotCommand = { ThreadStore.sendText(it) },
+                        onToggleChecklistTask = { m, task ->
+                            ThreadStore.markChecklistTask(m, task)
+                        },
                         showTail = msg.id in tailIds
                     )
                 }
@@ -1077,6 +1089,105 @@ fun ThreadScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Interactive checklist for the simple bubble hosts
+ *  (v0.9.30, W4): the same rendering as the main chat's
+ *  checklist — title, a live done/total line and one
+ *  tappable row per task — with toggling delegated to the
+ *  hosting store, which owns the chat id
+ *  markChecklistTasksAsDone needs. Rows only respond when
+ *  the server's can_mark flag allows this account; the
+ *  fresh state arrives with updateMessageContent and
+ *  re-renders title and count with it. */
+@Composable
+fun SimpleChecklistContent(
+    msg: MsgItem,
+    onToggleTask: (MsgItem, ChecklistTaskUi) -> Unit
+) {
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
+    val subText = if (outgoing) palette.outTime else palette.inTime
+    val doneCount = msg.checklistTasks.count { it.completed }
+    Column(modifier = Modifier.width(240.dp)) {
+        if (msg.checklistTitle.isNotEmpty()) {
+            Text(
+                msg.checklistTitle,
+                color = mainText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(2.dp))
+        }
+        Text(
+            "清单 · $doneCount/${msg.checklistTasks.size} 已完成",
+            color = subText, fontSize = 12.sp
+        )
+        Spacer(Modifier.height(6.dp))
+        for (task in msg.checklistTasks) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = msg.checklistCanMark) {
+                        onToggleTask(msg, task)
+                    }
+                    .padding(vertical = 4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .background(
+                            if (task.completed) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                Color.Transparent
+                            },
+                            RoundedCornerShape(5.dp)
+                        )
+                        .border(
+                            1.5.dp,
+                            if (task.completed) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                subText
+                            },
+                            RoundedCornerShape(5.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (task.completed) {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    task.text,
+                    color = if (task.completed) subText else mainText,
+                    fontSize = 14.sp,
+                    style = TextStyle(
+                        textDecoration = if (task.completed) {
+                            TextDecoration.LineThrough
+                        } else {
+                            null
+                        }
+                    )
+                )
+            }
+        }
+        if (!msg.checklistCanMark && msg.checklistTasks.isNotEmpty()) {
+            Text(
+                "只有清单作者能勾选",
+                color = subText, fontSize = 11.sp
+            )
         }
     }
 }

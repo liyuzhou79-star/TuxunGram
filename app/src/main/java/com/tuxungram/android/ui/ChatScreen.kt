@@ -90,6 +90,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -99,6 +100,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -295,6 +297,37 @@ fun ChatScreen(
         if (chat?.isChannel == true) ThreadStore.loadLinkedChat(chatId)
     }
     val messages by MessageStore.messages.collectAsState()
+    // Received message-effect playback (v0.9.30, W3): an
+    // incoming message with an effect plays its emoji burst
+    // the first time it scrolls into view — once per message
+    // per process (EffectPlayMemory), never when the system
+    // animator scale is 0, and only for effects whose emoji
+    // is known (others keep the v0.9.24 time-row marker).
+    var effectPlay by remember {
+        mutableStateOf<Pair<String, Int>?>(null)
+    }
+    var effectPlayNonce by remember { mutableIntStateOf(0) }
+    LaunchedEffect(listState, messages) {
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.map { it.index }
+        }.collect { indices ->
+            if (Motion.durationScale == 0f) return@collect
+            if (effectPlay != null) return@collect
+            for (idx in indices) {
+                val msg = messages.getOrNull(
+                    messages.size - 1 - idx
+                ) ?: continue
+                if (msg.outgoing || msg.effectId == 0L) continue
+                val emoji = EffectsStore.emojiById.value[msg.effectId]
+                    ?: continue
+                if (EffectPlayMemory.markIfNew(chatId, msg.id)) {
+                    effectPlayNonce += 1
+                    effectPlay = emoji to effectPlayNonce
+                    break
+                }
+            }
+        }
+    }
     // Live-location sender refresh (v0.9.25, R2): while this
     // chat stays open and I have a live location running in
     // it, push a fresh fix about once a minute. Leaving the
@@ -802,14 +835,49 @@ fun ChatScreen(
     }
     var recording by remember { mutableStateOf(false) }
     var recordSeconds by remember { mutableIntStateOf(0) }
+    // Recording-bar state (v0.9.30, W5): the live amplitude
+    // snapshot the waveform draws from, whether the user
+    // locked the recording (swipe up), and the running drag
+    // offsets of the swipe-to-cancel / swipe-up-to-lock
+    // gestures on the bar.
+    var recordAmps by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var recordLocked by remember { mutableStateOf(false) }
+    var recordDragX by remember { mutableFloatStateOf(0f) }
+    var recordDragY by remember { mutableFloatStateOf(0f) }
     fun startRecording() {
         if (voiceRecorder.start(context)) {
             recording = true
             recordSeconds = 0
+            recordLocked = false
+            recordAmps = emptyList()
             // Recording cues (v0.9.29, V1): one beep as the
             // mic goes live, one when it stops (the two stop
             // buttons below), like the official client.
             SoundFx.recordStart()
+            // Touch feedback (v0.9.30, W6): the mic going
+            // live gets the same soft pulse the official
+            // client answers with.
+            com.tuxungram.android.td.Haptics.tick()
+        }
+    }
+    fun cancelRecording() {
+        voiceRecorder.cancel()
+        recording = false
+        recordLocked = false
+        SoundFx.recordStop()
+        com.tuxungram.android.td.Haptics.tick()
+    }
+    fun sendRecording() {
+        val result = voiceRecorder.stop()
+        recording = false
+        recordLocked = false
+        SoundFx.recordStop()
+        com.tuxungram.android.td.Haptics.tick()
+        if (result != null) {
+            MessageStore.clearSendError()
+            MessageStore.sendVoiceNote(
+                result.first, result.second, result.third
+            )
         }
     }
     val micPermission = rememberLauncherForActivityResult(
@@ -822,6 +890,9 @@ fun ChatScreen(
             delay(200)
             voiceRecorder.sample()
             recordSeconds = voiceRecorder.elapsedSeconds()
+            // Live waveform (v0.9.30, W5): the recording bar
+            // redraws from the recorder's amplitude samples.
+            recordAmps = voiceRecorder.amplitudesSnapshot()
         }
     }
     // (path, mimeType, displayName) of a picked file awaiting confirm.
@@ -2887,43 +2958,129 @@ fun ChatScreen(
                 }
             }
             if (recording) {
-                Row(
+                // Recording bar (v0.9.30, W5), aligned with
+                // the official client's voice flow: a live
+                // waveform drawn from the recorder's amplitude
+                // samples, the running timer, and two gestures
+                // on the bar itself — drag left and release to
+                // cancel (nothing is sent), drag up to lock
+                // (the bar then stays hands-free with explicit
+                // 完成 / 取消 buttons). Unlocked, the plain
+                // 发送 / 取消 buttons remain for the tap flow
+                // this app has always used.
+                val density = LocalDensity.current
+                val cancelThreshold = with(density) { 80.dp.toPx() }
+                val cancelArmed = !recordLocked &&
+                    recordDragX < -cancelThreshold
+                val lockArmed = !recordLocked &&
+                    recordDragY < -cancelThreshold
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .background(Color(0xFFC62828), CircleShape)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        "录音中 ${formatDuration(recordSeconds)}",
-                        fontSize = 15.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = {
-                        voiceRecorder.cancel()
-                        recording = false
-                        SoundFx.recordStop()
-                    }) {
-                        Text("取消")
-                    }
-                    Button(onClick = {
-                        val result = voiceRecorder.stop()
-                        recording = false
-                        SoundFx.recordStop()
-                        if (result != null) {
-                            MessageStore.clearSendError()
-                            MessageStore.sendVoiceNote(
-                                result.first, result.second, result.third
-                            )
+                        .background(OfficialTheme.current().panelBg)
+                        .pointerInput(recordLocked) {
+                            if (recordLocked) {
+                                return@pointerInput
+                            }
+                            detectDragGestures(
+                                onDragEnd = {
+                                    when {
+                                        recordDragX <
+                                            -cancelThreshold ->
+                                            cancelRecording()
+                                        recordDragY <
+                                            -cancelThreshold -> {
+                                            recordLocked = true
+                                            com.tuxungram.android.td
+                                                .Haptics.tick()
+                                        }
+                                    }
+                                    recordDragX = 0f
+                                    recordDragY = 0f
+                                },
+                                onDragCancel = {
+                                    recordDragX = 0f
+                                    recordDragY = 0f
+                                }
+                            ) { change, dragAmount ->
+                                change.consume()
+                                recordDragX += dragAmount.x
+                                recordDragY += dragAmount.y
+                            }
                         }
-                    }) {
-                        Text("发送")
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(
+                                    Color(0xFFC62828).copy(
+                                        alpha = if (
+                                            recordSeconds % 2 == 0
+                                        ) {
+                                            1f
+                                        } else {
+                                            0.35f
+                                        }
+                                    ),
+                                    CircleShape
+                                )
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            formatDuration(recordSeconds),
+                            fontSize = 15.sp,
+                            color = if (cancelArmed) {
+                                Color(0xFFC62828)
+                            } else {
+                                OfficialTheme.current().textPrimary
+                            }
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        RecordingWaveform(
+                            amplitudes = recordAmps,
+                            color = if (cancelArmed) {
+                                Color(0xFFC62828)
+                            } else {
+                                OfficialTheme.current().accent
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(28.dp)
+                        )
+                        if (recordLocked) {
+                            TextButton(onClick = { cancelRecording() }) {
+                                Text("取消")
+                            }
+                            Button(onClick = { sendRecording() }) {
+                                Text("完成")
+                            }
+                        } else {
+                            TextButton(onClick = { cancelRecording() }) {
+                                Text("取消")
+                            }
+                            Button(onClick = { sendRecording() }) {
+                                Text("发送")
+                            }
+                        }
                     }
+                    Text(
+                        when {
+                            cancelArmed -> "松开手指，取消录音"
+                            lockArmed -> "松开手指，锁定录音"
+                            recordLocked -> "已锁定录音，不用按着了"
+                            else -> "左滑取消 · 上滑锁定"
+                        },
+                        fontSize = 12.sp,
+                        color = if (cancelArmed) {
+                            Color(0xFFC62828)
+                        } else {
+                            OfficialTheme.current().textSecondary
+                        }
+                    )
                 }
             }
             if (!recording) Row(
@@ -3409,6 +3566,14 @@ fun ChatScreen(
         }
         }
     }
+        val playNow = effectPlay
+        if (playNow != null) {
+            EffectParticlesOverlay(
+                emoji = playNow.first,
+                nonce = playNow.second,
+                onDone = { effectPlay = null }
+            )
+        }
         val vid = viewerId
         if (vid != null) {
             MediaViewerScreen(
@@ -4442,6 +4607,10 @@ fun MessageBubble(
                                     else -> allowedReactions.firstOrNull()
                                 }
                                 if (emoji != null) {
+                                    // Touch feedback (v0.9.30,
+                                    // W6): the reaction landing
+                                    // gets a soft pulse.
+                                    com.tuxungram.android.td.Haptics.tick()
                                     MessageStore.toggleReaction(msg, emoji)
                                 }
                             }
@@ -4450,6 +4619,11 @@ fun MessageBubble(
                             if (selectionMode) {
                                 onToggleSelect(msg)
                             } else {
+                                // Touch feedback (v0.9.30, W6):
+                                // the floating menu opening is
+                                // one of the official client's
+                                // buzz moments.
+                                com.tuxungram.android.td.Haptics.tick()
                                 menuOpen = true
                             }
                         }
@@ -7753,6 +7927,54 @@ private fun WaveformBars(
     }
 }
 
+/** Live recording waveform (v0.9.30, W5): the last ~48
+ *  amplitude samples as vertical bars, newest at the right.
+ *  Amplitudes are MediaRecorder's 0..32767 scale, square-
+ *  rooted so quiet speech still moves the bars. */
+@Composable
+private fun RecordingWaveform(
+    amplitudes: List<Int>,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val bars = 48
+        val samples = amplitudes.takeLast(bars)
+        if (samples.isEmpty()) {
+            drawLine(
+                color = color.copy(alpha = 0.4f),
+                start = androidx.compose.ui.geometry.Offset(
+                    0f, size.height / 2
+                ),
+                end = androidx.compose.ui.geometry.Offset(
+                    size.width, size.height / 2
+                ),
+                strokeWidth = 2f
+            )
+            return@Canvas
+        }
+        val slot = size.width / bars
+        val barWidth = (slot * 0.55f).coerceAtLeast(2f)
+        for (i in samples.indices) {
+            val level = kotlin.math.sqrt(
+                (samples[i].coerceIn(0, 32767) / 32767f).toDouble()
+            ).toFloat()
+            val h = (level * size.height).coerceAtLeast(3f)
+            val x = size.width - (samples.size - i) * slot +
+                (slot - barWidth) / 2
+            drawRoundRect(
+                color = color,
+                topLeft = androidx.compose.ui.geometry.Offset(
+                    x, (size.height - h) / 2
+                ),
+                size = androidx.compose.ui.geometry.Size(barWidth, h),
+                cornerRadius = androidx.compose.ui.geometry
+                    .CornerRadius(barWidth / 2, barWidth / 2)
+            )
+        }
+    }
+}
+
 /** Minimal voice recorder: MediaRecorder into an OGG/Opus file
  *  (Telegram's native voice-note format), sampling maxAmplitude
  *  a few times a second for the waveform. All failures are
@@ -7794,6 +8016,11 @@ private class VoiceRecorder {
             // Recorder died mid-way; stop() will sort it out.
         }
     }
+
+    /** The amplitudes sampled so far (v0.9.30, W5), for the
+     *  recording bar's live waveform. A copy — the UI may
+     *  hold it across recompositions while sampling goes on. */
+    fun amplitudesSnapshot(): List<Int> = ArrayList(amplitudes)
 
     fun elapsedSeconds(): Int =
         if (startedAt == 0L) 0 else ((System.currentTimeMillis() - startedAt) / 1000).toInt()

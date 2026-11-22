@@ -622,6 +622,29 @@ object ForumStore {
         }
     }
 
+    /** Tick or untick one checklist task inside a forum
+     *  topic (v0.9.30, W4): markChecklistTasksAsDone against
+     *  the topic's chat id; same shape as the main chat and
+     *  thread versions, fresh state via updateMessageContent. */
+    fun markChecklistTask(item: MsgItem, task: ChecklistTaskUi) {
+        val chatId = topicChatId
+        if (chatId == 0L) return
+        val done = JSONArray()
+        val notDone = JSONArray()
+        if (task.completed) notDone.put(task.id) else done.put(task.id)
+        val query = TdClient.request("markChecklistTasksAsDone").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+            put("marked_as_done_task_ids", done)
+            put("marked_as_not_done_task_ids", notDone)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _error.value = "清单勾选没成功，再试一次。"
+            }
+        }
+    }
+
     fun deleteMessage(item: MsgItem) {
         val chatId = topicChatId
         if (chatId == 0L) return

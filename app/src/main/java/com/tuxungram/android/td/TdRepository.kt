@@ -91,7 +91,14 @@ object TdRepository {
         // pass through here.
         when (query.optString("@type")) {
             "sendMessage", "sendMessageAlbum",
-            "forwardMessages", "resendMessages" -> SoundFx.send()
+            "forwardMessages", "resendMessages" -> {
+                SoundFx.send()
+                // Touch feedback (v0.9.30, W6) rides the same
+                // single hook: one soft pulse when a message
+                // leaves, foreground only, system haptic
+                // switch permitting (checked inside Haptics).
+                if (SoundFx.appInForeground) Haptics.tick()
+            }
         }
         client?.send(query, callback)
     }

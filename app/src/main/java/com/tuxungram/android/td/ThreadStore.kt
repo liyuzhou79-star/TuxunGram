@@ -300,6 +300,32 @@ object ThreadStore {
         }
     }
 
+    /** Tick or untick one checklist task in a thread
+     *  (v0.9.30, W4): markChecklistTasksAsDone against the
+     *  thread's own chat id — the discussion group, not the
+     *  channel the post came from. Same one-of-two-lists
+     *  shape as MessageStore.markChecklistTask; the fresh
+     *  state arrives with updateMessageContent and is
+     *  re-parsed by this store's own listener. */
+    fun markChecklistTask(item: MsgItem, task: ChecklistTaskUi) {
+        val chatId = threadChatId
+        if (chatId == 0L) return
+        val done = JSONArray()
+        val notDone = JSONArray()
+        if (task.completed) notDone.put(task.id) else done.put(task.id)
+        val query = TdClient.request("markChecklistTasksAsDone").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+            put("marked_as_done_task_ids", done)
+            put("marked_as_not_done_task_ids", notDone)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _error.value = "清单勾选没成功，再试一次。"
+            }
+        }
+    }
+
     fun deleteMessage(item: MsgItem) {
         val chatId = threadChatId
         if (chatId == 0L) return
