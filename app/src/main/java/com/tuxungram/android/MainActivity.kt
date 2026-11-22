@@ -50,8 +50,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -115,6 +120,9 @@ import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.GuideScreen
 import com.tuxungram.android.ui.WhatsNewScreen
 import com.tuxungram.android.ui.ChatListScreen
+import com.tuxungram.android.ui.MeScreen
+import com.tuxungram.android.ui.ChatBubbleIcon
+import com.tuxungram.android.ui.PeopleIcon
 import com.tuxungram.android.ui.ContactsScreen
 import com.tuxungram.android.ui.EditProfileScreen
 import com.tuxungram.android.ui.GroupPermissionsScreen
@@ -394,6 +402,16 @@ private fun ReadyHost() {
         }
     }
     var showCreate by remember { mutableStateOf(false) }
+    // Bottom navigation (v0.9.9, W4): 0 chats / 1 contacts /
+    // 2 settings / 3 me. Only the home level carries the bar;
+    // opening a chat or any sub-page replaces the whole host
+    // as before. The chat list's LazyListState is hoisted
+    // here so tab switches keep its scroll position.
+    var homeTab by remember { mutableStateOf(0) }
+    val homeListState = rememberLazyListState()
+    val allChats by ChatStore.chats.collectAsState()
+    val homeUnread = allChats.sumOf { it.unreadCount }
+    val unreadCap by UiSettings.unreadCap.collectAsState()
     var storyChatId by remember { mutableStateOf<Long?>(null) }
     // Forward flow: (fromChatId, messageIds) plus where to return
     // to. A list since v0.7.0 — multi-select forwards in one call.
@@ -531,18 +549,93 @@ private fun ReadyHost() {
                 openChatId = forwardReturnTo
             }
         )
-        chatId == null -> ChatListScreen(
-            onOpenChat = { openChatId = it },
-            onOpenSettings = { showSettings = true },
-            onOpenChatLocated = { cid, mid ->
-                MessageStore.pendingLocateId = mid
-                openChatId = cid
-            },
-            onOpenArchive = { showArchive = true },
-            onOpenCreate = { showCreate = true },
-            onOpenStory = { storyChatId = it },
-            onOpenContacts = { showContacts = true }
-        )
+        chatId == null -> Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.weight(1f)) {
+                when (homeTab) {
+                    1 -> ContactsScreen(
+                        onBack = { homeTab = 0 },
+                        onOpenChat = { openChatId = it }
+                    )
+                    2 -> SettingsScreen(
+                        onBack = { homeTab = 0 },
+                        onOpenSessions = { showSessions = true },
+                        onOpenStickerSets = { showStickerSets = true },
+                        onOpenEditProfile = { showEditProfile = true },
+                        onOpenBlocked = { showBlocked = true },
+                        onOpenChangelog = { showChangelog = true },
+                        onOpenGuide = { showGuideReplay = true }
+                    )
+                    3 -> MeScreen(
+                        onEditProfile = { showEditProfile = true },
+                        onOpenSavedChat = { openChatId = it },
+                        onOpenSettingsTab = { homeTab = 2 },
+                        onOpenChangelog = { showChangelog = true }
+                    )
+                    else -> ChatListScreen(
+                        onOpenChat = { openChatId = it },
+                        onOpenSettings = { homeTab = 2 },
+                        onOpenChatLocated = { cid, mid ->
+                            MessageStore.pendingLocateId = mid
+                            openChatId = cid
+                        },
+                        onOpenArchive = { showArchive = true },
+                        onOpenCreate = { showCreate = true },
+                        onOpenStory = { storyChatId = it },
+                        onOpenContacts = { homeTab = 1 },
+                        listState = homeListState
+                    )
+                }
+            }
+            NavigationBar {
+                NavigationBarItem(
+                    selected = homeTab == 0,
+                    onClick = { homeTab = 0 },
+                    icon = {
+                        BadgedBox(badge = {
+                            if (homeUnread > 0) {
+                                Badge {
+                                    Text(
+                                        if (homeUnread > unreadCap) {
+                                            "$unreadCap+"
+                                        } else {
+                                            homeUnread.toString()
+                                        }
+                                    )
+                                }
+                            }
+                        }) {
+                            Icon(ChatBubbleIcon, contentDescription = "对话")
+                        }
+                    },
+                    label = { Text("对话") }
+                )
+                NavigationBarItem(
+                    selected = homeTab == 1,
+                    onClick = { homeTab = 1 },
+                    icon = { Icon(PeopleIcon, contentDescription = "联系人") },
+                    label = { Text("联系人") }
+                )
+                NavigationBarItem(
+                    selected = homeTab == 2,
+                    onClick = { homeTab = 2 },
+                    icon = {
+                        Icon(Icons.Filled.Settings, contentDescription = "设置")
+                    },
+                    label = { Text("设置") }
+                )
+                NavigationBarItem(
+                    selected = homeTab == 3,
+                    onClick = { homeTab = 3 },
+                    icon = {
+                        Icon(
+                            Icons.Filled.AccountCircle,
+                            contentDescription = "我的"
+                        )
+                    },
+                    label = { Text("我的") }
+                )
+            }
+        }
         else -> ChatScreen(
             chatId = chatId,
             onBack = { openChatId = null },

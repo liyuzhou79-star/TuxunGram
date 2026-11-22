@@ -574,6 +574,22 @@ val BotIcon: ImageVector = icon("Bot", evenOdd = true) {
 }
 
 /** Reply keyboard grid. */
+/** Speech bubble (bottom-nav chats tab, v0.9.9 W4). */
+val ChatBubbleIcon: ImageVector = icon("ChatBubble") {
+    moveTo(5f, 21.5f)
+    lineTo(8.2f, 17.5f)
+    lineTo(18.5f, 17.5f)
+    quadraticBezierTo(21f, 17.5f, 21f, 15f)
+    lineTo(21f, 5.5f)
+    quadraticBezierTo(21f, 3f, 18.5f, 3f)
+    lineTo(5.5f, 3f)
+    quadraticBezierTo(3f, 3f, 3f, 5.5f)
+    lineTo(3f, 15f)
+    quadraticBezierTo(3f, 17.5f, 5.5f, 17.5f)
+    lineTo(5f, 17.5f)
+    close()
+}
+
 val KeyboardIcon: ImageVector = icon("Keyboard", evenOdd = true) {
     moveTo(3f, 6f)
     horizontalLineTo(21f)

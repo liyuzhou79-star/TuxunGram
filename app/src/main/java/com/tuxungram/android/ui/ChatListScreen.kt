@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -264,7 +265,10 @@ fun ChatListScreen(
     onOpenArchive: () -> Unit,
     onOpenCreate: () -> Unit,
     onOpenStory: (Long) -> Unit,
-    onOpenContacts: () -> Unit
+    onOpenContacts: () -> Unit,
+    // Hoisted by the host (v0.9.9, W4) so switching bottom-nav
+    // tabs away and back keeps the list scroll position.
+    listState: LazyListState = rememberLazyListState()
 ) {
     val chats by ChatStore.chats.collectAsState()
     val allLoaded by ChatStore.allLoaded.collectAsState()
@@ -273,7 +277,6 @@ fun ChatListScreen(
     val folderChats by ChatStore.folderChats.collectAsState()
     val folderLoaded by ChatStore.folderLoaded.collectAsState()
     var query by remember { mutableStateOf("") }
-    val listState = rememberLazyListState()
     // Swipe actions (v0.9.2, L3): the chat id whose row is
     // currently swiped open, so only one row shows its action
     // panel at a time.
