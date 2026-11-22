@@ -211,7 +211,10 @@ object MediaStore {
             put("query", "")
             put("input_language_codes", org.json.JSONArray())
             put("offset", 0)
-            put("limit", 50)
+            // Client-chosen request size (v0.9.11, A3):
+            // widened from 50 to 100 — a display limit of
+            // ours, not a server rule.
+            put("limit", 100)
         }) { response ->
             if (!TdClient.isError(response)) {
                 _searchResults.value = parseStickers(response)

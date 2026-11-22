@@ -278,12 +278,30 @@ object MessageStore {
     val replyKb: StateFlow<ReplyKb> = _replyKb
 
     fun loadPinned(chatId: Long) {
+        loadPinnedPage(chatId, 0L, ArrayList(), HashSet())
+    }
+
+    /** One page of the pinned list (v0.9.11, A3): the old
+     *  loader stopped after a single searchChatMessages page
+     *  of 100, silently dropping every older pinned message —
+     *  a truncation in OUR code, since the page size is the
+     *  client's choice. It now pages with the from_message_id
+     *  cursor under the D1 stop rule (a page that adds no new
+     *  message ends the walk) until the server has no more.
+     *  This widens a client-side display limit only; the
+     *  server's own rules are untouched. */
+    private fun loadPinnedPage(
+        chatId: Long,
+        fromId: Long,
+        acc: ArrayList<MsgItem>,
+        seen: HashSet<Long>
+    ) {
         val query = TdClient.request("searchChatMessages").apply {
             put("chat_id", chatId)
             put("topic_id", JSONObject.NULL)
             put("query", "")
             put("sender_id", JSONObject.NULL)
-            put("from_message_id", 0L)
+            put("from_message_id", fromId)
             put("offset", 0)
             put("limit", 100)
             put(
@@ -296,12 +314,21 @@ object MessageStore {
                 return@sendRaw
             }
             val arr = response.optJSONArray("messages") ?: JSONArray()
-            val out = ArrayList<MsgItem>()
+            var added = 0
+            var lastId = fromId
             for (i in 0 until arr.length()) {
                 val msg = arr.optJSONObject(i) ?: continue
-                out.add(parseMessage(msg))
+                val item = parseMessage(msg)
+                lastId = item.id
+                if (seen.add(item.id)) {
+                    acc.add(item)
+                    added++
+                }
             }
-            _pinnedMessages.value = out
+            _pinnedMessages.value = ArrayList(acc)
+            if (added > 0 && lastId != fromId) {
+                loadPinnedPage(chatId, lastId, acc, seen)
+            }
         }
     }
 
