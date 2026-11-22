@@ -127,6 +127,21 @@ fun StatsScreen(chatId: Long, onBack: () -> Unit) {
                         )
                         Spacer(Modifier.height(6.dp))
                     }
+                    // Parsed graphs (v0.9.25, R4): drawn from
+                    // the server's own graph JSON with Canvas;
+                    // absent/unparseable graphs simply do not
+                    // appear — the number cards above stay.
+                    for (graph in s.graphs) {
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            graph.title,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.Gray
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        StatGraphChart(graph)
+                    }
                     if (s.topSenders.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
                         Text(
@@ -150,6 +165,90 @@ fun StatsScreen(chatId: Long, onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/** One statistics graph drawn with Canvas (v0.9.25, R4):
+ *  a line (with a soft fill) or bars, scaled to the series
+ *  max, with the max value labelled. No chart library. */
+@Composable
+private fun StatGraphChart(graph: com.tuxungram.android.td.StatGraphUi) {
+    val accent = MaterialTheme.colorScheme.primary
+    val grid = MaterialTheme.colorScheme.outlineVariant
+    val maxValue = (graph.values.maxOrNull() ?: 0.0)
+        .coerceAtLeast(1.0)
+    Column {
+        androidx.compose.foundation.Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(120.dp)
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant,
+                    RoundedCornerShape(12.dp)
+                )
+        ) {
+            val w = size.width
+            val h = size.height
+            val padTop = 10f
+            val padBottom = 8f
+            val usableH = h - padTop - padBottom
+            // Two gridlines (half and full height).
+            for (frac in listOf(0.5f, 1.0f)) {
+                val y = padTop + usableH * (1 - frac)
+                drawLine(
+                    color = grid,
+                    start = androidx.compose.ui.geometry.Offset(0f, y),
+                    end = androidx.compose.ui.geometry.Offset(w, y),
+                    strokeWidth = 1f
+                )
+            }
+            if (graph.bars) {
+                val slot = w / graph.values.size
+                graph.values.forEachIndexed { i, v ->
+                    val barH =
+                        (usableH * (v / maxValue)).toFloat()
+                    if (barH > 0f) {
+                        drawRect(
+                            color = accent,
+                            topLeft = androidx.compose.ui.geometry
+                                .Offset(
+                                    i * slot + slot * 0.2f,
+                                    padTop + usableH - barH
+                                ),
+                            size = androidx.compose.ui.geometry.Size(
+                                slot * 0.6f, barH
+                            )
+                        )
+                    }
+                }
+            } else {
+                val stepX = if (graph.values.size > 1) {
+                    w / (graph.values.size - 1)
+                } else {
+                    0f
+                }
+                val path = androidx.compose.ui.graphics.Path()
+                graph.values.forEachIndexed { i, v ->
+                    val x = i * stepX
+                    val y = padTop + usableH *
+                        (1 - (v / maxValue).toFloat())
+                    if (i == 0) path.moveTo(x, y)
+                    else path.lineTo(x, y)
+                }
+                drawPath(
+                    path = path,
+                    color = accent,
+                    style = androidx.compose.ui.graphics.drawscope
+                        .Stroke(width = 2.5f)
+                )
+            }
+        }
+        Text(
+            "最高 ${formatStatNumber(maxValue, isMean = false)} · " +
+                "共 ${graph.values.size} 个统计点",
+            fontSize = 11.sp, color = Color.Gray,
+            modifier = Modifier.padding(top = 4.dp)
+        )
     }
 }
 

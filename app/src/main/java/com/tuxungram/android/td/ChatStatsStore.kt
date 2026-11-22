@@ -26,6 +26,17 @@ data class TopSenderUi(
     val avgChars: Int
 )
 
+/** One parsed statistics graph (v0.9.25, R4): a single
+ *  numeric series from a statisticalGraphData payload.
+ *  [bars] mirrors the graph JSON's own type for the series
+ *  ("bar" vs "line"); anything unparseable never becomes a
+ *  StatGraphUi — the page then just keeps its number cards. */
+data class StatGraphUi(
+    val title: String,
+    val values: List<Double>,
+    val bars: Boolean
+)
+
 /** Everything the statistics page renders, flattened from
  *  chatStatisticsSupergroup / chatStatisticsChannel. */
 data class ChatStatsUi(
@@ -36,7 +47,10 @@ data class ChatStatsUi(
     val topSenders: List<TopSenderUi>,
     /** Channel only: share of subscribers with notifications
      *  enabled, 0..100; -1 for groups (not reported). */
-    val notificationsPercent: Double = -1.0
+    val notificationsPercent: Double = -1.0,
+    /** Parsed member/join graphs (v0.9.25, R4); empty when
+     *  the server sent no usable graph data. */
+    val graphs: List<StatGraphUi> = emptyList()
 )
 
 /**
@@ -46,9 +60,12 @@ data class ChatStatsUi(
  * the entry at all; the server still refuses chats that are
  * too small or where the viewer is not an administrator,
  * and those refusals are translated into plain language.
- * The statisticalGraph* JSON payloads are deliberately not
- * rendered — the page shows the headline numbers as cards
- * and the top senders as drawn bars, nothing faked.
+ * The headline numbers render as cards and the top senders
+ * as drawn bars. Since v0.9.25 (R4) the member_count_graph /
+ * join_graph payloads are also parsed and drawn (see
+ * parseGraph); async graphs resolve through
+ * getStatisticalGraph, error/absent graphs are skipped —
+ * nothing is ever drawn from invented data.
  */
 object ChatStatsStore {
     private val _loading = MutableStateFlow(false)
@@ -86,6 +103,11 @@ object ChatStatsStore {
             val parsed = _stats.value ?: return@sendRaw
             for (sender in parsed.topSenders) {
                 if (sender.name.isEmpty()) resolveName(sender.userId)
+            }
+            // Async graphs (statisticalGraphAsync) resolve in
+            // a second round-trip and patch themselves in.
+            for ((title, token) in pendingAsyncGraphs(response)) {
+                resolveAsyncGraph(chatId, title, token)
             }
         }
     }
@@ -138,7 +160,11 @@ object ChatStatsStore {
                 ChatStatsUi(
                     isChannel = false,
                     periodStart = start, periodEnd = end,
-                    cards = cards, topSenders = senders
+                    cards = cards, topSenders = senders,
+                    graphs = listOfNotNull(
+                        parseGraph(response, "member_count_graph", "成员数"),
+                        parseGraph(response, "join_graph", "新加入")
+                    )
                 )
             }
             "chatStatisticsChannel" -> {
@@ -162,6 +188,10 @@ object ChatStatsStore {
                     isChannel = true,
                     periodStart = start, periodEnd = end,
                     cards = cards, topSenders = emptyList(),
+                    graphs = listOfNotNull(
+                        parseGraph(response, "member_count_graph", "订阅者"),
+                        parseGraph(response, "join_graph", "新加入")
+                    ),
                     notificationsPercent =
                         response.optDouble(
                             "enabled_notifications_percentage", -1.0
@@ -199,6 +229,119 @@ object ChatStatsStore {
                         sender
                     }
                 }
+            )
+        }
+    }
+
+    /** Parse one graph field of the statistics object.
+     *  statisticalGraphData carries the payload inline;
+     *  statisticalGraphAsync / statisticalGraphError yield
+     *  null here (async is resolved separately, errors are
+     *  simply not drawn). */
+    private fun parseGraph(
+        response: JSONObject, field: String, title: String
+    ): StatGraphUi? {
+        val graph = response.optJSONObject(field) ?: return null
+        if (graph.optString("@type") != "statisticalGraphData") {
+            return null
+        }
+        return parseGraphJson(graph.optString("json_data"), title)
+    }
+
+    /** The graph JSON shape TDLib ships (same one the
+     *  official clients render): {"columns":[["x",ts...],
+     *  ["y0",v...],...], "types":{"y0":"line"|"bar",...}}.
+     *  The first non-x numeric column becomes the series;
+     *  anything else (empty, string columns, broken JSON)
+     *  returns null so the page keeps its number cards. */
+    private fun parseGraphJson(
+        jsonData: String, title: String
+    ): StatGraphUi? {
+        if (jsonData.isEmpty()) return null
+        return try {
+            val root = JSONObject(jsonData)
+            val columns = root.optJSONArray("columns")
+                ?: return null
+            val types = root.optJSONObject("types")
+            for (i in 0 until columns.length()) {
+                val col = columns.optJSONArray(i) ?: continue
+                if (col.length() < 2) continue
+                val colId = col.optString(0)
+                if (colId == "x" || colId.isEmpty()) continue
+                // Only numeric series qualify; a string-typed
+                // first element after the id means this column
+                // is labels, not data.
+                val first = col.opt(1)
+                if (first !is Number) continue
+                val values = ArrayList<Double>(col.length() - 1)
+                for (j in 1 until col.length()) {
+                    values.add(col.optDouble(j, 0.0))
+                }
+                if (values.size < 2) return null
+                return StatGraphUi(
+                    title = title,
+                    values = values,
+                    bars = types?.optString(colId) == "bar"
+                )
+            }
+            null
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /** (title, token) pairs for graph fields that arrived as
+     *  statisticalGraphAsync and still need their data. */
+    private fun pendingAsyncGraphs(
+        response: JSONObject
+    ): List<Pair<String, String>> {
+        val out = ArrayList<Pair<String, String>>()
+        val fields = listOf(
+            "member_count_graph" to
+                if (response.optString("@type") ==
+                    "chatStatisticsChannel"
+                ) {
+                    "订阅者"
+                } else {
+                    "成员数"
+                },
+            "join_graph" to "新加入"
+        )
+        for ((field, title) in fields) {
+            val graph = response.optJSONObject(field) ?: continue
+            if (graph.optString("@type") == "statisticalGraphAsync") {
+                val token = graph.optString("token")
+                if (token.isNotEmpty()) out.add(title to token)
+            }
+        }
+        return out
+    }
+
+    private fun resolveAsyncGraph(
+        chatId: Long, title: String, token: String
+    ) {
+        val query = TdClient.request("getStatisticalGraph").apply {
+            put("chat_id", chatId)
+            put("token", token)
+            put("x", 0L)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (forChatId != chatId) return@sendRaw
+            if (TdClient.isError(response)) return@sendRaw
+            if (response.optString("@type") !=
+                "statisticalGraphData"
+            ) {
+                return@sendRaw
+            }
+            val graph = parseGraphJson(
+                response.optString("json_data"), title
+            ) ?: return@sendRaw
+            val current = _stats.value ?: return@sendRaw
+            if (current.graphs.any { it.title == title }) {
+                return@sendRaw
+            }
+            _stats.value = current.copy(
+                graphs = current.graphs + graph
             )
         }
     }
