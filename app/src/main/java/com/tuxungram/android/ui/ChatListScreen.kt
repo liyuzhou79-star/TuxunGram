@@ -60,11 +60,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -291,6 +294,12 @@ fun ChatListScreen(
 ) {
     val chats by ChatStore.chats.collectAsState()
     val allLoaded by ChatStore.allLoaded.collectAsState()
+    // Archive entry row (v0.9.19, Z1): the official list-top
+    // archive row shows only when something is archived, so
+    // the archive list loads with this screen now (it used
+    // to load only when the archive page itself opened).
+    val archived by ChatStore.archivedChats.collectAsState()
+    LaunchedEffect(Unit) { ChatStore.loadArchived() }
     val folders by ChatStore.folders.collectAsState()
     val selectedFolder by ChatStore.selectedFolder.collectAsState()
     val folderChats by ChatStore.folderChats.collectAsState()
@@ -327,66 +336,99 @@ fun ChatListScreen(
         }
     }
 
+    // Root is a Box since v0.9.19 (Z1) so the official
+    // pencil FAB can float over the list's bottom end.
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+        // Official single-row top bar (v0.9.19, Z1): drawer
+        // button, title, search icon, overflow — the old
+        // three-part header (big title + text-link row +
+        // resident search box) is gone. Its entries moved,
+        // none dropped: create -> drawer / overflow / FAB,
+        // contacts -> drawer / Duck bar, archive -> list-top
+        // row / overflow, settings -> drawer / Duck bar /
+        // overflow (entry map in the checkpoint).
+        val topPalette = OfficialTheme.current()
+        var topMenuOpen by remember { mutableStateOf(false) }
+        Column(
+            modifier = Modifier.background(topPalette.actionBarBg)
         ) {
-            // Drawer button (v0.9.19, Z2): opens the
-            // official-style navigation drawer. (The Z1 step
-            // collapses this header into the official single
-            // row; the button keeps its seat.)
-            IconButton(onClick = onOpenDrawer) {
-                Icon(
-                    Icons.Filled.Menu, contentDescription = "菜单",
-                    modifier = Modifier.padding(start = 4.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onOpenDrawer) {
+                    Icon(
+                        Icons.Filled.Menu, contentDescription = "菜单",
+                        tint = topPalette.actionBarIcon
+                    )
+                }
+                Text(
+                    "TuxunGram",
+                    color = topPalette.actionBarTitle,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
                 )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onOpenSearch) {
+                    Icon(
+                        SearchIcon, contentDescription = "搜索",
+                        tint = topPalette.actionBarIcon
+                    )
+                }
+                Box {
+                    IconButton(onClick = { topMenuOpen = true }) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = "更多",
+                            tint = topPalette.actionBarIcon
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = topMenuOpen,
+                        onDismissRequest = { topMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("新建群组") },
+                            onClick = {
+                                topMenuOpen = false
+                                onOpenCreate("group")
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("新建频道") },
+                            onClick = {
+                                topMenuOpen = false
+                                onOpenCreate("channel")
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("归档") },
+                            onClick = {
+                                topMenuOpen = false
+                                onOpenArchive()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("设置") },
+                            onClick = {
+                                topMenuOpen = false
+                                onOpenSettings()
+                            }
+                        )
+                    }
+                }
             }
-            Text(
-                "TuxunGram",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(topPalette.divider)
             )
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { onOpenCreate("group") }) {
-                Icon(Icons.Filled.Add, contentDescription = "新建群组或频道")
-            }
-            TextButton(onClick = onOpenContacts) {
-                Text("通讯录")
-            }
-            TextButton(onClick = onOpenArchive) {
-                Text("归档")
-            }
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Filled.Settings, contentDescription = "设置")
-            }
         }
-        // Search entry (v0.9.19, Z4): a fake field that opens
-        // the full-screen search page — the official shape.
-        // (The Z1 top bar replaces this bar with the search
-        // icon in the same version.)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .background(
-                    MaterialTheme.colorScheme.surfaceVariant,
-                    RoundedCornerShape(10.dp)
-                )
-                .clickable { onOpenSearch() }
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Search, contentDescription = null,
-                    tint = Color.Gray, modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("搜索", color = Color.Gray, fontSize = 15.sp)
-            }
-        }
-        Spacer(Modifier.height(8.dp))
         // Folder tabs (B7 + editor): selecting one swaps the
         // list below to that folder's chats; long-press opens
         // the editor (rename / members / delete), and the
@@ -666,6 +708,14 @@ fun ChatListScreen(
                     .fillMaxSize()
                     .lazyListScrollbar(listState)
             ) {
+                if (selectedFolder == null && archived.isNotEmpty()) {
+                    item(key = "archive_entry") {
+                        ArchiveEntryRow(
+                            unread = archived.sumOf { it.unreadCount },
+                            onClick = onOpenArchive
+                        )
+                    }
+                }
                 items(
                     items = shown,
                     key = { it.id }
@@ -688,6 +738,82 @@ fun ChatListScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+    // Official pencil FAB (v0.9.19, Z1): floats over the
+    // list's bottom end — this screen fills the host's
+    // weighted box above the Duck bar, so BottomEnd here
+    // sits just above the bar, no overlap. It opens the
+    // create screen (group/channel is chosen there); the
+    // drawer carries the two direct entries.
+    FloatingActionButton(
+        onClick = { onOpenCreate("group") },
+        containerColor = OfficialTheme.current().accent,
+        contentColor = Color.White,
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(16.dp)
+    ) {
+        Icon(Icons.Filled.Edit, contentDescription = "新建")
+    }
+    }
+}
+
+/** The archive entry at the top of the main list (v0.9.19,
+ *  Z1), the official placement: a gray archive glyph in a
+ *  circle, 「归档」, and the archived unread total when any.
+ *  Shown only while at least one chat is archived. */
+@Composable
+fun ArchiveEntryRow(unread: Int, onClick: () -> Unit) {
+    val palette = OfficialTheme.current()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(54.dp)
+                .background(palette.graySection, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                ArchiveIcon, contentDescription = null,
+                tint = palette.textSecondary,
+                modifier = Modifier.size(26.dp)
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            "归档",
+            color = palette.textPrimary,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 16.sp,
+            maxLines = 1,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        Spacer(Modifier.weight(1f))
+        if (unread > 0) {
+            val cap by UiSettings.unreadCap.collectAsState()
+            Box(
+                modifier = Modifier
+                    .height(20.dp)
+                    .defaultMinSize(minWidth = 20.dp)
+                    .background(
+                        palette.unreadBadge, RoundedCornerShape(10.dp)
+                    )
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (unread > cap) "$cap+" else unread.toString(),
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
