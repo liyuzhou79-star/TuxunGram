@@ -33,6 +33,14 @@ object ContactsStore {
     private val _contacts = MutableStateFlow<List<ContactEntry>>(emptyList())
     val contacts: StateFlow<List<ContactEntry>> = _contacts
 
+    /** True once a getContacts answer has landed, even an
+     *  empty one (v0.9.9, W5): the contacts page showed its
+     *  loading spinner forever for an account that simply
+     *  has no contacts, because empty list was its only
+     *  "not loaded yet" signal. */
+    private val _loadFinished = MutableStateFlow(false)
+    val loadFinished: StateFlow<Boolean> = _loadFinished
+
     private val byId = ConcurrentHashMap<Long, ContactEntry>()
 
     @Volatile
@@ -71,6 +79,7 @@ object ContactsStore {
                 return@sendRaw
             }
             val ids = response.optJSONArray("user_ids") ?: return@sendRaw
+            _loadFinished.value = true
             for (i in 0 until ids.length()) {
                 fetchUser(ids.optLong(i))
             }

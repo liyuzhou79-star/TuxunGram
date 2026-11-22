@@ -581,13 +581,13 @@ fun SettingsScreen(
                                 onClick = { type = "socks5" },
                                 enabled = type != "socks5"
                             ) {
-                                Text(if (type == "socks5") "● SOCKS5" else "○ SOCKS5")
+                                RadioText(type == "socks5", "SOCKS5", fontSize = 14.sp)
                             }
                             TextButton(
                                 onClick = { type = "mtproto" },
                                 enabled = type != "mtproto"
                             ) {
-                                Text(if (type == "mtproto") "● MTProto" else "○ MTProto")
+                                RadioText(type == "mtproto", "MTProto", fontSize = 14.sp)
                             }
                         }
                         OutlinedTextField(
@@ -744,7 +744,7 @@ fun SettingsScreen(
                     onClick = { UiSettings.setUnreadCap(cap) },
                     enabled = unreadCap != cap
                 ) {
-                    Text(if (unreadCap == cap) "● $cap+" else "○ $cap+")
+                    RadioText(unreadCap == cap, "$cap+", fontSize = 14.sp)
                 }
             }
         }
@@ -769,7 +769,7 @@ fun SettingsScreen(
                     onClick = { UiSettings.setThemeMode(mode) },
                     enabled = themeMode != mode
                 ) {
-                    Text(if (themeMode == mode) "● $label" else "○ $label")
+                    RadioText(themeMode == mode, label, fontSize = 14.sp)
                 }
             }
         }
@@ -912,7 +912,7 @@ fun SettingsScreen(
                     onClick = { UiSettings.setBubbleStyle(style) },
                     enabled = bubbleStyle != style
                 ) {
-                    Text(if (bubbleStyle == style) "● $label" else "○ $label")
+                    RadioText(bubbleStyle == style, label, fontSize = 14.sp)
                 }
             }
         }
@@ -930,7 +930,7 @@ fun SettingsScreen(
                     onClick = { UiSettings.setFontSize(index) },
                     enabled = fontSize != index
                 ) {
-                    Text(if (fontSize == index) "● $label" else "○ $label")
+                    RadioText(fontSize == index, label, fontSize = 14.sp)
                 }
             }
         }
@@ -1078,9 +1078,10 @@ fun SettingsScreen(
                         onClick = { AppLock.setAutoLockMinutes(option) },
                         enabled = autoLockMinutes != option
                     ) {
-                        Text(
-                            (if (autoLockMinutes == option) "● " else "○ ") +
-                                AppLock.autoLockLabel(option)
+                        RadioText(
+                            autoLockMinutes == option,
+                            AppLock.autoLockLabel(option),
+                            fontSize = 14.sp
                         )
                     }
                 }
@@ -1691,10 +1692,9 @@ fun PrivacySection() {
                                 }
                                 .padding(vertical = 10.dp)
                         ) {
-                            Text(
-                                (if (current == tier) "● " else "○ ") +
-                                    PrivacyStore.tierLabel(tier),
-                                fontSize = 15.sp
+                            RadioText(
+                                current == tier,
+                                PrivacyStore.tierLabel(tier)
                             )
                         }
                     }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -130,7 +131,10 @@ fun StickerSetsScreen(onBack: () -> Unit) {
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                Text("还没有装任何贴纸包", color = Color.Gray)
+                EmptyState(
+                    Icons.Filled.Face, "还没有装任何贴纸包",
+                    "把贴纸包链接粘到上面添加，或在聊天里点一张贴纸添加整包。"
+                )
             }
         } else {
             LazyColumn(

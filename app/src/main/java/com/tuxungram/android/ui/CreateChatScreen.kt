@@ -13,6 +13,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -74,13 +76,37 @@ fun CreateChatScreen(
                 onClick = { mode = "group" },
                 enabled = mode != "group"
             ) {
-                Text(if (mode == "group") "● 群组" else "○ 群组")
+                Icon(
+                    PeopleIcon, contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("群组")
+                if (mode == "group") {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.Filled.Check, contentDescription = "已选",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
             TextButton(
                 onClick = { mode = "channel" },
                 enabled = mode != "channel"
             ) {
-                Text(if (mode == "channel") "● 频道" else "○ 频道")
+                Icon(
+                    MegaphoneIcon, contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("频道")
+                if (mode == "channel") {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.Filled.Check, contentDescription = "已选",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
         OutlinedTextField(
@@ -153,6 +179,9 @@ fun CreateChatScreen(
                 value = memberQuery,
                 onValueChange = { memberQuery = it },
                 placeholder = { Text("搜索联系人") },
+                leadingIcon = {
+                    Icon(Icons.Filled.Search, contentDescription = null)
+                },
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()

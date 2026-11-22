@@ -204,10 +204,9 @@ fun GroupPermissionsScreen(chatId: Long, onBack: () -> Unit) {
                             .clickable(enabled = !busy) { applySlowMode(option) }
                             .padding(vertical = 9.dp)
                     ) {
-                        Text(
-                            (if (slow == option) "● " else "○ ") +
-                                AdminStore.slowModeLabel(option),
-                            fontSize = 15.sp
+                        RadioText(
+                            slow == option,
+                            AdminStore.slowModeLabel(option)
                         )
                     }
                 }

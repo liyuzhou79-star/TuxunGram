@@ -52,6 +52,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -1053,7 +1054,11 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (chat.isSecret) {
-                    Text("🔒", fontSize = 13.sp)
+                    Icon(
+                        Icons.Filled.Lock, contentDescription = "秘密聊天",
+                        tint = Color(0xFF43A047),
+                        modifier = Modifier.size(14.dp)
+                    )
                     Spacer(Modifier.width(4.dp))
                 }
                 Text(
@@ -1243,37 +1248,108 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                             .padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (chat.photoPath != null) {
-                            AvatarImage(path = chat.photoPath, sizeDp = 48)
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .background(Color(0xFF90CAF9), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    chat.title.trim().firstOrNull()?.toString() ?: "?",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 18.sp
+                        // Same avatar treatment as the main
+                        // list (v0.9.9, W5 parity): per-chat
+                        // fallback colour and the online dot.
+                        val hue = (chat.id % 8 + 8) % 8
+                        val colors = listOf(
+                            Color(0xFFEF9A9A), Color(0xFFF48FB1),
+                            Color(0xFFCE93D8), Color(0xFF90CAF9),
+                            Color(0xFF80CBC4), Color(0xFFA5D6A7),
+                            Color(0xFFFFCC80), Color(0xFFBCAAA4)
+                        )
+                        Box {
+                            if (chat.photoPath != null) {
+                                AvatarImage(path = chat.photoPath, sizeDp = 48)
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .background(
+                                            colors[hue.toInt()],
+                                            CircleShape
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        chat.title.trim().firstOrNull()?.toString() ?: "?",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp
+                                    )
+                                }
+                            }
+                            if (chat.isOnline) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .size(13.dp)
+                                        .border(
+                                            2.dp,
+                                            MaterialTheme.colorScheme.background,
+                                            CircleShape
+                                        )
+                                        .background(
+                                            Color(0xFF4CAF50),
+                                            CircleShape
+                                        )
                                 )
                             }
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                chat.title,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 16.sp,
-                                maxLines = 1
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    chat.title,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 16.sp,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                if (chat.isMuted) {
+                                    Spacer(Modifier.width(5.dp))
+                                    Icon(
+                                        MuteBellIcon,
+                                        contentDescription = "已静音",
+                                        tint = Color.Gray,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
                             Text(
                                 chat.preview,
                                 color = Color.Gray,
                                 fontSize = 14.sp,
                                 maxLines = 1
                             )
+                        }
+                        if (chat.unreadCount > 0) {
+                            val cap by UiSettings.unreadCap.collectAsState()
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        if (chat.isMuted) {
+                                            Color(0xFFBDBDBD)
+                                        } else {
+                                            Color(0xFF4CAF50)
+                                        },
+                                        CircleShape
+                                    )
+                                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    if (chat.unreadCount > cap) {
+                                        "$cap+"
+                                    } else {
+                                        chat.unreadCount.toString()
+                                    },
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.width(4.dp))
                         }
                         TextButton(onClick = { ChatStore.unarchive(chat) }) {
                             Text("取消归档")
@@ -1318,13 +1394,23 @@ fun FolderChip(
             )
             .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
-        Text(
-            label,
-            color = if (selected) Color.White else Color(0xFF424242),
-            fontSize = 13.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (label != "全部") {
+                Icon(
+                    FolderIcon, contentDescription = null,
+                    tint = if (selected) Color.White else Color(0xFF757575),
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(Modifier.width(5.dp))
+            }
+            Text(
+                label,
+                color = if (selected) Color.White else Color(0xFF424242),
+                fontSize = 13.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1
+            )
+        }
     }
 }
 
@@ -1382,6 +1468,9 @@ fun FolderEditorDialog(
                     value = name,
                     onValueChange = { name = it },
                     placeholder = { Text("文件夹名字") },
+                    leadingIcon = {
+                        Icon(FolderIcon, contentDescription = null)
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )

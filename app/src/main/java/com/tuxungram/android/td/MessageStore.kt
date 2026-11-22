@@ -880,6 +880,27 @@ object MessageStore {
 
     fun sendText(text: String) = sendText(text, SendModifiers())
 
+    /** Re-send a message whose send failed (v0.9.9, W5:
+     *  failed bubbles showed 发送失败 but offered no way to
+     *  retry). resendMessages is verified in td_api.tl; the
+     *  usual updateMessageSendSucceeded / updateNewMessage
+     *  flow replaces the failed bubble in place. */
+    fun resend(messageId: Long) {
+        val chatId = currentChatId
+        if (chatId == 0L || messageId == 0L) return
+        val query = TdClient.request("resendMessages").apply {
+            put("chat_id", chatId)
+            put("message_ids", org.json.JSONArray().put(messageId))
+            put("quote", JSONObject.NULL)
+            put("paid_message_star_count", 0)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = "重发失败，再试一次。"
+            }
+        }
+    }
+
     fun sendText(text: String, mods: SendModifiers) {
         val chatId = currentChatId
         if (chatId == 0L) return

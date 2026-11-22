@@ -2,6 +2,8 @@ package com.tuxungram.android.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +49,62 @@ import androidx.compose.ui.unit.sp
  *  square, then the title. Used at the head of every settings
  *  group and profile section. */
 @Composable
+/** A radio-choice label (v0.9.9, W1 sweep): the selected
+ *  state is a drawn radio glyph (ring + dot) instead of the
+ *  text bullets the option rows used before. */
+@Composable
+fun RadioText(selected: Boolean, text: String, fontSize: TextUnit = 15.sp) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .border(
+                    2.dp,
+                    if (selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        Color.Gray
+                    },
+                    CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .size(9.dp)
+                        .background(
+                            MaterialTheme.colorScheme.primary,
+                            CircleShape
+                        )
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontSize = fontSize)
+    }
+}
+
+/** A panel tab label (v0.9.9, W1 sweep): a small filled dot
+ *  marks the active tab instead of a text bullet prefix. */
+@Composable
+fun TabDotText(selected: Boolean, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primary,
+                        CircleShape
+                    )
+            )
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(text)
+    }
+}
+
 fun SectionTitle(icon: ImageVector, text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(

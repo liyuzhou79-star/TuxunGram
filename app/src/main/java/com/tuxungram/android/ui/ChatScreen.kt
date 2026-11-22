@@ -2548,9 +2548,12 @@ fun MessageBubble(
                             fontSize = 11.sp
                         )
                         "failed" -> Text(
-                            "  发送失败",
+                            "  发送失败，点这里重发",
                             color = Color(0xFFC62828),
-                            fontSize = 11.sp
+                            fontSize = 11.sp,
+                            modifier = Modifier.clickable {
+                                MessageStore.resend(msg.id)
+                            }
                         )
                     }
                 }
@@ -3604,7 +3607,7 @@ private fun MediaPanel(
                     onClick = { tab = index },
                     enabled = tab != index
                 ) {
-                    Text(if (tab == index) "● $label" else label)
+                    TabDotText(tab == index, label)
                 }
             }
         }
@@ -3685,20 +3688,17 @@ private fun MediaPanel(
                         .padding(horizontal = 8.dp)
                 ) {
                     TextButton(onClick = { setSel = null }) {
-                        Text(if (setSel == null) "● 最近" else "最近")
+                        TabDotText(setSel == null, "最近")
                     }
                     TextButton(onClick = { setSel = -1L }) {
-                        Text(if (setSel == -1L) "● 收藏" else "收藏")
+                        TabDotText(setSel == -1L, "收藏")
                     }
                     for (set in sets) {
                         TextButton(onClick = {
                             setSel = set.id
                             MediaStore.loadSet(set.id)
                         }) {
-                            Text(
-                                if (setSel == set.id) "● ${set.title}"
-                                else set.title
-                            )
+                            TabDotText(setSel == set.id, set.title)
                         }
                     }
                 }

@@ -337,11 +337,19 @@ fun ProfileScreen(
                         )
                         val info =
                             if (secretInfo?.chatId == chatId) secretInfo else null
-                        Text(
-                            "🔒 端到端加密",
-                            fontSize = 15.sp,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(top = 4.dp)
-                        )
+                        ) {
+                            Icon(
+                                Icons.Filled.Lock,
+                                contentDescription = null,
+                                tint = Color(0xFF43A047),
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(Modifier.width(7.dp))
+                            Text("端到端加密", fontSize = 15.sp)
+                        }
                         Text(
                             when (info?.state) {
                                 "ready" -> "状态：已建立，可以正常收发"
@@ -387,9 +395,9 @@ fun ProfileScreen(
                                     },
                                     enabled = p.autoDeleteSeconds != option
                                 ) {
-                                    Text(
-                                        (if (p.autoDeleteSeconds == option) "● " else "○ ") +
-                                            SecretChatStore.ttlLabel(option),
+                                    RadioText(
+                                        p.autoDeleteSeconds == option,
+                                        SecretChatStore.ttlLabel(option),
                                         fontSize = 12.sp
                                     )
                                 }

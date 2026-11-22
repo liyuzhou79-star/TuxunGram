@@ -74,6 +74,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -322,7 +323,10 @@ private fun AppRoot() {
 
 @Composable
 private fun ReadyHost() {
-    var openChatId by remember { mutableStateOf<Long?>(null) }
+    // Saveable (v0.9.9, W5): a rotation recreates the
+    // activity; without this the open chat and the home tab
+    // were lost and the user landed back on the chat list.
+    var openChatId by rememberSaveable { mutableStateOf<Long?>(null) }
     // Notification taps land here (Batch 3, C1).
     val pendingChat by DeepLink.pendingChat.collectAsState()
     LaunchedEffect(pendingChat) {
@@ -409,7 +413,7 @@ private fun ReadyHost() {
     // opening a chat or any sub-page replaces the whole host
     // as before. The chat list's LazyListState is hoisted
     // here so tab switches keep its scroll position.
-    var homeTab by remember { mutableStateOf(0) }
+    var homeTab by rememberSaveable { mutableStateOf(0) }
     val homeListState = rememberLazyListState()
     val allChats by ChatStore.chats.collectAsState()
     val homeUnread = allChats.sumOf { it.unreadCount }

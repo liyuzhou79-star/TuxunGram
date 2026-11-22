@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -110,6 +111,9 @@ fun ContactsScreen(
             value = query,
             onValueChange = { query = it },
             placeholder = { Text("搜索联系人") },
+            leadingIcon = {
+                Icon(Icons.Filled.Search, contentDescription = null)
+            },
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
@@ -117,13 +121,22 @@ fun ContactsScreen(
         )
         Spacer(Modifier.height(8.dp))
         if (shown.isEmpty()) {
+            val loadFinished by ContactsStore.loadFinished.collectAsState()
             CenterColumn {
-                if (contacts.isEmpty()) {
+                if (!loadFinished) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(12.dp))
                     Text("正在加载联系人…", color = Color.Gray)
+                } else if (query.isNotEmpty()) {
+                    EmptyState(
+                        Icons.Filled.Search, "没有找到联系人",
+                        "换个名字或用户名再搜搜看。"
+                    )
                 } else {
-                    Text("没有找到联系人", color = Color.Gray)
+                    EmptyState(
+                        PeopleIcon, "还没有联系人",
+                        "在 Telegram 里加过的联系人会出现在这里。"
+                    )
                 }
             }
         } else {
