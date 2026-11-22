@@ -1308,7 +1308,7 @@ fun ChatScreen(
                             val query = TdClient.request(
                                 "sendBotStartMessage"
                             ).apply {
-                                put("bot_user_id", bot.botUserId)
+                                put("bot_user_id", bot?.botUserId ?: 0L)
                                 put("chat_id", chatId)
                                 put("parameter", "")
                             }

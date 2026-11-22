@@ -162,6 +162,7 @@ fun SavedMessagesRow(onClick: () -> Unit) {
 
 /** Chat-list-as-picker for forwarding one message. Stays open until
  *  TDLib answers, so a failure is shown here instead of vanishing. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ForwardPickerScreen(
     fromChatId: Long,
@@ -268,6 +269,7 @@ fun formatChatTime(dateSeconds: Int): String {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatListScreen(
     onOpenChat: (Long) -> Unit,
