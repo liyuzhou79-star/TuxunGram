@@ -129,8 +129,26 @@ data class MsgItem(
     val buttons: List<List<InlineBtn>> = emptyList(),
     // Channel post flag (message.is_channel_post); the comment
     // entry (G1) only makes sense on these.
-    val isChannelPost: Boolean = false
+    val isChannelPost: Boolean = false,
+    // Scheduled-send state from message.scheduling_state
+    // (v0.9.3, M5): scheduledAtSec > 0 = the message goes out
+    // at that unix time; scheduledWhenOnline = it goes out
+    // when the other side comes online.
+    val scheduledAtSec: Int = 0,
+    val scheduledWhenOnline: Boolean = false
 )
+
+/** How one send should deviate from the plain immediate send
+ *  (v0.9.3, M5): silent (no notification for the other side)
+ *  and/or scheduled (messageSendOptions.scheduling_state). */
+data class SendModifiers(
+    val silent: Boolean = false,
+    val scheduleAtSec: Long = 0L,
+    val whenOnline: Boolean = false
+) {
+    val isDefault: Boolean
+        get() = !silent && scheduleAtSec == 0L && !whenOnline
+}
 
 /**
  * State for the one chat currently open on screen: history paging,
@@ -370,6 +388,29 @@ object MessageStore {
             }
         }
         loadHistory(fromMessageId = 0L)
+        loadScheduled(chatId)
+    }
+
+    /** Scheduled messages live outside the normal history in
+     *  TDLib (getChatScheduledMessages, v0.9.3 M5): fetch and
+     *  merge them so a timed message the user set earlier is
+     *  still visible — with its schedule label — when the chat
+     *  is reopened, instead of looking lost. */
+    private fun loadScheduled(chatId: Long) {
+        TdRepository.sendRaw(TdClient.request("getChatScheduledMessages").apply {
+            put("chat_id", chatId)
+        }) { response ->
+            if (currentChatId != chatId || TdClient.isError(response)) {
+                return@sendRaw
+            }
+            val arr = response.optJSONArray("messages") ?: return@sendRaw
+            for (i in 0 until arr.length()) {
+                val msg = arr.optJSONObject(i) ?: continue
+                val item = parseMessage(msg)
+                byId[item.id] = item
+            }
+            if (arr.length() > 0) publish()
+        }
     }
 
     fun close() {
@@ -548,14 +589,50 @@ object MessageStore {
         }
     }
 
-    fun sendText(text: String) {
+    /** messageSendOptions for a non-default send (v0.9.3,
+     *  M5): disable_notification for a silent send and/or a
+     *  scheduling_state (messageSchedulingStateSendAtDate /
+     *  SendWhenOnline — field shapes verified in td_api.tl).
+     *  Null for a plain send, where the field stays absent
+     *  exactly as before. */
+    private fun sendOptionsJson(mods: SendModifiers): JSONObject? {
+        if (mods.isDefault) return null
+        return JSONObject().apply {
+            put("@type", "messageSendOptions")
+            put("disable_notification", mods.silent)
+            put("from_background", false)
+            put("protect_content", false)
+            when {
+                mods.whenOnline -> put(
+                    "scheduling_state",
+                    JSONObject().put(
+                        "@type", "messageSchedulingStateSendWhenOnline"
+                    )
+                )
+                mods.scheduleAtSec > 0 -> put(
+                    "scheduling_state",
+                    JSONObject().apply {
+                        put("@type", "messageSchedulingStateSendAtDate")
+                        put("send_date", mods.scheduleAtSec.toInt())
+                        put("repeat_period", 0)
+                    }
+                )
+            }
+        }
+    }
+
+    fun sendText(text: String) = sendText(text, SendModifiers())
+
+    fun sendText(text: String, mods: SendModifiers) {
         val chatId = currentChatId
         if (chatId == 0L) return
         val replyTo = replyToJson()
         _replyTarget.value = null
+        val options = sendOptionsJson(mods)
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
             if (replyTo != null) put("reply_to", replyTo)
+            if (options != null) put("options", options)
             put("input_message_content", JSONObject().apply {
                 put("@type", "inputMessageText")
                 put("text", formattedText(text))
@@ -598,14 +675,19 @@ object MessageStore {
             put("has_spoiler", false)
         }
 
-    fun sendPhoto(path: String, caption: String) {
+    fun sendPhoto(path: String, caption: String) =
+        sendPhoto(path, caption, SendModifiers())
+
+    fun sendPhoto(path: String, caption: String, mods: SendModifiers) {
         val chatId = currentChatId
         if (chatId == 0L) return
         val replyTo = replyToJson()
         _replyTarget.value = null
+        val options = sendOptionsJson(mods)
         val query = TdClient.request("sendMessage").apply {
             put("chat_id", chatId)
             if (replyTo != null) put("reply_to", replyTo)
+            if (options != null) put("options", options)
             put("input_message_content", photoContent(path, caption))
         }
         TdRepository.sendRaw(query) { response ->
@@ -750,6 +832,12 @@ object MessageStore {
                 message.contains("not enough rights") ->
                 "你在这个对话里不能发言。"
             message.contains("FLOOD_WAIT") -> "发太快了，等一会儿再发。"
+            // Scheduled sends (v0.9.3, M5): secret chats and
+            // some other chat types refuse them server-side;
+            // say that plainly instead of a bare code.
+            message.contains("SCHEDULE", ignoreCase = true) ||
+                message.contains("scheduling", ignoreCase = true) ->
+                "这个对话不支持定时发送（比如秘密聊天），或者定的时间不对。"
             else -> "发送失败，再试一次。（错误码 ${error.optInt("code")}）"
         }
     }
@@ -1089,7 +1177,19 @@ object MessageStore {
             replySummary = replySummaryOf(msg),
             reactions = reactionsOf(msg.optJSONObject("interaction_info")),
             buttons = parseButtons(msg.optJSONObject("reply_markup")),
-            isChannelPost = msg.optBoolean("is_channel_post")
+            isChannelPost = msg.optBoolean("is_channel_post"),
+            scheduledAtSec = when (
+                msg.optJSONObject("scheduling_state")?.optString("@type")
+            ) {
+                "messageSchedulingStateSendAtDate" ->
+                    msg.optJSONObject("scheduling_state")
+                        ?.optInt("send_date") ?: 0
+                else -> 0
+            },
+            scheduledWhenOnline =
+                msg.optJSONObject("scheduling_state")
+                    ?.optString("@type") ==
+                    "messageSchedulingStateSendWhenOnline"
         )
         val content = msg.optJSONObject("content") ?: return base
         return parseContent(base, content)

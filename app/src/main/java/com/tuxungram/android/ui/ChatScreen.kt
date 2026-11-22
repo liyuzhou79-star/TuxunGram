@@ -98,6 +98,7 @@ import com.tuxungram.android.td.PollUi
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.SecretChatStore
+import com.tuxungram.android.td.SendModifiers
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.ThreadStore
 import com.tuxungram.android.td.UiSettings
@@ -173,6 +174,7 @@ fun dayKey(dateSeconds: Int): Int {
         cal.get(java.util.Calendar.DAY_OF_YEAR)
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(
     chatId: Long,
@@ -221,6 +223,9 @@ fun ChatScreen(
     // In-app video player target (v0.9.1, J3).
     var videoItem by remember { mutableStateOf<MsgItem?>(null) }
     var input by remember { mutableStateOf("") }
+    // Send-button long-press menu (v0.9.3, M5): silent and
+    // scheduled sending.
+    var sendMenuOpen by remember { mutableStateOf(false) }
     var pendingPhoto by remember { mutableStateOf<String?>(null) }
     var photoCaption by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -615,6 +620,13 @@ fun ChatScreen(
                     MessageStore.sendPhoto(photoPath, photoCaption.trim())
                     pendingPhoto = null
                 },
+                onSendOptions = { mods ->
+                    MessageStore.clearSendError()
+                    MessageStore.sendPhoto(photoPath, photoCaption.trim(), mods)
+                    pendingPhoto = null
+                },
+                allowWhenOnline = chat != null && !chat.isGroup &&
+                    !chat.isChannel && !chat.isSecret,
                 onCancel = { pendingPhoto = null }
             )
             return@Column
@@ -1021,6 +1033,9 @@ fun ChatScreen(
                         }
                     }
                 } else {
+                    // Send button (v0.9.3, M5): tap sends now,
+                    // long-press opens the silent / scheduled
+                    // menu — the mature-client pattern.
                     Box(
                         modifier = Modifier
                             .size(44.dp)
@@ -1031,24 +1046,59 @@ fun ChatScreen(
                                     Color(0xFFBDBDBD)
                                 },
                                 CircleShape
+                            )
+                            .combinedClickable(
+                                enabled = canBasic && input.isNotBlank(),
+                                onClick = {
+                                    val text = input.trim()
+                                    if (text.isNotEmpty()) {
+                                        MessageStore.clearSendError()
+                                        MessageStore.sendText(text)
+                                        input = ""
+                                    }
+                                },
+                                onLongClick = { sendMenuOpen = true }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        IconButton(
-                            onClick = {
-                                val text = input.trim()
-                                if (text.isNotEmpty()) {
-                                    MessageStore.clearSendError()
-                                    MessageStore.sendText(text)
-                                    input = ""
-                                }
-                            },
-                            enabled = canBasic && input.isNotBlank()
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "发送",
+                            tint = Color.White
+                        )
+                        DropdownMenu(
+                            expanded = sendMenuOpen,
+                            onDismissRequest = { sendMenuOpen = false }
                         ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.Send,
-                                contentDescription = "发送",
-                                tint = Color.White
+                            SendOptionMenuItems(
+                                allowWhenOnline = chat != null &&
+                                    !chat.isGroup && !chat.isChannel &&
+                                    !chat.isSecret,
+                                onPick = { mods ->
+                                    sendMenuOpen = false
+                                    val text = input.trim()
+                                    if (text.isNotEmpty()) {
+                                        MessageStore.clearSendError()
+                                        MessageStore.sendText(text, mods)
+                                        input = ""
+                                    }
+                                },
+                                onCustom = {
+                                    sendMenuOpen = false
+                                    pickCustomSendTime(context) { sec ->
+                                        val text = input.trim()
+                                        if (text.isNotEmpty()) {
+                                            MessageStore.clearSendError()
+                                            MessageStore.sendText(
+                                                text,
+                                                SendModifiers(
+                                                    scheduleAtSec = sec
+                                                )
+                                            )
+                                            input = ""
+                                        }
+                                    }
+                                }
                             )
                         }
                     }
@@ -1092,14 +1142,19 @@ fun ChatScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PhotoPreview(
     path: String,
     caption: String,
     onCaptionChange: (String) -> Unit,
     onSend: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    onSendOptions: (SendModifiers) -> Unit = {},
+    allowWhenOnline: Boolean = false
 ) {
+    val previewContext = LocalContext.current
+    var photoMenuOpen by remember { mutableStateOf(false) }
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path
     ) {
@@ -1148,11 +1203,167 @@ fun PhotoPreview(
             TextButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
                 Text("取消")
             }
-            Button(onClick = onSend, modifier = Modifier.weight(1f)) {
-                Text("发送")
+            // Send (v0.9.3, M5): tap sends now; long-press
+            // opens the same silent / scheduled menu as the
+            // text send button.
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(40.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primary,
+                        RoundedCornerShape(20.dp)
+                    )
+                    .combinedClickable(
+                        onClick = onSend,
+                        onLongClick = { photoMenuOpen = true }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("发送", color = Color.White)
+                DropdownMenu(
+                    expanded = photoMenuOpen,
+                    onDismissRequest = { photoMenuOpen = false }
+                ) {
+                    SendOptionMenuItems(
+                        allowWhenOnline = allowWhenOnline,
+                        onPick = { mods ->
+                            photoMenuOpen = false
+                            onSendOptions(mods)
+                        },
+                        onCustom = {
+                            photoMenuOpen = false
+                            pickCustomSendTime(previewContext) { sec ->
+                                onSendOptions(
+                                    SendModifiers(scheduleAtSec = sec)
+                                )
+                            }
+                        }
+                    )
+                }
             }
         }
     }
+}
+
+/** Items of the send long-press menu (v0.9.3, M5): silent
+ *  send plus scheduled presets and a custom time. Shared by
+ *  the chat input's send button and the photo preview. */
+@Composable
+fun SendOptionMenuItems(
+    allowWhenOnline: Boolean,
+    onPick: (SendModifiers) -> Unit,
+    onCustom: () -> Unit
+) {
+    DropdownMenuItem(
+        text = { Text("静默发送（不提醒对方）") },
+        onClick = { onPick(SendModifiers(silent = true)) }
+    )
+    DropdownMenuItem(
+        text = {
+            Text(
+                "定时发送",
+                color = Color.Gray,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        },
+        enabled = false,
+        onClick = {}
+    )
+    val nowSec = System.currentTimeMillis() / 1000
+    val at22 = nextTimeOfDay(22, 0)
+    val at9 = nextTimeOfDay(9, 0)
+    val presets = listOf(
+        "1 小时后" to nowSec + 3600,
+        (if (isToday(at22)) "今晚 22:00" else "明晚 22:00") to at22,
+        (if (isToday(at9)) "今天 9:00" else "明早 9:00") to at9
+    )
+    for ((label, atSec) in presets) {
+        DropdownMenuItem(
+            text = { Text("$label · ${formatScheduleWhen(atSec)}") },
+            onClick = { onPick(SendModifiers(scheduleAtSec = atSec)) }
+        )
+    }
+    if (allowWhenOnline) {
+        DropdownMenuItem(
+            text = { Text("对方上线时发送") },
+            onClick = { onPick(SendModifiers(whenOnline = true)) }
+        )
+    }
+    DropdownMenuItem(
+        text = { Text("自定义时间…") },
+        onClick = onCustom
+    )
+}
+
+/** Next occurrence of hour:minute (today if still ahead). */
+fun nextTimeOfDay(hour: Int, minute: Int): Long {
+    val cal = java.util.Calendar.getInstance()
+    cal.set(java.util.Calendar.HOUR_OF_DAY, hour)
+    cal.set(java.util.Calendar.MINUTE, minute)
+    cal.set(java.util.Calendar.SECOND, 0)
+    cal.set(java.util.Calendar.MILLISECOND, 0)
+    if (cal.timeInMillis <= System.currentTimeMillis()) {
+        cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+    }
+    return cal.timeInMillis / 1000
+}
+
+fun isToday(epochSec: Long): Boolean {
+    val a = java.util.Calendar.getInstance()
+    val b = java.util.Calendar.getInstance().apply {
+        timeInMillis = epochSec * 1000
+    }
+    return a.get(java.util.Calendar.YEAR) == b.get(java.util.Calendar.YEAR) &&
+        a.get(java.util.Calendar.DAY_OF_YEAR) ==
+        b.get(java.util.Calendar.DAY_OF_YEAR)
+}
+
+/** "M月d日 HH:mm" for menu labels and bubble schedule lines. */
+fun formatScheduleWhen(epochSec: Long): String =
+    java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.CHINA)
+        .format(java.util.Date(epochSec * 1000))
+
+/** Framework date + time pickers for a custom schedule time
+ *  (no new dependencies). A picked time that is not safely in
+ *  the future is refused with a plain toast. */
+fun pickCustomSendTime(
+    context: android.content.Context,
+    onPicked: (Long) -> Unit
+) {
+    val now = java.util.Calendar.getInstance()
+    val dateDialog = android.app.DatePickerDialog(
+        context,
+        { _, year, month, day ->
+            android.app.TimePickerDialog(
+                context,
+                { _, hour, minute ->
+                    val cal = java.util.Calendar.getInstance()
+                    cal.set(year, month, day, hour, minute, 0)
+                    cal.set(java.util.Calendar.MILLISECOND, 0)
+                    val sec = cal.timeInMillis / 1000
+                    if (sec > System.currentTimeMillis() / 1000 + 30) {
+                        onPicked(sec)
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "这个时间已经过了，换一个晚一点的时间。",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                },
+                now.get(java.util.Calendar.HOUR_OF_DAY),
+                now.get(java.util.Calendar.MINUTE),
+                true
+            ).show()
+        },
+        now.get(java.util.Calendar.YEAR),
+        now.get(java.util.Calendar.MONTH),
+        now.get(java.util.Calendar.DAY_OF_MONTH)
+    )
+    dateDialog.datePicker.minDate = System.currentTimeMillis()
+    dateDialog.show()
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1641,6 +1852,22 @@ fun MessageBubble(
                             fontSize = 11.sp
                         )
                     }
+                }
+                // Scheduled-send label (v0.9.3, M5): the
+                // bubble stays in the chat with its send time
+                // written under it, as TDLib returns it.
+                if (msg.scheduledAtSec > 0) {
+                    Text(
+                        "🕐 定时 · ${formatScheduleWhen(msg.scheduledAtSec.toLong())} 发送",
+                        color = Color.Gray,
+                        fontSize = 11.sp
+                    )
+                } else if (msg.scheduledWhenOnline) {
+                    Text(
+                        "🕐 定时 · 对方上线时发送",
+                        color = Color.Gray,
+                        fontSize = 11.sp
+                    )
                 }
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
