@@ -56,7 +56,8 @@ fun ProfileScreen(
     chatId: Long,
     onBack: () -> Unit,
     onOpenSecretChat: (Long) -> Unit = {},
-    onOpenMembers: () -> Unit = {}
+    onOpenMembers: () -> Unit = {},
+    onOpenSharedMedia: () -> Unit = {}
 ) {
     BackHandler { onBack() }
     val profile by ProfileStore.profile.collectAsState()
@@ -161,6 +162,28 @@ fun ProfileScreen(
                         Text(p.description, fontSize = 15.sp)
                         Spacer(Modifier.height(16.dp))
                     }
+                }
+            }
+            item(key = "shared_media") {
+                // Shared media (v0.9.3, M4): photos / videos /
+                // files / links of this chat on their own page.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenSharedMedia() }
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "共享媒体",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "图片 · 视频 · 文件 · 链接 ›",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
                 }
             }
             if (p.userId != 0L && !p.isSecretChat) {

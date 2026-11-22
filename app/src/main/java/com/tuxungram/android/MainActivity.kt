@@ -126,6 +126,7 @@ import com.tuxungram.android.ui.ProfileScreen
 import com.tuxungram.android.ui.RegistrationScreen
 import com.tuxungram.android.ui.SessionsScreen
 import com.tuxungram.android.ui.SettingsScreen
+import com.tuxungram.android.ui.SharedMediaScreen
 import com.tuxungram.android.ui.SplashScreen
 import com.tuxungram.android.ui.StickerSetsScreen
 import com.tuxungram.android.ui.StoryViewerScreen
@@ -313,6 +314,9 @@ private fun ReadyHost() {
     // Members page (v0.9.2, L4): opened from a group/channel
     // profile; Back returns to that profile.
     var membersChatId by remember { mutableStateOf<Long?>(null) }
+    // Shared media page (v0.9.3, M4): same pattern — opened
+    // from a profile, Back returns to it.
+    var sharedMediaChatId by remember { mutableStateOf<Long?>(null) }
     // Rich-text mention taps (v0.9.2, L1): a mentionName carries
     // the user id (resolve via createPrivateChat), a plain
     // @mention carries the username (resolve via
@@ -413,6 +417,10 @@ private fun ReadyHost() {
                 openChatId = it
             }
         )
+        sharedMediaChatId != null -> SharedMediaScreen(
+            chatId = sharedMediaChatId!!,
+            onBack = { sharedMediaChatId = null }
+        )
         membersChatId != null -> MembersScreen(
             chatId = membersChatId!!,
             onBack = { membersChatId = null }
@@ -424,7 +432,8 @@ private fun ReadyHost() {
                 profileChatId = null
                 openChatId = newChatId
             },
-            onOpenMembers = { membersChatId = profileChatId }
+            onOpenMembers = { membersChatId = profileChatId },
+            onOpenSharedMedia = { sharedMediaChatId = profileChatId }
         )
         showCreate -> CreateChatScreen(
             onBack = { showCreate = false },
