@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -89,6 +90,13 @@ fun GuideScreen(onDone: () -> Unit) {
     val pagerState = rememberPagerState(pageCount = { GUIDE_PAGES.size })
     val scope = rememberCoroutineScope()
     val last = pagerState.currentPage == GUIDE_PAGES.size - 1
+    // Official-language alignment (v0.9.21, AB5): the hero
+    // disc is the accent at rest alpha with the accent
+    // glyph, body copy takes the palette's secondary text
+    // instead of a bare gray, and the primary button uses
+    // the same 10 dp rounded shape as the auth pages.
+    // Pages, copy and pager behaviour are unchanged.
+    val palette = OfficialTheme.current()
     Column(modifier = Modifier.fillMaxSize()) {
         HorizontalPager(
             state = pagerState,
@@ -108,12 +116,12 @@ fun GuideScreen(onDone: () -> Unit) {
                     modifier = Modifier
                         .size(124.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(palette.accent.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         p.icon, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        tint = palette.accent,
                         modifier = Modifier.size(58.dp)
                     )
                 }
@@ -128,7 +136,7 @@ fun GuideScreen(onDone: () -> Unit) {
                 Text(
                     p.body,
                     fontSize = 15.sp,
-                    color = Color.Gray,
+                    color = palette.textSecondary,
                     textAlign = TextAlign.Center
                 )
             }
@@ -152,7 +160,8 @@ fun GuideScreen(onDone: () -> Unit) {
                                 if (i == pagerState.currentPage) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
-                                    Color.Gray.copy(alpha = 0.4f)
+                                    palette.textSecondary
+                                        .copy(alpha = 0.35f)
                                 }
                             )
                     )
@@ -170,7 +179,8 @@ fun GuideScreen(onDone: () -> Unit) {
                             )
                         }
                     }
-                }
+                },
+                shape = RoundedCornerShape(10.dp)
             ) {
                 Text(if (last) "开始使用" else "下一页")
             }
@@ -190,23 +200,42 @@ fun GuideScreen(onDone: () -> Unit) {
 fun WhatsNewScreen(onClose: () -> Unit) {
     BackHandler { onClose() }
     val notes = Changelog.notesFor(BuildConfig.VERSION_NAME)
+    // Official-language alignment (v0.9.21, AB5): the
+    // header sits on the action-bar background over a
+    // hairline, like every other page since 0.9.19, and
+    // the close button takes the auth pages' rounded
+    // main-button shape. Content is unchanged.
+    val palette = OfficialTheme.current()
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(palette.actionBarBg),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onClose) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "关闭")
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "关闭",
+                    tint = palette.actionBarIcon
+                )
             }
             Text(
                 "本版新功能",
-                fontSize = 18.sp, fontWeight = FontWeight.SemiBold
+                fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+                color = palette.actionBarTitle
             )
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(palette.divider)
+        )
         if (notes == null) {
             Text(
                 "这一版主要是修问题和打磨细节，完整记录在设置 → 关于 → 更新日志里。",
-                color = Color.Gray, fontSize = 14.sp,
+                color = palette.textSecondary, fontSize = 14.sp,
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
         } else {
@@ -242,11 +271,13 @@ fun WhatsNewScreen(onClose: () -> Unit) {
         }
         Button(
             onClick = onClose,
+            shape = RoundedCornerShape(10.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
+                .height(52.dp)
         ) {
-            Text("知道了")
+            Text("知道了", fontSize = 16.sp)
         }
     }
 }
@@ -259,19 +290,33 @@ fun WhatsNewScreen(onClose: () -> Unit) {
 @Composable
 fun ChangelogScreen(onBack: () -> Unit) {
     BackHandler { onBack() }
+    val palette = OfficialTheme.current()
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(palette.actionBarBg),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = palette.actionBarIcon
+                )
             }
             Text(
                 "更新日志",
-                fontSize = 18.sp, fontWeight = FontWeight.SemiBold
+                fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+                color = palette.actionBarTitle
             )
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(palette.divider)
+        )
         val listState = rememberLazyListState()
         LazyColumn(
             state = listState,

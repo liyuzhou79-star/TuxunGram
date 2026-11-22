@@ -1,6 +1,7 @@
 package com.tuxungram.android.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Lock
@@ -141,6 +143,12 @@ fun LockScreen() {
         }
     }
 
+    // Official-language alignment (v0.9.21, AB5): accent
+    // hero disc, palette text colours, flat numeral keys
+    // instead of filled buttons, the scheme error colour.
+    // The lock logic — press(), the lockout countdown,
+    // the biometric flow — is byte-for-byte the old code.
+    val palette = OfficialTheme.current()
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -152,12 +160,12 @@ fun LockScreen() {
             modifier = Modifier
                 .size(76.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .background(palette.accent.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 Icons.Filled.Lock, contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                tint = palette.accent,
                 modifier = Modifier.size(38.dp)
             )
         }
@@ -165,10 +173,14 @@ fun LockScreen() {
         Text(
             "TuxunGram 已锁定",
             fontSize = 20.sp,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.SemiBold,
+            color = palette.textPrimary
         )
         Spacer(Modifier.height(6.dp))
-        Text("输入应用锁密码", color = Color.Gray, fontSize = 14.sp)
+        Text(
+            "输入应用锁密码",
+            color = palette.textSecondary, fontSize = 14.sp
+        )
         Spacer(Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             for (i in 0 until pinLen) {
@@ -179,7 +191,8 @@ fun LockScreen() {
                             if (i < entered.length) {
                                 MaterialTheme.colorScheme.primary
                             } else {
-                                Color(0xFFBDBDBD)
+                                palette.textSecondary
+                                    .copy(alpha = 0.35f)
                             },
                             CircleShape
                         )
@@ -195,7 +208,7 @@ fun LockScreen() {
             if (shownError != null) {
                 Text(
                     shownError,
-                    color = Color(0xFFC62828),
+                    color = MaterialTheme.colorScheme.error,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(top = 6.dp)
                 )
@@ -218,17 +231,33 @@ fun LockScreen() {
                         contentAlignment = Alignment.Center
                     ) {
                         when {
-                            key == "⌫" -> TextButton(onClick = {
-                                entered = entered.dropLast(1)
-                                error = null
-                            }) { Text("⌫", fontSize = 22.sp) }
-                            key.isEmpty() -> Spacer(Modifier.size(1.dp))
-                            else -> Button(
-                                onClick = { press(key) },
-                                shape = CircleShape,
-                                modifier = Modifier.size(64.dp)
+                            key == "⌫" -> Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        entered = entered.dropLast(1)
+                                        error = null
+                                    },
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text(key, fontSize = 22.sp)
+                                Text(
+                                    "⌫", fontSize = 22.sp,
+                                    color = palette.textSecondary
+                                )
+                            }
+                            key.isEmpty() -> Spacer(Modifier.size(1.dp))
+                            else -> Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .clickable { press(key) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    key, fontSize = 26.sp,
+                                    color = palette.textPrimary
+                                )
                             }
                         }
                     }
@@ -238,7 +267,10 @@ fun LockScreen() {
         }
         if (biometricOn && biometricOk) {
             Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { tryBiometric() }) {
+            OutlinedButton(
+                onClick = { tryBiometric() },
+                shape = RoundedCornerShape(10.dp)
+            ) {
                 Icon(
                     Icons.Filled.Face, contentDescription = null,
                     modifier = Modifier.size(19.dp)
