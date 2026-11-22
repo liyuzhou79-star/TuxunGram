@@ -308,6 +308,11 @@ object TdRepository {
     }
 
     private fun restartProcess(context: Context) {
+        // Account switches land here (regression fix R1,
+        // v0.9.6): the outgoing account's notifications carry
+        // its chat ids and must be withdrawn before the process
+        // restarts into the other account.
+        Notifier.clearAll(context)
         try {
             client?.close()
         } catch (t: Throwable) {

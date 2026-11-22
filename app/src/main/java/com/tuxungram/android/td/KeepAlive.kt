@@ -314,6 +314,32 @@ object Notifier {
         }
     }
 
+    /** Withdraw EVERY message notification (regression fix
+     *  R1, v0.9.6): an account switch restarts the process into
+     *  the other account, and the outgoing account's
+     *  notifications must not survive it — their tap intents
+     *  and reply/mark-read actions carry chat ids that belong
+     *  to the other account and would open (or send into) the
+     *  wrong conversation under the new account's client. */
+    fun clearAll(ctx: Context) {
+        val nm = NotificationManagerCompat.from(ctx)
+        val ids = HashSet<Long>()
+        ids.addAll(linesByChat.keys)
+        ids.addAll(lastMessageIdByChat.keys)
+        for (chatId in ids) {
+            try {
+                nm.cancel(chatId.hashCode())
+            } catch (t: Throwable) {
+            }
+        }
+        try {
+            nm.cancel(SUMMARY_ID)
+        } catch (t: Throwable) {
+        }
+        linesByChat.clear()
+        lastMessageIdByChat.clear()
+    }
+
     /** Withdraw a chat's notification (it was read in the app,
      *  marked read, or replied to) and refresh the summary. */
     fun dismissForChat(ctx: Context, chatId: Long) {
