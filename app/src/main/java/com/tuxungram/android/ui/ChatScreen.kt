@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
@@ -47,8 +48,11 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
@@ -115,7 +119,10 @@ import com.tuxungram.android.td.SecretChatStore
 import com.tuxungram.android.td.StickerSetStore
 import com.tuxungram.android.td.TrendingSetUi
 import com.tuxungram.android.td.SendModifiers
+import com.tuxungram.android.td.AvatarStore
 import com.tuxungram.android.td.BotStore
+import com.tuxungram.android.td.InlineResultUi
+import com.tuxungram.android.td.InlineStore
 import com.tuxungram.android.td.ReplyKb
 import com.tuxungram.android.td.TdClient
 import com.tuxungram.android.td.TdRepository
@@ -191,6 +198,13 @@ fun formatDayLabel(dateSeconds: Int): String {
         pattern, java.util.Locale.getDefault()
     ).format(cal.time)
 }
+
+/** Inline-query input shape (v0.9.12, S2): "@botname" at the
+ *  very start, at least one whitespace character, then the
+ *  query text (possibly empty). Mirrors the official clients:
+ *  no space after the username, no inline mode. */
+private val INLINE_QUERY_REGEX =
+    Regex("^@([A-Za-z0-9_]{3,})\\s([\\s\\S]*)$")
 
 /** Local day key (year * 1000 + day-of-year) for separator
  *  computation. */
@@ -359,6 +373,29 @@ fun ChatScreen(
     val botUi by BotStore.state.collectAsState()
     val replyKb by MessageStore.replyKb.collectAsState()
     var kbDismissedSource by remember(chatId) { mutableStateOf(0L) }
+    // Inline bot queries (v0.9.12, S2): an input shaped like
+    // "@botname <query>" feeds InlineStore (debounced — every
+    // keystroke restarts the effect, so the query only leaves
+    // after a short pause); any other shape closes the panel.
+    val inlineUi by InlineStore.state.collectAsState()
+    val inlineMatch = remember(input) {
+        INLINE_QUERY_REGEX.find(input)
+    }
+    LaunchedEffect(
+        chatId,
+        inlineMatch?.groupValues?.get(1),
+        inlineMatch?.groupValues?.get(2)
+    ) {
+        val m = inlineMatch
+        if (m == null) {
+            InlineStore.syncInput(chatId, null, null)
+        } else {
+            delay(350)
+            InlineStore.syncInput(
+                chatId, m.groupValues[1], m.groupValues[2]
+            )
+        }
+    }
     // Pinned bar state (v0.9.4, N3): tapping the bar cycles
     // through the pinned messages; 全部 opens the full list.
     val pinnedMessages by MessageStore.pinnedMessages.collectAsState()
@@ -1335,6 +1372,12 @@ fun ChatScreen(
                 // keyboard grid.
                 val bot = botUi?.takeIf { it.chatId == chatId }
                 val kb = replyKb
+                // Panel mutex (v0.9.12, S2): the inline panel,
+                // the slash popup and the reply keyboard never
+                // stack — inline wins while it is active, the
+                // slash popup next, the keyboard otherwise.
+                val inlineActive = inlineUi.active &&
+                    inlineUi.chatId == chatId
                 AnimatedVisibility(
                     visible = bot?.isBot == true &&
                         messages.none { it.outgoing } &&
@@ -1408,6 +1451,135 @@ fun ChatScreen(
                     }
                     }
                 }
+                // Inline panel (v0.9.12, S2): results for the
+                // "@bot query" in the input, directly above the
+                // input row. Header names the bot; the body is
+                // loading / plain-language error / empty / the
+                // result rows; tapping a row sends it.
+                AnimatedVisibility(
+                    visible = inlineActive,
+                    enter = expandVertically(
+                        Motion.tween(200),
+                        expandFrom = Alignment.Bottom
+                    ) + fadeIn(Motion.tween(200)),
+                    exit = shrinkVertically(
+                        Motion.tween(160),
+                        shrinkTowards = Alignment.Bottom
+                    ) + fadeOut(Motion.tween(160))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme
+                                    .surfaceContainerLow
+                            )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    start = 14.dp, end = 4.dp,
+                                    top = 4.dp, bottom = 4.dp
+                                ),
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                BotIcon, contentDescription = null,
+                                tint = MaterialTheme.colorScheme
+                                    .primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "@${inlineUi.username}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            val hint = when {
+                                inlineUi.error != null -> ""
+                                inlineUi.placeholder.isNotEmpty() ->
+                                    inlineUi.placeholder
+                                inlineUi.buttonText.isNotEmpty() ->
+                                    inlineUi.buttonText
+                                else -> "内联结果"
+                            }
+                            if (hint.isNotEmpty()) {
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    hint, fontSize = 12.5.sp,
+                                    color = Color.Gray,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            } else {
+                                Spacer(Modifier.weight(1f))
+                            }
+                            IconButton(onClick = {
+                                InlineStore.dismiss()
+                            }) {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = "收起",
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
+                        when {
+                            inlineUi.error != null -> Text(
+                                inlineUi.error!!,
+                                fontSize = 13.5.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(
+                                    horizontal = 14.dp, vertical = 10.dp
+                                )
+                            )
+                            inlineUi.loading -> Row(
+                                modifier = Modifier.padding(
+                                    horizontal = 14.dp, vertical = 10.dp
+                                ),
+                                verticalAlignment =
+                                    Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    "正在向机器人查询…",
+                                    fontSize = 13.5.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                            inlineUi.results.isEmpty() -> Text(
+                                "没有结果，换个关键词试试。",
+                                fontSize = 13.5.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(
+                                    horizontal = 14.dp, vertical = 10.dp
+                                )
+                            )
+                            else -> LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 264.dp)
+                            ) {
+                                items(
+                                    items = inlineUi.results,
+                                    key = { it.id }
+                                ) { result ->
+                                    InlineResultRow(result) {
+                                        InlineStore.send(result) {
+                                            input = ""
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // Slash popup: while the input is a bare /prefix
                 // (no space yet), list the matching commands of
                 // this chat's bot(s) above the input.
@@ -1464,7 +1636,7 @@ fun ChatScreen(
                     }
                 }
                 AnimatedVisibility(
-                    visible = slashMatches.isNotEmpty(),
+                    visible = slashMatches.isNotEmpty() && !inlineActive,
                     enter = expandVertically(
                         Motion.tween(180),
                         expandFrom = Alignment.Bottom
@@ -1525,7 +1697,8 @@ fun ChatScreen(
                 // message, other button types render disabled.
                 AnimatedVisibility(
                     visible = kb is ReplyKb.Shown &&
-                        kbDismissedSource != kb.sourceMessageId,
+                        kbDismissedSource != kb.sourceMessageId &&
+                        !inlineActive && slashMatches.isEmpty(),
                     enter = expandVertically(
                         Motion.tween(200),
                         expandFrom = Alignment.Bottom
@@ -4510,4 +4683,107 @@ private fun packWaveform(samples: List<Int>): String {
     if (bits > 0) bytes.add((acc and 0xFF).toByte())
     val arr = ByteArray(bytes.size) { bytes[it] }
     return android.util.Base64.encodeToString(arr, android.util.Base64.NO_WRAP)
+}
+
+/** One row of the inline-results panel (v0.9.12, S2): the
+ *  result's thumbnail (resolved through AvatarStore's generic
+ *  file map, decoded through the shared cache) or a per-kind
+ *  icon, then title + description. GIF results carry a small
+ *  GIF tag like the message bubbles do. */
+@Composable
+private fun InlineResultRow(
+    result: InlineResultUi,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val thumbPath = if (result.thumbFileId != 0) {
+            AvatarStore.pathForFile(result.thumbFileId)
+        } else {
+            null
+        }
+        val bitmap by produceState<android.graphics.Bitmap?>(
+            null, thumbPath
+        ) {
+            value = thumbPath?.let {
+                withContext(Dispatchers.IO) { decodeCached(it, 144) }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant,
+                    RoundedCornerShape(8.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            val bmp = bitmap
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(8.dp))
+                )
+            } else {
+                Icon(
+                    when (result.kind) {
+                        "photo", "animation", "sticker" ->
+                            Icons.Filled.Image
+                        "video" -> Icons.Filled.PlayArrow
+                        "audio", "voiceNote" ->
+                            Icons.Filled.MusicNote
+                        "contact" -> Icons.Filled.Person
+                        "location", "venue" ->
+                            Icons.Filled.LocationOn
+                        "game" -> Icons.Filled.Face
+                        else -> Icons.Filled.Description
+                    },
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            if (result.kind == "animation") {
+                Text(
+                    "GIF",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .background(
+                            Color.Black.copy(alpha = 0.55f),
+                            RoundedCornerShape(3.dp)
+                        )
+                        .padding(horizontal = 3.dp, vertical = 1.dp)
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                result.title.ifEmpty { "（无标题）" },
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+            if (result.description.isNotEmpty()) {
+                Text(
+                    result.description,
+                    fontSize = 12.5.sp,
+                    color = Color.Gray,
+                    maxLines = 1
+                )
+            }
+        }
+    }
 }
