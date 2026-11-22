@@ -16,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.rememberCoroutineScope
@@ -81,6 +82,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
@@ -1021,6 +1023,13 @@ private fun SwipeActionCell(
 @Composable
 fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
     var menuOpen by remember { mutableStateOf(false) }
+    // Official list layout (v0.9.17, X3): 54 dp avatar,
+    // official placeholder gradient (avatar_background*),
+    // online dot in chats_onlineCircle at the avatar's
+    // bottom-right, hairline divider starting after the
+    // avatar (the official dialogs separator inset).
+    val palette = OfficialTheme.current()
+    val avatarPair = OfficialTheme.avatarColors(chat.id, OfficialTheme.dark)
     Box {
         Row(
             modifier = Modifier
@@ -1032,20 +1041,17 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-        val hue = (chat.id % 8 + 8) % 8
-        val colors = listOf(
-            Color(0xFFEF9A9A), Color(0xFFF48FB1), Color(0xFFCE93D8), Color(0xFF90CAF9),
-            Color(0xFF80CBC4), Color(0xFFA5D6A7), Color(0xFFFFCC80), Color(0xFFBCAAA4)
-        )
         Box {
             if (chat.photoPath != null) {
-                AvatarImage(path = chat.photoPath, sizeDp = 48)
+                AvatarImage(path = chat.photoPath, sizeDp = 54)
             } else {
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(54.dp)
                         .background(
-                            colors[hue.toInt()],
+                            Brush.verticalGradient(
+                                listOf(avatarPair.first, avatarPair.second)
+                            ),
                             CircleShape
                         ),
                     contentAlignment = Alignment.Center
@@ -1054,7 +1060,7 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                         chat.title.trim().firstOrNull()?.toString() ?: "?",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp
+                        fontSize = 20.sp
                     )
                 }
             }
@@ -1062,13 +1068,13 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .size(13.dp)
+                        .size(15.dp)
                         .border(
                             2.dp,
-                            MaterialTheme.colorScheme.background,
+                            palette.windowBg,
                             CircleShape
                         )
-                        .background(Color(0xFF4CAF50), CircleShape)
+                        .background(palette.onlineDot, CircleShape)
                 )
             }
         }
@@ -1085,6 +1091,7 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 }
                 Text(
                     chat.title,
+                    color = palette.textPrimary,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 16.sp,
                     maxLines = 1,
@@ -1102,7 +1109,11 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                Text(formatChatTime(chat.dateSeconds), color = Color.Gray, fontSize = 12.sp)
+                Text(
+                    formatChatTime(chat.dateSeconds),
+                    color = palette.textSecondary,
+                    fontSize = 12.sp
+                )
             }
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1113,14 +1124,15 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     // thumb) while a draft exists.
                     Text(
                         "草稿：",
-                        color = Color(0xFFC62828),
-                        fontSize = 14.sp,
+                        // chats_draft (v0.9.17, X3 recalibration).
+                        color = palette.draftRed,
+                        fontSize = 15.sp,
                         maxLines = 1
                     )
                     Text(
                         chat.draftText,
-                        color = Color.Gray,
-                        fontSize = 14.sp,
+                        color = palette.textSecondary,
+                        fontSize = 15.sp,
                         maxLines = 1,
                         modifier = Modifier.weight(1f)
                     )
@@ -1131,8 +1143,8 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     }
                     Text(
                         chat.preview,
-                        color = Color.Gray,
-                        fontSize = 14.sp,
+                        color = palette.textSecondary,
+                        fontSize = 15.sp,
                         maxLines = 1,
                         modifier = Modifier.weight(1f)
                     )
@@ -1140,19 +1152,29 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 if (chat.isPinned) {
                     Icon(
                         PinIcon, contentDescription = "置顶",
-                        tint = Color.Gray, modifier = Modifier.size(13.dp)
+                        tint = palette.textSecondary,
+                        modifier = Modifier.size(14.dp)
                     )
                 }
                 if (chat.unreadCount > 0 || chat.isMarkedAsUnread) {
                     Spacer(Modifier.width(6.dp))
+                    // Unread capsule (v0.9.17, X3): official
+                    // pill — chats_unreadCounter, gray
+                    // (chats_unreadCounterMuted) when muted,
+                    // min 20 dp, white semibold count.
                     Box(
                         modifier = Modifier
+                            .height(20.dp)
+                            .defaultMinSize(minWidth = 20.dp)
                             .background(
-                                if (chat.isMuted) Color(0xFFBDBDBD)
-                                else MaterialTheme.colorScheme.primary,
+                                if (chat.isMuted) {
+                                    palette.unreadBadgeMuted
+                                } else {
+                                    palette.unreadBadge
+                                },
                                 RoundedCornerShape(10.dp)
                             )
-                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                            .padding(horizontal = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         val unreadCap by UiSettings.unreadCap.collectAsState()
@@ -1163,13 +1185,25 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                                 else -> chat.unreadCount.toString()
                             },
                             color = Color.White,
-                            fontSize = 11.sp
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
             }
         }
         }
+        // Hairline divider (v0.9.17, X3): starts after the
+        // avatar column (16 + 54 + 12 = 82 dp), official
+        // divider color.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 82.dp)
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(palette.divider)
+        )
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(
                 leadingIcon = {
