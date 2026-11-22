@@ -25,6 +25,7 @@ object UiSettings {
     private const val KEY_BUBBLE_STYLE = "bubble_style"
     private const val KEY_FONT_SIZE = "font_size"
     private const val KEY_DUCK_BAR = "duck_bar"
+    private const val KEY_LABEL_DOTS = "label_dots"
     private const val KEY_VOICE_SPEED = "voice_speed"
     private const val KEY_SEEN_VERSION = "seen_version"
 
@@ -134,6 +135,13 @@ object UiSettings {
     private val _duckBar = MutableStateFlow(true)
     val duckBar: StateFlow<Boolean> = _duckBar
 
+    /** Label color dots on chat-list rows (v0.9.28, U4):
+     *  when on, a chat carrying local labels shows up to
+     *  three small color dots on its row. Off by default —
+     *  the list stays exactly as it was unless asked. */
+    private val _labelDots = MutableStateFlow(false)
+    val labelDots: StateFlow<Boolean> = _labelDots
+
     /** Voice-message playback speed (v0.9.2, L5): one global
      *  choice (1x / 1.5x / 2x), remembered across messages and
      *  restarts, like the mature clients do it. */
@@ -178,6 +186,7 @@ object UiSettings {
         val font = prefs.getInt(KEY_FONT_SIZE, 1)
         _fontSize.value = if (font in FONT_SCALES.indices) font else 1
         _duckBar.value = prefs.getBoolean(KEY_DUCK_BAR, true)
+        _labelDots.value = prefs.getBoolean(KEY_LABEL_DOTS, false)
         val speed = prefs.getFloat(KEY_VOICE_SPEED, 1f)
         _voiceSpeed.value = if (speed in VOICE_SPEEDS) speed else 1f
     }
@@ -268,6 +277,11 @@ object UiSettings {
     fun setDuckBar(on: Boolean) {
         _duckBar.value = on
         persist { it.putBoolean(KEY_DUCK_BAR, on) }
+    }
+
+    fun setLabelDots(on: Boolean) {
+        _labelDots.value = on
+        persist { it.putBoolean(KEY_LABEL_DOTS, on) }
     }
 
     fun setFontSize(index: Int) {

@@ -53,6 +53,11 @@ object ThreadStore {
     @Volatile
     private var loading = false
 
+    /** Paging-in-flight flag for the top-of-list spinner
+     *  (v0.9.28, U2; mirrors the chat store's). */
+    private val _historyLoading = MutableStateFlow(false)
+    val historyLoading: StateFlow<Boolean> = _historyLoading
+
     @Volatile
     private var attached = false
 
@@ -168,6 +173,7 @@ object ThreadStore {
         val rootId = rootMessageId
         if (chatId == 0L || rootId == 0L || loading) return
         loading = true
+        _historyLoading.value = true
         val query = TdClient.request("getMessageThreadHistory").apply {
             put("chat_id", chatId)
             put("message_id", rootId)
@@ -177,6 +183,7 @@ object ThreadStore {
         }
         TdRepository.sendRaw(query) { response ->
             loading = false
+            _historyLoading.value = false
             if (threadChatId != chatId) return@sendRaw
             if (TdClient.isError(response)) return@sendRaw
             val arr = response.optJSONArray("messages") ?: JSONArray()

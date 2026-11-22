@@ -74,6 +74,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.LaunchedEffect
@@ -467,6 +468,7 @@ fun ChatScreen(
     // send chain then run unchanged on the edited file).
     var editingPhotoPath by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
+    val chatScope = rememberCoroutineScope()
 
     // Draft restore (v0.7.0, F5): once the saved draft has been
     // read, put it back into the input box (only if the user has
@@ -921,9 +923,42 @@ fun ChatScreen(
         snapshotFlow {
             listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
         }.collect { lastVisible ->
-            if (messages.isNotEmpty() && lastVisible >= messages.size - 3) {
+            // Prefetch one full page ahead (v0.9.28, U2):
+            // start the next older page while a page-worth
+            // (50) is still on the loaded side of the top, so
+            // deep scrolling in a huge channel does not stall
+            // at every page seam. The store's loading flag
+            // keeps this from stacking requests.
+            if (messages.isNotEmpty() &&
+                messages.size - 1 - lastVisible <= 50
+            ) {
                 MessageStore.loadOlder()
             }
+        }
+    }
+
+    // Scroll-to-latest (v0.9.28, U1): the floating button
+    // shows once the newest end is more than a screen away,
+    // or whenever the loaded window does not reach it at all
+    // (after a search / date jump). In a jump window a tap
+    // reloads the first page; the flag below then animates
+    // the list to the newest message once it lands.
+    val atLatest by MessageStore.atLatest.collectAsState()
+    val historyLoading by MessageStore.historyLoading.collectAsState()
+    var wantLatestScroll by remember { mutableStateOf(false) }
+    LaunchedEffect(messages) {
+        if (wantLatestScroll && messages.isNotEmpty()) {
+            wantLatestScroll = false
+            listState.animateScrollToItem(0)
+        }
+    }
+    val farFromLatest by remember {
+        derivedStateOf {
+            val visibleCount =
+                listState.layoutInfo.visibleItemsInfo.size
+            !atLatest ||
+                (visibleCount > 0 &&
+                    listState.firstVisibleItemIndex > visibleCount)
         }
     }
 
@@ -1590,29 +1625,38 @@ fun ChatScreen(
         // Date separators (details pass): the first message of
         // each day gets a centered day chip above it. Computed
         // here — remember() is not allowed inside the lazy
-        // list's content lambda.
-        val separatorIds = HashSet<Long>().apply {
-            var prevKey = Int.MIN_VALUE
-            for (m in messages) {
-                val key = dayKey(m.dateSeconds)
-                if (key != prevKey) {
-                    add(m.id)
-                    prevKey = key
+        // list's content lambda. Cached on the message list
+        // (v0.9.28, U3): this ran an O(n) scan plus a HashSet
+        // allocation on EVERY recomposition of the screen —
+        // including every input-box keystroke — for a result
+        // that only depends on the messages themselves.
+        val separatorIds = remember(messages) {
+            HashSet<Long>().apply {
+                var prevKey = Int.MIN_VALUE
+                for (m in messages) {
+                    val key = dayKey(m.dateSeconds)
+                    if (key != prevKey) {
+                        add(m.id)
+                        prevKey = key
+                    }
                 }
             }
         }
         // Unread divider (v0.9.11, A2): the first incoming
         // message past the read position captured when this
         // chat was opened gets the "unread messages" capsule
-        // above it. Computed per composition (the read
-        // position lands asynchronously after open).
+        // above it. The read position lands asynchronously
+        // after open, so it is part of the cache key
+        // (v0.9.28, U3) instead of rescanning per composition.
         val unreadCut = MessageStore.lastReadInboxAtOpen
-        val unreadFirstId = if (unreadCut == 0L) {
-            0L
-        } else {
-            messages.firstOrNull {
-                it.id > unreadCut && !it.outgoing
-            }?.id ?: 0L
+        val unreadFirstId = remember(messages, unreadCut) {
+            if (unreadCut == 0L) {
+                0L
+            } else {
+                messages.firstOrNull {
+                    it.id > unreadCut && !it.outgoing
+                }?.id ?: 0L
+            }
         }
         // Sender-avatar runs (v0.9.9, W0): in a group, an
         // incoming message carries its sender's avatar only
@@ -2033,7 +2077,34 @@ fun ChatScreen(
                     }
                 }
             }
+            // Paging indicator (v0.9.28, U2): the last item
+            // of a reversed list renders at the visual top —
+            // a quiet spinner while an older page is loading.
+            if (historyLoading && messages.isNotEmpty()) {
+                item(key = "paging-spinner") { PagingSpinnerRow() }
+            }
         }
+            // Back-to-latest (v0.9.28, U1): floats over the
+            // list's bottom-end, inside the list's own Box so
+            // it always clears the input dock below (and the
+            // Duck bar lives under the whole chat column).
+            ScrollToLatestButton(
+                visible = farFromLatest,
+                unreadCount = chat?.unreadCount ?: 0,
+                onClick = {
+                    if (atLatest) {
+                        chatScope.launch {
+                            listState.animateScrollToItem(0)
+                        }
+                    } else {
+                        wantLatestScroll = true
+                        MessageStore.backToLatest()
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 12.dp)
+            )
         }
 
         // Hairline above the bottom dock (Phase D, D5;

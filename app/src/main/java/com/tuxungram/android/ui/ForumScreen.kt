@@ -37,12 +37,15 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -538,9 +541,28 @@ fun ForumTopicView(
         snapshotFlow {
             listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
         }.collect { lastVisible ->
-            if (messages.isNotEmpty() && lastVisible >= messages.size - 3) {
+            // One-page-ahead prefetch (v0.9.28, U2), same
+            // rule as the chat list.
+            if (messages.isNotEmpty() &&
+                messages.size - 1 - lastVisible <= 50
+            ) {
                 ForumStore.loadOlder()
             }
+        }
+    }
+
+    // Back-to-latest (v0.9.28, U1): a topic's loaded window
+    // always reaches its newest message, so a tap only needs
+    // the animated scroll. No unread badge — TDLib keeps no
+    // per-topic unread counter.
+    val forumHistoryLoading by ForumStore.historyLoading.collectAsState()
+    val forumScope = rememberCoroutineScope()
+    val forumFarFromLatest by remember {
+        derivedStateOf {
+            val visibleCount =
+                listState.layoutInfo.visibleItemsInfo.size
+            visibleCount > 0 &&
+                listState.firstVisibleItemIndex > visibleCount
         }
     }
 
@@ -633,12 +655,14 @@ fun ForumTopicView(
         } else {
             // Run tails for the bubbles below (v0.9.18, Y3).
             val tailIds = remember(messages) { tailIdsOf(messages) }
+            // Box wrapper so the back-to-latest button can
+            // float over the list (v0.9.28, U1).
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
                 reverseLayout = true,
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .padding(horizontal = 12.dp)
                     .lazyListScrollbar(listState, reverse = true)
             ) {
@@ -661,6 +685,22 @@ fun ForumTopicView(
                         showTail = msg.id in tailIds
                     )
                 }
+                if (forumHistoryLoading && messages.isNotEmpty()) {
+                    item(key = "paging-spinner") { PagingSpinnerRow() }
+                }
+            }
+            ScrollToLatestButton(
+                visible = forumFarFromLatest,
+                unreadCount = 0,
+                onClick = {
+                    forumScope.launch {
+                        listState.animateScrollToItem(0)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 12.dp)
+            )
             }
         }
         val target = replyTarget

@@ -366,8 +366,18 @@ object MessageStore {
     private val _peerAction = MutableStateFlow("")
     val peerAction: StateFlow<String> = _peerAction
 
+    /** One live peer action (v0.9.28, U5): kept structured
+     *  (who + what + when) so the subtitle can aggregate
+     *  several actors instead of showing one arbitrary
+     *  entry. */
+    private data class PeerActionEntry(
+        val name: String,
+        val label: String,
+        val at: Long
+    )
+
     private val peerActions =
-        ConcurrentHashMap<Long, String>()
+        ConcurrentHashMap<Long, PeerActionEntry>()
 
     @Volatile
     private var lastActionAt = 0L
@@ -703,9 +713,13 @@ object MessageStore {
     fun jumpTo(messageId: Long) {
         val chatId = currentChatId
         if (chatId == 0L || messageId == 0L) return
+        historyGeneration++
+        val gen = historyGeneration
         byId.clear()
         _messages.value = emptyList()
         allHistoryLoaded = false
+        olderRetryAnchor = 0L
+        _atLatest.value = false
         val query = TdClient.request("getChatHistory").apply {
             put("chat_id", chatId)
             put("from_message_id", messageId)
@@ -715,6 +729,7 @@ object MessageStore {
         }
         TdRepository.sendRaw(query) { response ->
             if (currentChatId != chatId) return@sendRaw
+            if (gen != historyGeneration) return@sendRaw
             if (TdClient.isError(response)) return@sendRaw
             val arr = response.optJSONArray("messages") ?: JSONArray()
             // A short jump window says nothing about older
@@ -759,12 +774,18 @@ object MessageStore {
         dateSec: Int,
         cb: (JSONObject?) -> Unit
     ) {
+        val gen = historyGeneration
         val query = TdClient.request("getChatMessageByDate").apply {
             put("chat_id", chatId)
             put("date", dateSec)
         }
         TdRepository.sendRaw(query) { response ->
             if (currentChatId != chatId) return@sendRaw
+            // A newer window operation supersedes the whole
+            // date-jump chain (v0.9.28, U2): every step of the
+            // chain enters through here, so dropping here
+            // starves the rest of the chain.
+            if (gen != historyGeneration) return@sendRaw
             cb(if (TdClient.isError(response)) null else response)
         }
     }
@@ -772,6 +793,13 @@ object MessageStore {
     fun jumpToDate(dayStartSec: Int, dayEndSec: Int) {
         val chatId = currentChatId
         if (chatId == 0L) return
+        // The whole date-jump chain replaces the window
+        // (v0.9.28, U2): one generation bump covers every
+        // step of it, and the window no longer reaches the
+        // newest message until backToLatest reloads it.
+        historyGeneration++
+        olderRetryAnchor = 0L
+        _atLatest.value = false
         fetchMessageByDate(chatId, dayStartSec - 1) { prev ->
             if (prev != null) {
                 val prevId = prev.optLong("id")
@@ -877,6 +905,7 @@ object MessageStore {
         anchorId: Long,
         done: () -> Unit
     ) {
+        val gen = historyGeneration
         byId.clear()
         _messages.value = emptyList()
         allHistoryLoaded = false
@@ -889,6 +918,10 @@ object MessageStore {
         }
         TdRepository.sendRaw(query) { response ->
             if (currentChatId != chatId) return@sendRaw
+            // Superseded by a newer window operation: abandon
+            // the chain silently (done() would aim the locate
+            // at a window that no longer exists).
+            if (gen != historyGeneration) return@sendRaw
             if (!TdClient.isError(response)) {
                 val arr = response.optJSONArray("messages") ?: JSONArray()
                 if (arr.length() == 0) allHistoryLoaded = true
@@ -916,6 +949,7 @@ object MessageStore {
         maxPages: Int,
         done: () -> Unit
     ) {
+        val gen = historyGeneration
         byId.clear()
         _messages.value = emptyList()
         allHistoryLoaded = false
@@ -942,6 +976,7 @@ object MessageStore {
             }
             TdRepository.sendRaw(query) { response ->
                 if (currentChatId != chatId) return@sendRaw
+                if (gen != historyGeneration) return@sendRaw
                 if (TdClient.isError(response)) {
                     publish()
                     done()
@@ -1048,6 +1083,37 @@ object MessageStore {
     @Volatile
     private var firstPageRetried = false
 
+    // ---- Deep-paging hardening (v0.9.28, U2) ----
+
+    /** Window generation: bumped every time the loaded window
+     *  is replaced wholesale (open, jumpTo, the date-jump
+     *  fetches, backToLatest, close). History responses carry
+     *  the generation they were sent under; a response from a
+     *  replaced window is dropped instead of leaking its
+     *  messages into the new window (a seam corruption the
+     *  plain chat-id check could not catch — same chat, wrong
+     *  window). */
+    @Volatile
+    private var historyGeneration = 0
+
+    /** The from_message_id anchor an older-page retry is
+     *  already scheduled for; at most one delayed retry per
+     *  anchor, cleared when a page lands with older messages. */
+    @Volatile
+    private var olderRetryAnchor = 0L
+
+    /** True while any history page is in flight; the chat
+     *  screen shows a quiet spinner at the top of the list. */
+    private val _historyLoading = MutableStateFlow(false)
+    val historyLoading: StateFlow<Boolean> = _historyLoading
+
+    /** True when the loaded window reaches the chat's newest
+     *  message. Jump windows (search / date) do not, and the
+     *  scroll-to-latest button must reload instead of merely
+     *  scrolling when this is false. */
+    private val _atLatest = MutableStateFlow(true)
+    val atLatest: StateFlow<Boolean> = _atLatest
+
     private val byId = ConcurrentHashMap<Long, MsgItem>()
     private val userNames = ConcurrentHashMap<Long, String>()
     private val userFetchPending = ConcurrentHashMap.newKeySet<Long>()
@@ -1080,6 +1146,9 @@ object MessageStore {
         _locateId.value = 0L
         allHistoryLoaded = false
         firstPageRetried = false
+        historyGeneration++
+        olderRetryAnchor = 0L
+        _atLatest.value = false
         lastReadOutbox = 0L
         lastReadInboxAtOpen = 0L
         _draftText.value = ""
@@ -1164,6 +1233,7 @@ object MessageStore {
     }
 
     fun close() {
+        historyGeneration++
         val chatId = currentChatId
         if (chatId != 0L) {
             TdRepository.sendRaw(TdClient.request("closeChat").apply {
@@ -1183,10 +1253,61 @@ object MessageStore {
         loadHistory(fromMessageId = oldest)
     }
 
-    private fun loadHistory(fromMessageId: Long) {
+    /** Back to the chat's newest messages (v0.9.28, U1):
+     *  replace whatever window is loaded (a search / date
+     *  jump leaves only a slice around its anchor) with the
+     *  first page again. The first page's landing marks the
+     *  newest message read, exactly as opening the chat
+     *  does, and flips [atLatest] back on. */
+    fun backToLatest() {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        historyGeneration++
+        byId.clear()
+        _messages.value = emptyList()
+        allHistoryLoaded = false
+        firstPageRetried = false
+        olderRetryAnchor = 0L
+        _atLatest.value = false
+        _locateId.value = 0L
+        // An in-flight page from the old window would block
+        // the reload through the loadingHistory guard; its
+        // response is generation-stale and only resets the
+        // flag, so clearing it here is safe.
+        loadingHistory = false
+        loadHistory(fromMessageId = 0L)
+        loadScheduled(chatId)
+    }
+
+    /** One delayed retry for an older page that came back
+     *  empty or with an error (v0.9.28, U2). Deep inside a
+     *  huge channel TDLib can answer a page with nothing
+     *  while that segment is still being fetched — reading
+     *  that as end-of-history strands the user above a fake
+     *  bottom. At most one retry per anchor (the caller
+     *  passes isOlderRetry on the second attempt); a page
+     *  that answers with the anchor itself is the genuine
+     *  end and never retries. */
+    private fun scheduleOlderRetry(chatId: Long, anchorId: Long, gen: Int) {
+        if (olderRetryAnchor == anchorId) return
+        olderRetryAnchor = anchorId
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (currentChatId == chatId &&
+                historyGeneration == gen &&
+                !allHistoryLoaded && !loadingHistory &&
+                byId.keys.minOrNull() == anchorId
+            ) {
+                loadHistory(fromMessageId = anchorId, isOlderRetry = true)
+            }
+        }, 1200)
+    }
+
+    private fun loadHistory(fromMessageId: Long, isOlderRetry: Boolean = false) {
         val chatId = currentChatId
         if (chatId == 0L || loadingHistory) return
         loadingHistory = true
+        _historyLoading.value = true
+        val gen = historyGeneration
         val query = TdClient.request("getChatHistory").apply {
             put("chat_id", chatId)
             put("from_message_id", fromMessageId)
@@ -1196,8 +1317,19 @@ object MessageStore {
         }
         TdRepository.sendRaw(query) { response ->
             loadingHistory = false
+            _historyLoading.value = false
             if (currentChatId != chatId) return@sendRaw
-            if (TdClient.isError(response)) return@sendRaw
+            // Stale window (U2): a jump / reopen replaced the
+            // window while this page was in flight; its
+            // messages belong to the old window and must not
+            // leak into the new one.
+            if (gen != historyGeneration) return@sendRaw
+            if (TdClient.isError(response)) {
+                if (fromMessageId != 0L && !isOlderRetry) {
+                    scheduleOlderRetry(chatId, fromMessageId, gen)
+                }
+                return@sendRaw
+            }
             val arr = response.optJSONArray("messages") ?: JSONArray()
             // D1 root-cause fix: td_api.tl states the returned
             // count "is chosen by TDLib and can be smaller than
@@ -1222,7 +1354,14 @@ object MessageStore {
                 if (item.id > newestId) newestId = item.id
             }
             if (fromMessageId != 0L) {
-                if (!addedOlder) allHistoryLoaded = true
+                when {
+                    addedOlder -> olderRetryAnchor = 0L
+                    // A completely empty answer is suspect
+                    // (U2): retry once before believing it.
+                    arr.length() == 0 && !isOlderRetry ->
+                        scheduleOlderRetry(chatId, fromMessageId, gen)
+                    else -> allHistoryLoaded = true
+                }
             } else if (arr.length() == 0) {
                 if (!firstPageRetried) {
                     firstPageRetried = true
@@ -1230,7 +1369,9 @@ object MessageStore {
                     // scope anywhere); a main-looper delay is the
                     // local idiom for "try again shortly".
                     Handler(Looper.getMainLooper()).postDelayed({
-                        if (currentChatId == chatId && byId.isEmpty()) {
+                        if (currentChatId == chatId &&
+                            historyGeneration == gen && byId.isEmpty()
+                        ) {
                             loadHistory(fromMessageId = 0L)
                         }
                     }, 1500)
@@ -1238,6 +1379,7 @@ object MessageStore {
                     allHistoryLoaded = true
                 }
             }
+            if (fromMessageId == 0L) _atLatest.value = true
             publish()
             if (fromMessageId == 0L && newestId != 0L) {
                 markRead(chatId, newestId)
@@ -1439,6 +1581,50 @@ object MessageStore {
         if (System.currentTimeMillis() - lastActionAt > 6000) {
             peerActions.clear()
             _peerAction.value = ""
+        }
+    }
+
+    /** Fold the live per-sender actions into the subtitle
+     *  line (v0.9.28, U5). Private chats and a single actor
+     *  keep the long-standing format ("正在输入…", or
+     *  "名字 正在输入…" in a group). Several group members
+     *  doing the SAME thing read "张三、李四 正在输入…" for
+     *  two, "张三、李四 等 3 人正在输入…" beyond that; mixed
+     *  actions show the most recent one. Senders whose name
+     *  has not landed yet are skipped in the name list —
+     *  fetchUser's completion re-renders when it arrives. */
+    private fun renderPeerAction(chatId: Long) {
+        val entries = peerActions.entries
+            .sortedByDescending { it.value.at }
+        if (entries.isEmpty()) {
+            _peerAction.value = ""
+            return
+        }
+        val isGroup = ChatStore.itemOf(chatId)?.isGroup == true
+        val first = entries.first().value
+        if (!isGroup || entries.size == 1) {
+            _peerAction.value =
+                if (isGroup && first.name.isNotEmpty()) {
+                    "${first.name} ${first.label}"
+                } else {
+                    first.label
+                }
+            return
+        }
+        val sameLabel = entries.filter { it.value.label == first.label }
+        val names = sameLabel.map { it.value.name }
+            .filter { it.isNotEmpty() }
+        _peerAction.value = when {
+            sameLabel.size >= 2 && names.size >= 2 -> {
+                val head = names.take(2).joinToString("、")
+                if (sameLabel.size > 2) {
+                    "$head 等 ${sameLabel.size} 人${first.label}"
+                } else {
+                    "$head ${first.label}"
+                }
+            }
+            first.name.isNotEmpty() -> "${first.name} ${first.label}"
+            else -> first.label
         }
     }
 
@@ -2293,16 +2479,14 @@ object MessageStore {
                     } else {
                         ""
                     }
-                    val isGroup = ChatStore.itemOf(chatId)?.isGroup == true
-                    peerActions[key] =
-                        if (isGroup && name.isNotEmpty()) {
-                            "$name $label"
-                        } else {
-                            label
-                        }
+                    peerActions[key] = PeerActionEntry(
+                        name = name,
+                        label = label,
+                        at = System.currentTimeMillis()
+                    )
                 }
                 lastActionAt = System.currentTimeMillis()
-                _peerAction.value = peerActions.values.firstOrNull() ?: ""
+                renderPeerAction(chatId)
             }
             "updatePoll" -> {
                 // Full poll object pushed on every vote change;
@@ -2400,6 +2584,18 @@ object MessageStore {
             val name = userNameOf(response)
             if (name.isNotEmpty()) {
                 userNames[userId] = name
+                // A typing subtitle may be waiting on this
+                // name (v0.9.28, U5): fill it in and re-render
+                // so "张三 正在输入…" appears without waiting
+                // for the next action update.
+                val pendingAction = peerActions[userId]
+                if (pendingAction != null &&
+                    pendingAction.name.isEmpty()
+                ) {
+                    peerActions[userId] =
+                        pendingAction.copy(name = name)
+                    renderPeerAction(currentChatId)
+                }
                 publish()
             }
         }

@@ -446,6 +446,11 @@ object ForumStore {
     @Volatile
     private var loading = false
 
+    /** Paging-in-flight flag for the top-of-list spinner
+     *  (v0.9.28, U2; mirrors the chat store's). */
+    private val _historyLoading = MutableStateFlow(false)
+    val historyLoading: StateFlow<Boolean> = _historyLoading
+
     @Volatile
     private var attached = false
 
@@ -488,6 +493,7 @@ object ForumStore {
         val topicId = openTopicId
         if (chatId == 0L || topicId == 0 || loading) return
         loading = true
+        _historyLoading.value = true
         val query = TdClient.request("getForumTopicHistory").apply {
             put("chat_id", chatId)
             put("forum_topic_id", topicId)
@@ -497,6 +503,7 @@ object ForumStore {
         }
         TdRepository.sendRaw(query) { response ->
             loading = false
+            _historyLoading.value = false
             if (topicChatId != chatId || openTopicId != topicId) {
                 return@sendRaw
             }

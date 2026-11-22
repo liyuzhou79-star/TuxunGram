@@ -1147,6 +1147,41 @@ fun SettingsScreen(
                 onCheckedChange = { UiSettings.setDuckBar(it) }
             )
         }
+        Spacer(Modifier.height(16.dp))
+        Text("对话行标签色点", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "打开后，对话列表里带本地标签的对话会在预览文字前" +
+                "显示标签颜色小圆点（最多 3 个）。默认关闭。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val labelDots by UiSettings.labelDots.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (labelDots) "已开启" else "已关闭",
+                fontSize = 14.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = labelDots,
+                onCheckedChange = { UiSettings.setLabelDots(it) }
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("本地标签", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "管理这台手机上的本地标签：改名或删除。" +
+                "删除只删标签本身，不会删掉任何对话。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        var labelManageOpen by remember { mutableStateOf(false) }
+        TextButton(onClick = { labelManageOpen = true }) {
+            Text("管理本地标签")
+        }
+        if (labelManageOpen) {
+            LabelManageDialog(onDismiss = { labelManageOpen = false })
+        }
         }
         SettingsSectionHeader("账号")
         SettingsGroup {

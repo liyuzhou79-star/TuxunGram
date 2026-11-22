@@ -161,7 +161,20 @@ object LocalLabels {
         return label
     }
 
-    /** Delete a label and every assignment of it. */
+    /** Rename a label (v0.9.28, U4). Assignments are keyed
+     *  by id, so a rename touches nothing else; a blank name
+     *  is rejected. */
+    fun rename(labelId: Long, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        _labels.value = _labels.value.map {
+            if (it.id == labelId) it.copy(name = trimmed) else it
+        }
+        persist()
+    }
+
+    /** Delete a label and every assignment of it. The chats
+     *  themselves are untouched — only the local tag goes. */
     fun delete(labelId: Long) {
         _labels.value = _labels.value.filter { it.id != labelId }
         _assignments.value = _assignments.value.mapNotNull { (chat, ids) ->

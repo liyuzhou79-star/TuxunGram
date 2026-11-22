@@ -1375,6 +1375,18 @@ private fun SwipeActionCell(
 fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
     var menuOpen by remember { mutableStateOf(false) }
     var labelDialogOpen by remember { mutableStateOf(false) }
+    // Label dots data (v0.9.28, U4): the color indexes of
+    // this chat's local labels, resolved only when the
+    // Appearance switch for them is on.
+    val labelDotsOn by UiSettings.labelDots.collectAsState()
+    val allAssignments by LocalLabels.assignments.collectAsState()
+    val rowLabelDots = if (labelDotsOn) {
+        (allAssignments[chat.id] ?: emptyList())
+            .mapNotNull { LocalLabels.labelOf(it)?.colorIndex }
+            .take(3)
+    } else {
+        emptyList()
+    }
     // Official list layout (v0.9.17, X3; metrics
     // re-measured v0.9.22, S2): 52 dp avatar,
     // official placeholder gradient (avatar_background*),
@@ -1470,6 +1482,24 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
             }
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (rowLabelDots.isNotEmpty()) {
+                    // Local label dots (v0.9.28, U4): up to
+                    // three quiet 8dp dots ahead of the preview.
+                    for (colorIndex in rowLabelDots) {
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 4.dp)
+                                .size(8.dp)
+                                .background(
+                                    Color(
+                                        LocalLabels.PALETTE[colorIndex]
+                                    ),
+                                    CircleShape
+                                )
+                        )
+                    }
+                    Spacer(Modifier.width(2.dp))
+                }
                 if (chat.draftText.isNotEmpty()) {
                     // Draft preview (v0.9.16, W2): a red
                     // 草稿： prefix plus the draft text replaces
@@ -1668,6 +1698,9 @@ fun LabelPickerDialog(chatId: Long, onDismiss: () -> Unit) {
     val assignments by LocalLabels.assignments.collectAsState()
     var newName by remember { mutableStateOf("") }
     var newColor by remember { mutableStateOf(5) }
+    // Inline rename (v0.9.28, U4).
+    var renamingId by remember { mutableStateOf(0L) }
+    var renameText by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("本地标签") },
@@ -1716,10 +1749,36 @@ fun LabelPickerDialog(chatId: Long, onDismiss: () -> Unit) {
                                 )
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text(
-                            label.name, fontSize = 14.sp,
-                            modifier = Modifier.weight(1f)
-                        )
+                        if (renamingId == label.id) {
+                            OutlinedTextField(
+                                value = renameText,
+                                onValueChange = { renameText = it },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(
+                                enabled = renameText.isNotBlank(),
+                                onClick = {
+                                    LocalLabels.rename(
+                                        label.id, renameText
+                                    )
+                                    renamingId = 0L
+                                }
+                            ) {
+                                Text("保存", fontSize = 12.sp)
+                            }
+                        } else {
+                            Text(
+                                label.name, fontSize = 14.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = {
+                                renamingId = label.id
+                                renameText = label.name
+                            }) {
+                                Text("改名", fontSize = 12.sp)
+                            }
+                        }
                         TextButton(onClick = {
                             LocalLabels.delete(label.id)
                         }) {
@@ -1757,6 +1816,100 @@ fun LabelPickerDialog(chatId: Long, onDismiss: () -> Unit) {
                         newName = ""
                     }
                 ) { Text("新建标签") }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("完成") }
+        }
+    )
+}
+
+
+/** Standalone label management (v0.9.28, U4), opened from
+ *  Settings → Appearance: rename or delete labels without
+ *  opening a chat first. Deleting removes only the label
+ *  and its assignments — never a chat. Creating labels
+ *  stays in the per-chat picker, where the new label can be
+ *  applied immediately. */
+@Composable
+fun LabelManageDialog(onDismiss: () -> Unit) {
+    val labels by LocalLabels.labels.collectAsState()
+    var renamingId by remember { mutableStateOf(0L) }
+    var renameText by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("本地标签管理") },
+        text = {
+            Column {
+                Text(
+                    "标签只存在这台手机上。改名立刻生效；" +
+                        "删除只删标签本身，不会删掉任何对话。",
+                    fontSize = 12.sp, color = Color.Gray
+                )
+                Spacer(Modifier.height(8.dp))
+                if (labels.isEmpty()) {
+                    Text(
+                        "还没有标签。长按任意对话，选「标签（本地）」可以新建。",
+                        fontSize = 13.sp, color = Color.Gray
+                    )
+                }
+                for (label in labels) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(
+                                    Color(
+                                        LocalLabels.PALETTE[
+                                            label.colorIndex
+                                        ]
+                                    ),
+                                    CircleShape
+                                )
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        if (renamingId == label.id) {
+                            OutlinedTextField(
+                                value = renameText,
+                                onValueChange = { renameText = it },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(
+                                enabled = renameText.isNotBlank(),
+                                onClick = {
+                                    LocalLabels.rename(
+                                        label.id, renameText
+                                    )
+                                    renamingId = 0L
+                                }
+                            ) {
+                                Text("保存", fontSize = 12.sp)
+                            }
+                        } else {
+                            Text(
+                                label.name, fontSize = 14.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = {
+                                renamingId = label.id
+                                renameText = label.name
+                            }) {
+                                Text("改名", fontSize = 12.sp)
+                            }
+                        }
+                        TextButton(onClick = {
+                            LocalLabels.delete(label.id)
+                        }) {
+                            Text("删除", fontSize = 12.sp)
+                        }
+                    }
+                }
             }
         },
         confirmButton = {

@@ -34,7 +34,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -263,9 +270,14 @@ private val bitmapCache =
 
 /** Decode [path] through the shared bitmap cache, optionally
  *  downsampled to [maxDim] px on the long edge first. Call
- *  from a background dispatcher. */
+ *  from a background dispatcher. The cache key carries the
+ *  requested size (v0.9.28, U3): keyed by path alone, a
+ *  downsampled decode could satisfy a later full-size
+ *  request (blurry viewer image) and a full-size decode
+ *  could satisfy a thumbnail request (wasted memory). */
 fun decodeCached(path: String, maxDim: Int = 0): android.graphics.Bitmap? {
-    bitmapCache.get(path)?.let { return it }
+    val key = if (maxDim > 0) "$path@$maxDim" else path
+    bitmapCache.get(key)?.let { return it }
     val bmp = if (maxDim > 0) {
         decodeDownsampled(path, maxDim)
     } else {
@@ -275,7 +287,7 @@ fun decodeCached(path: String, maxDim: Int = 0): android.graphics.Bitmap? {
             null
         }
     }
-    if (bmp != null) bitmapCache.put(path, bmp)
+    if (bmp != null) bitmapCache.put(key, bmp)
     return bmp
 }
 
@@ -326,6 +338,93 @@ fun AvatarImage(path: String, sizeDp: Int) {
             modifier = Modifier
                 .size(sizeDp.dp)
                 .background(Color(0xFFE0E0E0), CircleShape)
+        )
+    }
+}
+
+/** Floating "back to the newest message" button (v0.9.28,
+ *  U1), shared by the chat, thread and forum-topic lists.
+ *  The caller decides visibility (scrolled more than a
+ *  screen away from the newest end, or the loaded window
+ *  does not reach it) and what a tap does; this only draws:
+ *  a 40dp surface circle with a down chevron and, when the
+ *  chat has unread messages, the unread count as a small
+ *  accent capsule at its top-right (capped by the user's
+ *  badge setting, like every other badge in the app).
+ *  Threads and topics pass unreadCount = 0 — TDLib keeps no
+ *  per-thread unread counter, so no badge is faked there. */
+@Composable
+fun ScrollToLatestButton(
+    visible: Boolean,
+    unreadCount: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(Motion.tween(180)) +
+            scaleIn(Motion.tween(180), initialScale = 0.7f),
+        exit = fadeOut(Motion.tween(140)) +
+            scaleOut(Motion.tween(140), targetScale = 0.7f),
+        modifier = modifier
+    ) {
+        Box {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 4.dp,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clickable { onClick() }
+            ) {
+                Icon(
+                    Icons.Filled.KeyboardArrowDown,
+                    contentDescription = "回到最新消息",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(8.dp)
+                )
+            }
+            if (unreadCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 4.dp, y = (-4).dp)
+                        .background(
+                            MaterialTheme.colorScheme.primary,
+                            RoundedCornerShape(9.dp)
+                        )
+                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        com.tuxungram.android.td.UiSettings.badgeText(
+                            unreadCount
+                        ),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Quiet spinner shown at the top of a message list while
+ *  an older history page is in flight (v0.9.28, U2). In the
+ *  reversed lists it is emitted as the LAST item, which is
+ *  the visual top. */
+@Composable
+fun PagingSpinnerRow() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(18.dp),
+            strokeWidth = 2.dp,
+            color = MaterialTheme.colorScheme.primary
         )
     }
 }
