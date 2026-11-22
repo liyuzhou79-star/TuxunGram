@@ -96,6 +96,7 @@ object TdRepository {
         AccountStore.init(context)
         ProxyStore.init(context)
         UiSettings.init(context)
+        AutoDownloadStore.init(context)
         val gen = clientGeneration.get()
         // H2-1 (performance): constructing the client loads the
         // ~32 MB libtdjson.so through TdNative's static init —

@@ -116,6 +116,7 @@ import com.tuxungram.android.td.SettingsBackup
 import com.tuxungram.android.td.StorageStore
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
+import com.tuxungram.android.td.AutoDownloadStore
 import com.tuxungram.android.td.ScopeNotifyStore
 import com.tuxungram.android.td.ScopeNotifyUi
 import com.tuxungram.android.td.TdRepository
@@ -1499,6 +1500,102 @@ fun SettingsScreen(
             )
             Spacer(Modifier.width(8.dp))
             Text("流量统计（TDLib 本地计数）")
+        }
+        // Media auto-download (v0.9.16, W1): per network
+        // type, how large a photo / video / file may be and
+        // still download itself. The presets come from the
+        // server (getAutoDownloadSettingsPresets) and choices
+        // are written back with setAutoDownloadSettings, so
+        // they are account settings shared with the official
+        // clients. TDLib has no getter for the effective
+        // per-type settings, so a type this app never set is
+        // labelled as such instead of guessing.
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "自动下载", fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            "在每种网络下，图片、视频、文件不超过多大时自动下载（点了才下的不受影响）。" +
+                "设置保存在 Telegram 服务器上，与官方客户端互通。",
+            color = Color.Gray, fontSize = 12.5.sp,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        val autoDlTypes by AutoDownloadStore.types.collectAsState()
+        val autoDlLoaded by AutoDownloadStore.presetsLoaded
+            .collectAsState()
+        val autoDlFailed by AutoDownloadStore.presetsFailed
+            .collectAsState()
+        val autoDlNotice by AutoDownloadStore.notice.collectAsState()
+        LaunchedEffect(Unit) { AutoDownloadStore.loadPresets() }
+        if (autoDlFailed && !autoDlLoaded) {
+            Text(
+                "预设没拉下来，点这里重试。",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .clickable { AutoDownloadStore.loadPresets() }
+                    .padding(top = 8.dp)
+            )
+        }
+        for ((typeKey, typeLabel) in listOf(
+            AutoDownloadStore.TYPE_MOBILE to "移动网络",
+            AutoDownloadStore.TYPE_ROAMING to "漫游",
+            AutoDownloadStore.TYPE_WIFI to "WiFi"
+        )) {
+            val row = autoDlTypes.firstOrNull { it.type == typeKey }
+            Text(
+                typeLabel, fontSize = 13.sp, color = Color.Gray,
+                modifier = Modifier.padding(top = 10.dp)
+            )
+            if (row != null && row.appliedTier.isEmpty()) {
+                Text(
+                    "尚未在本应用设置（使用 Telegram 默认）",
+                    color = Color.Gray, fontSize = 12.5.sp,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+            for ((tier, tierLabel) in listOf(
+                AutoDownloadStore.TIER_OFF to "关闭自动下载",
+                AutoDownloadStore.TIER_LOW to "低",
+                AutoDownloadStore.TIER_MEDIUM to "中",
+                AutoDownloadStore.TIER_HIGH to "高"
+            )) {
+                val limits = if (tier == AutoDownloadStore.TIER_OFF) {
+                    null
+                } else {
+                    AutoDownloadStore.tierLimits(tier)
+                }
+                val label = if (limits != null) {
+                    "$tierLabel（图片 ≤ ${formatBytes(limits.first)} · " +
+                        "视频 ≤ ${formatBytes(limits.second)} · " +
+                        "文件 ≤ ${formatBytes(limits.third)}）"
+                } else {
+                    tierLabel
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            AutoDownloadStore.apply(typeKey, tier)
+                        }
+                        .padding(vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioText(
+                        row != null && row.appliedTier.isNotEmpty() &&
+                            row.appliedTier == tier,
+                        label, fontSize = 14.sp
+                    )
+                }
+            }
+        }
+        if (autoDlNotice != null) {
+            Text(
+                autoDlNotice!!, color = Color(0xFFC62828),
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
         }
         var confirmClear by remember { mutableStateOf(false) }
         var clearedTip by remember { mutableStateOf<String?>(null) }
