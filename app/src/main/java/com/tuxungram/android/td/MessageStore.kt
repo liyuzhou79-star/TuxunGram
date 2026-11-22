@@ -701,6 +701,89 @@ object MessageStore {
         }
     }
 
+    /** The shared sendMessage boilerplate for content types
+     *  that need no send modifiers (v0.9.4: polls, locations,
+     *  contacts): reply target honored, result reconciled into
+     *  byId exactly like text/photo sends. */
+    private fun sendContent(content: JSONObject) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val replyTo = replyToJson()
+        _replyTarget.value = null
+        val query = TdClient.request("sendMessage").apply {
+            put("chat_id", chatId)
+            if (replyTo != null) put("reply_to", replyTo)
+            put("input_message_content", content)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            } else {
+                val item = parseMessage(response)
+                byId[item.id] = item
+                publish()
+            }
+        }
+    }
+
+    /** Create a poll in the open chat (v0.9.4, N1).
+     *  inputMessagePoll / inputPollOption / inputPollTypeRegular
+     *  / inputPollTypeQuiz all verified in td_api.tl. Quiz mode
+     *  carries exactly one correct option plus an optional
+     *  explanation; the server refuses multiple answers on
+     *  quizzes, so the UI never offers both at once. The created
+     *  poll renders through the normal POLL path and can be
+     *  voted on / retracted via setPollAnswer like any other. */
+    fun sendPoll(
+        question: String,
+        options: List<String>,
+        isAnonymous: Boolean,
+        allowsMultiple: Boolean,
+        quizCorrectIndex: Int,
+        quizExplanation: String
+    ) {
+        val optionArray = JSONArray()
+        for (text in options) {
+            optionArray.put(JSONObject().apply {
+                put("@type", "inputPollOption")
+                put("text", formattedText(text))
+                put("media", JSONObject.NULL)
+            })
+        }
+        val type = if (quizCorrectIndex >= 0) {
+            JSONObject().apply {
+                put("@type", "inputPollTypeQuiz")
+                put("correct_option_ids", JSONArray().put(quizCorrectIndex))
+                put("explanation", formattedText(quizExplanation))
+                put("explanation_media", JSONObject.NULL)
+            }
+        } else {
+            JSONObject().apply {
+                put("@type", "inputPollTypeRegular")
+                put("allow_adding_options", false)
+            }
+        }
+        val content = JSONObject().apply {
+            put("@type", "inputMessagePoll")
+            put("question", formattedText(question))
+            put("options", optionArray)
+            put("description", JSONObject.NULL)
+            put("media", JSONObject.NULL)
+            put("is_anonymous", isAnonymous)
+            put("allows_multiple_answers", allowsMultiple)
+            put("allows_revoting", true)
+            put("members_only", false)
+            put("country_codes", JSONArray())
+            put("shuffle_options", false)
+            put("hide_results_until_closes", false)
+            put("type", type)
+            put("open_period", 0)
+            put("close_date", 0)
+            put("is_closed", false)
+        }
+        sendContent(content)
+    }
+
     fun clearSendError() {
         _sendError.value = null
     }

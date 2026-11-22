@@ -333,6 +333,8 @@ fun ChatScreen(
     }
 
     var attachMenuOpen by remember { mutableStateOf(false) }
+    // Create-a-poll sheet (v0.9.4, N1).
+    var pollCreateOpen by remember { mutableStateOf(false) }
     // Emoji/sticker/GIF panel docked above the keyboard area
     // (steer: the input bar must not be a bare text box).
     var stickerPanelOpen by remember { mutableStateOf(false) }
@@ -630,6 +632,17 @@ fun ChatScreen(
                 onCancel = { pendingPhoto = null }
             )
             return@Column
+        }
+
+        if (pollCreateOpen) {
+            PollCreateDialog(
+                onDismiss = { pollCreateOpen = false },
+                onSend = { q, opts, anon, multi, correct, expl ->
+                    MessageStore.clearSendError()
+                    MessageStore.sendPoll(q, opts, anon, multi, correct, expl)
+                    pollCreateOpen = false
+                }
+            )
         }
 
         val fileToSend = pendingFile
@@ -979,6 +992,13 @@ fun ChatScreen(
                                     attachMenuOpen = false
                                     MediaStore.load()
                                     stickerPanelOpen = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("投票") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    pollCreateOpen = true
                                 }
                             )
                         }
