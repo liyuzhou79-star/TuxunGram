@@ -329,6 +329,24 @@ object TdRepository {
         })
     }
 
+    /** Confirm another device's QR login (v0.9.30, W1): the
+     *  reverse direction of [requestQrCodeLogin]. [link] is
+     *  the scanned code's text — the same tg://login?token=…
+     *  link this app's own QR login screen displays (the
+     *  authorizationStateWaitOtherDeviceConfirmation link in
+     *  td_api.tl). confirmQrCodeAuthentication returns the
+     *  new Session on success. The caller validates the link
+     *  shape and asks the user first; this only sends. */
+    fun confirmQrCodeLogin(
+        link: String,
+        callback: (org.json.JSONObject) -> Unit
+    ) {
+        val query = TdClient.request("confirmQrCodeAuthentication").apply {
+            put("link", link)
+        }
+        sendRaw(query, callback)
+    }
+
     fun checkCode(code: String) {
         send(TdClient.request("checkAuthenticationCode").apply {
             put("code", code)

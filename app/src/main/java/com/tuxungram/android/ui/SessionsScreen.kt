@@ -50,7 +50,10 @@ import java.util.Locale
  *  Telegram account, current device marked, each other session
  *  terminable, plus a "log out everywhere else" action. */
 @Composable
-fun SessionsScreen(onBack: () -> Unit) {
+fun SessionsScreen(
+    onBack: () -> Unit,
+    onScanQr: () -> Unit = {}
+) {
     BackHandler { onBack() }
     val sessions by SessionStore.sessions.collectAsState()
     val loading by SessionStore.loading.collectAsState()
@@ -74,6 +77,16 @@ fun SessionsScreen(onBack: () -> Unit) {
             color = Color.Gray, fontSize = 13.sp,
             modifier = Modifier.padding(horizontal = 16.dp)
         )
+        // Scan-to-confirm (v0.9.30, W1): authorize a NEW
+        // device by scanning the QR code it displays.
+        Button(
+            onClick = onScanQr,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Text("扫描二维码登录其他设备")
+        }
         if (notice != null) {
             Text(
                 notice!!, color = Color.Gray, fontSize = 13.sp,

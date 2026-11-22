@@ -12,8 +12,8 @@ android {
         applicationId = "com.tuxungram.android"
         minSdk = 29
         targetSdk = 35
-        versionCode = 38
-        versionName = "0.9.29"
+        versionCode = 39
+        versionName = "0.9.30"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -132,6 +132,12 @@ dependencies {
     // Core Material icons only (the extended set is huge); enough for
     // settings / back / send / attach style icon buttons.
     implementation("androidx.compose.material:material-icons-core")
+    // QR decoding for scan-to-confirm login (v0.9.30, W1):
+    // core only, no Android integration module — the camera
+    // frames come from Camera2 and are fed to the decoder
+    // directly. This is the one dependency exception of the
+    // version; its size is accounted in the checkpoint.
+    implementation("com.google.zxing:core:3.5.3")
     // Fingerprint unlock for the app lock (v0.6.0, E2) uses
     // the framework BiometricPrompt / BiometricManager since
     // v0.9.0 (H3): minSdk 29 covers the platform APIs, and

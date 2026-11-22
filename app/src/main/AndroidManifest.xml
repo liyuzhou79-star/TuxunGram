@@ -4,11 +4,20 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Scan-to-confirm login (v0.9.30, W1): the camera is
+         used only while the scan screen is open, to read a
+         Telegram login QR code. Nothing is photographed or
+         stored. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Round video notes (v0.9.14, U4) are recorded through
@@ -46,6 +55,14 @@
             android:name=".td.KeepAliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- Live-location background updates (v0.9.30, W2):
+             exists only while the user is sharing a live
+             location; its persistent notification carries a
+             stop action. -->
+        <service
+            android:name=".td.LiveLocationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
         <!-- Notification quick-reply / mark-read actions
              (v0.7.0, F4); only this app's own pending intents
              can reach it. -->

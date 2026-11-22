@@ -144,6 +144,7 @@ import com.tuxungram.android.ui.StatsScreen
 import com.tuxungram.android.ui.AboutScreen
 import com.tuxungram.android.ui.MyQrScreen
 import com.tuxungram.android.ui.QrLoginScreen
+import com.tuxungram.android.ui.QrScanScreen
 import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.OfficialTheme
 import com.tuxungram.android.ui.GuideScreen
@@ -219,6 +220,14 @@ class MainActivity : ComponentActivity() {
         // animator duration scale once, so every transition
         // in the app honours the reduced-motion setting.
         Motion.init(applicationContext)
+        // Touch feedback (v0.9.30, W6): the vibrator holder
+        // needs an application context once.
+        com.tuxungram.android.td.Haptics.init(applicationContext)
+        // Live-location background sharing (v0.9.30, W2):
+        // watch for my live locations so the foreground
+        // service can keep them updated with the app closed.
+        com.tuxungram.android.td.LiveShareRegistry
+            .attach(applicationContext)
         // Edge-to-edge (Phase D, D2): content draws behind the
         // system bars; every screen gets its safe distance from
         // the windowInsetsPadding applied in AppRoot/ReadyHost,
@@ -511,6 +520,10 @@ private sealed interface Route {
         override val depth = 1
     }
 
+    data object QrScan : Route {
+        override val depth = 2
+    }
+
     data object StickerSets : Route {
         override val depth = 1
     }
@@ -630,6 +643,7 @@ private fun ReadyHost() {
     var showEditProfile by remember { mutableStateOf(false) }
     var showBlocked by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
+    var showQrScan by remember { mutableStateOf(false) }
     var showStickerSets by remember { mutableStateOf(false) }
     var showDownloads by remember { mutableStateOf(false) }
     var showNetworkStats by remember { mutableStateOf(false) }
@@ -758,6 +772,7 @@ private fun ReadyHost() {
         thread != null -> Route.Thread(thread.first, thread.second)
         showEditProfile -> Route.EditProfile
         showBlocked -> Route.Blocked
+        showQrScan -> Route.QrScan
         showSessions -> Route.Sessions
         showStickerSets -> Route.StickerSets
         showDownloads -> Route.Downloads
@@ -842,7 +857,11 @@ private fun ReadyHost() {
                     onBack = { showBlocked = false }
                 )
                 is Route.Sessions -> SessionsScreen(
-                    onBack = { showSessions = false }
+                    onBack = { showSessions = false },
+                    onScanQr = { showQrScan = true }
+                )
+                is Route.QrScan -> QrScanScreen(
+                    onBack = { showQrScan = false }
                 )
                 is Route.StickerSets -> StickerSetsScreen(
                     onBack = { showStickerSets = false }

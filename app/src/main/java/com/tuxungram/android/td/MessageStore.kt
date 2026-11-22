@@ -2125,6 +2125,10 @@ object MessageStore {
     fun stopLiveLocation(messageId: Long) {
         val chatId = currentChatId
         if (chatId == 0L) return
+        // Background sharing (v0.9.30, W2) stops tracking
+        // this share at once; the content update would
+        // remove it anyway, this just skips the wait.
+        LiveShareRegistry.remove(chatId, messageId)
         val query = TdClient.request("editMessageLiveLocation").apply {
             put("chat_id", chatId)
             put("message_id", messageId)

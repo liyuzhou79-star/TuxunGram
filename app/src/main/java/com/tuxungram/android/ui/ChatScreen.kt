@@ -306,11 +306,26 @@ fun ChatScreen(
         val mine = messages.firstOrNull {
             it.outgoing && it.liveExpiresIn > 0
         } ?: return@LaunchedEffect
+        // Background sharing (v0.9.30, W2): when the live-
+        // location service owns this share it does the
+        // pushing (also with the app closed); this loop is
+        // only the fallback for when the service could not
+        // start, so the two never push the same point twice.
+        if (com.tuxungram.android.td.LiveShareRegistry
+                .isActive(chatId, mine.id)
+        ) {
+            return@LaunchedEffect
+        }
         while (true) {
             delay(60_000)
             val current = MessageStore.messages.value
                 .firstOrNull { it.id == mine.id }
             if (current == null || current.liveExpiresIn <= 0) break
+            if (com.tuxungram.android.td.LiveShareRegistry
+                    .isActive(chatId, current.id)
+            ) {
+                break
+            }
             fetchOneLocation(liveContext) { fix ->
                 if (fix != null) {
                     MessageStore.updateLiveLocation(
@@ -1473,6 +1488,7 @@ fun ChatScreen(
                         if (liveChoice > 0) {
                             Text(
                                 "共享期间，对方能看到你位置的更新；" +
+                                    "App 在后台时也会约每分钟更新一次（通知栏会有一条共享中的通知，可在那里直接停）。" +
                                     "随时能在消息上点「停止共享」。",
                                 fontSize = 12.sp, color = Color.Gray
                             )
