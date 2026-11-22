@@ -17,7 +17,24 @@ data class AdminCaps(
     /** Promote/demote administrators (v0.9.2, L4): the
      *  creator always can; an administrator needs the
      *  can_promote_members right. */
-    val canPromote: Boolean = false
+    val canPromote: Boolean = false,
+    /** Invite-link management (v0.9.5, O1): creator, or an
+     *  administrator with the can_invite_users right. */
+    val canInvite: Boolean = false,
+    /** Group settings pages (v0.9.5, O2/O3: permissions,
+     *  slow mode, content protection, group photo): creator,
+     *  or an administrator with the can_change_info right. */
+    val canManageSettings: Boolean = false
+)
+
+/** One invite link row for the admin invite section
+ *  (v0.9.5, O1), flattened from chatInviteLink. */
+data class InviteLinkUi(
+    val link: String,
+    val name: String,
+    val isPrimary: Boolean,
+    val isRevoked: Boolean,
+    val memberCount: Int
 )
 
 /**
@@ -66,7 +83,10 @@ object AdminStore {
                     ?: return@sendRaw
                 _caps.value = when (status.optString("@type")) {
                     "chatMemberStatusCreator" ->
-                        AdminCaps(true, true, true, true, true)
+                        AdminCaps(
+                            true, true, true, true, true,
+                            canInvite = true, canManageSettings = true
+                        )
                     "chatMemberStatusAdministrator" -> {
                         val rights = status.optJSONObject("rights")
                         AdminCaps(
@@ -78,7 +98,11 @@ object AdminStore {
                             canRestrict =
                                 rights?.optBoolean("can_restrict_members") == true,
                             canPromote =
-                                rights?.optBoolean("can_promote_members") == true
+                                rights?.optBoolean("can_promote_members") == true,
+                            canInvite =
+                                rights?.optBoolean("can_invite_users") == true,
+                            canManageSettings =
+                                rights?.optBoolean("can_change_info") == true
                         )
                     }
                     else -> AdminCaps()
@@ -192,6 +216,92 @@ object AdminStore {
                     response.optInt("code") to response.optString("message")
                 )
             }
+        }
+    }
+
+    // ---- Invite links (v0.9.5, O1) ----
+    // getChatInviteLinks is creator-scoped: the profile page
+    // lists the links the signed-in admin created (the primary
+    // link additionally rides the FullInfo, see ProfileStore).
+    // createChatInviteLink / revokeChatInviteLink verified in
+    // td_api.tl.
+
+    private val _inviteLinks = MutableStateFlow<List<InviteLinkUi>>(emptyList())
+    val inviteLinks: StateFlow<List<InviteLinkUi>> = _inviteLinks
+
+    @Volatile
+    private var inviteChatId = 0L
+
+    fun loadInviteLinks(chatId: Long) {
+        inviteChatId = chatId
+        _inviteLinks.value = emptyList()
+        TdRepository.sendRaw(TdClient.request("getMe")) { me ->
+            if (TdClient.isError(me) || inviteChatId != chatId) {
+                return@sendRaw
+            }
+            val myId = me.optLong("id")
+            val collected = ArrayList<InviteLinkUi>()
+            var pending = 2
+            fun fetch(revoked: Boolean) {
+                val query = TdClient.request("getChatInviteLinks").apply {
+                    put("chat_id", chatId)
+                    put("creator_user_id", myId)
+                    put("is_revoked", revoked)
+                    put("offset_date", 0)
+                    put("offset_invite_link", "")
+                    put("limit", 50)
+                }
+                TdRepository.sendRaw(query) { response ->
+                    if (!TdClient.isError(response)) {
+                        val links = response.optJSONArray("invite_links")
+                        if (links != null) {
+                            for (i in 0 until links.length()) {
+                                val l = links.optJSONObject(i) ?: continue
+                                collected.add(
+                                    InviteLinkUi(
+                                        link = l.optString("invite_link"),
+                                        name = l.optString("name"),
+                                        isPrimary = l.optBoolean("is_primary"),
+                                        isRevoked = l.optBoolean("is_revoked"),
+                                        memberCount = l.optInt("member_count")
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    pending--
+                    if (pending == 0 && inviteChatId == chatId) {
+                        _inviteLinks.value = collected.sortedWith(
+                            compareBy<InviteLinkUi> { it.isRevoked }
+                                .thenByDescending { it.isPrimary }
+                        )
+                    }
+                }
+            }
+            fetch(revoked = false)
+            fetch(revoked = true)
+        }
+    }
+
+    fun createInviteLink(chatId: Long, name: String) {
+        val query = TdClient.request("createChatInviteLink").apply {
+            put("chat_id", chatId)
+            put("name", name)
+            put("expiration_date", 0)
+            put("member_limit", 0)
+            put("creates_join_request", false)
+        }
+        act(query, "已新建邀请链接。") { loadInviteLinks(chatId) }
+    }
+
+    fun revokeInviteLink(chatId: Long, link: String) {
+        val query = TdClient.request("revokeChatInviteLink").apply {
+            put("chat_id", chatId)
+            put("invite_link", link)
+        }
+        act(query, "已撤销这个邀请链接，用它的人不能再通过它进群。") {
+            loadInviteLinks(chatId)
+            ProfileStore.load(chatId)
         }
     }
 

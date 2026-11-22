@@ -36,7 +36,11 @@ data class ProfileUi(
     val autoDeleteSeconds: Int = 0,
     /** True when this user sits on my block list
      *  (userFullInfo.block_list == blockListMain, v0.9.3 M3). */
-    val isBlocked: Boolean = false
+    val isBlocked: Boolean = false,
+    /** Primary invite link from the FullInfo's invite_link
+     *  (v0.9.5, O1); empty when TDLib does not hand it out
+     *  (no can_invite_users right, or a private group). */
+    val primaryInviteLink: String = ""
 )
 
 /**
@@ -59,6 +63,7 @@ object ProfileStore {
     private var currentIsSecret = false
     private var currentAutoDelete = 0
     private var currentBlocked = false
+    private var currentInviteLink = ""
     private var supergroupId = 0L
     private var memberOffset = 0
     private var membersLoading = false
@@ -80,6 +85,7 @@ object ProfileStore {
         currentIsSecret = false
         currentAutoDelete = 0
         currentBlocked = false
+        currentInviteLink = ""
         supergroupId = 0L
         memberOffset = 0
         membersLoading = false
@@ -128,7 +134,8 @@ object ProfileStore {
             userId = currentUserId,
             isSecretChat = currentIsSecret,
             autoDeleteSeconds = currentAutoDelete,
-            isBlocked = currentBlocked
+            isBlocked = currentBlocked,
+            primaryInviteLink = currentInviteLink
         )
     }
 
@@ -188,6 +195,8 @@ object ProfileStore {
                 publish(chatId, title, "群组", "", emptyList(), false, true)
                 return@sendRaw
             }
+            currentInviteLink = full.optJSONObject("invite_link")
+                ?.optString("invite_link") ?: ""
             val members = full.optJSONArray("members")
             if (members != null) {
                 for (i in 0 until members.length()) {
@@ -220,6 +229,8 @@ object ProfileStore {
                 publish(chatId, title, kind, "", emptyList(), false, true)
                 return@sendRaw
             }
+            currentInviteLink = full.optJSONObject("invite_link")
+                ?.optString("invite_link") ?: ""
             val memberCount = full.optInt("member_count")
             val adminCount = full.optInt("administrator_count")
             val lines = ArrayList<String>()

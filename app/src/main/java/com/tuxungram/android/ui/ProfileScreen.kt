@@ -37,11 +37,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import android.content.Intent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AdminStore
 import com.tuxungram.android.td.BlockStore
+import com.tuxungram.android.td.InviteLinkUi
 import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MeStore
 import com.tuxungram.android.td.MemberEntry
@@ -68,6 +73,16 @@ fun ProfileScreen(
     val adminNotice by AdminStore.notice.collectAsState()
     var titleEditOpen by remember { mutableStateOf(false) }
     var descEditOpen by remember { mutableStateOf(false) }
+    // Invite links (v0.9.5, O1).
+    val inviteLinks by AdminStore.inviteLinks.collectAsState()
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    var inviteCreateOpen by remember { mutableStateOf(false) }
+    var revokeTarget by remember { mutableStateOf<InviteLinkUi?>(null) }
+    val canInvite = caps.canInvite
+    LaunchedEffect(chatId, canInvite) {
+        if (canInvite) AdminStore.loadInviteLinks(chatId)
+    }
     var memberAction by remember { mutableStateOf<MemberEntry?>(null) }
     // Secret chats (v0.6.0, E1): encryption state + fingerprint.
     val secretInfo by SecretChatStore.info.collectAsState()
@@ -381,6 +396,121 @@ fun ProfileScreen(
                     }
                 }
             }
+            if (caps.canInvite) {
+                // Invite-link management (v0.9.5, O1): the
+                // primary link plus every link I created here,
+                // active and revoked.
+                item(key = "invite") {
+                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                        Text(
+                            "邀请链接",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.Gray
+                        )
+                        if (p.primaryInviteLink.isNotEmpty()) {
+                            Text(
+                                "主邀请链接",
+                                fontSize = 12.sp, color = Color.Gray,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                            Text(
+                                p.primaryInviteLink,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                            Row {
+                                TextButton(onClick = {
+                                    clipboard.setText(
+                                        AnnotatedString(p.primaryInviteLink)
+                                    )
+                                }) { Text("复制") }
+                                TextButton(onClick = {
+                                    val share = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(
+                                            Intent.EXTRA_TEXT,
+                                            p.primaryInviteLink
+                                        )
+                                    }
+                                    context.startActivity(
+                                        Intent.createChooser(share, "分享邀请链接")
+                                    )
+                                }) { Text("分享") }
+                            }
+                        } else {
+                            Text(
+                                "还没有主邀请链接，新建一个就会出现在这里。",
+                                fontSize = 12.sp, color = Color.Gray,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                        }
+                        for (link in inviteLinks) {
+                            Column(
+                                modifier = Modifier.padding(vertical = 5.dp)
+                            ) {
+                                Text(
+                                    buildString {
+                                        append(
+                                            link.name.ifEmpty { "未命名链接" }
+                                        )
+                                        if (link.isPrimary) append(" · 主链接")
+                                        if (link.isRevoked) append(" · 已撤销")
+                                        append(" · 已有 ${link.memberCount} 人通过它加入")
+                                    },
+                                    fontSize = 13.sp,
+                                    color = if (link.isRevoked) {
+                                        Color.Gray
+                                    } else {
+                                        Color.Unspecified
+                                    }
+                                )
+                                Text(
+                                    link.link,
+                                    fontSize = 12.sp, color = Color.Gray,
+                                    maxLines = 1
+                                )
+                                if (!link.isRevoked) {
+                                    Row {
+                                        TextButton(onClick = {
+                                            clipboard.setText(
+                                                AnnotatedString(link.link)
+                                            )
+                                        }) { Text("复制") }
+                                        TextButton(onClick = {
+                                            val share =
+                                                Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(
+                                                        Intent.EXTRA_TEXT,
+                                                        link.link
+                                                    )
+                                                }
+                                            context.startActivity(
+                                                Intent.createChooser(
+                                                    share, "分享邀请链接"
+                                                )
+                                            )
+                                        }) { Text("分享") }
+                                        TextButton(onClick = {
+                                            revokeTarget = link
+                                        }) {
+                                            Text(
+                                                "撤销",
+                                                color = Color(0xFFC62828)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        TextButton(onClick = { inviteCreateOpen = true }) {
+                            Text("＋ 新建邀请链接")
+                        }
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
             if (p.canGetMembers) {
                 // Dedicated members page (v0.9.2, L4): paged,
                 // searchable, administrators pinned — the
@@ -618,6 +748,63 @@ fun ProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { blockConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+    if (inviteCreateOpen) {
+        var name by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { inviteCreateOpen = false },
+            title = { Text("新建邀请链接") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("名称（方便你自己认，可留空）") }
+                    )
+                    Text(
+                        "新链接长期有效、人数不限，进群不用审批。",
+                        fontSize = 12.sp, color = Color.Gray,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    AdminStore.createInviteLink(chatId, name.trim())
+                    inviteCreateOpen = false
+                }) { Text("新建") }
+            },
+            dismissButton = {
+                TextButton(onClick = { inviteCreateOpen = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+    val revoke = revokeTarget
+    if (revoke != null) {
+        AlertDialog(
+            onDismissRequest = { revokeTarget = null },
+            title = { Text("撤销这个邀请链接？") },
+            text = {
+                Text("撤销后，拿到这个链接的人就不能再通过它进群了。已经进群的人不受影响。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    revokeTarget = null
+                    AdminStore.revokeInviteLink(chatId, revoke.link)
+                }) {
+                    Text("撤销", color = Color(0xFFC62828))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { revokeTarget = null }) {
                     Text("取消")
                 }
             }
