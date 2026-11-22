@@ -983,6 +983,7 @@ fun ThreadScreen(
         if (trimTarget != null) {
             VideoTrimScreen(
                 path = trimTarget.first,
+                fileName = trimTarget.third,
                 onDone = { trimmedPath ->
                     trimmingVideo = null
                     val base = trimTarget.third

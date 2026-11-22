@@ -884,7 +884,7 @@ private fun AlbumDetail(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(
-                start = 16.dp, end = 8.dp, vertical = 4.dp
+                start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp
             )
         ) {
             Text(

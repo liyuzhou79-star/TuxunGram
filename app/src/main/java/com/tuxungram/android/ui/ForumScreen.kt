@@ -235,7 +235,7 @@ fun ForumTopicsList(
     val iconTopic = iconPickerTarget
     if (iconTopic != null) {
         var iconChoices by remember(iconTopic.topicId) {
-            mutableStateOf<List<Pair<Long, Int>>>(emptyList())
+            mutableStateOf<List<Long>>(emptyList())
         }
         var iconChoicesLoaded by remember(iconTopic.topicId) {
             mutableStateOf(false)
@@ -273,8 +273,7 @@ fun ForumTopicsList(
                     return@sendRaw
                 }
                 var pending = ids.size
-                val collected =
-                    ArrayList<Pair<Long, Int>>()
+                val collected = ArrayList<Long>()
                 for (setId in ids) {
                     val setQuery = com.tuxungram.android.td
                         .TdClient.request("getStickerSet")
@@ -294,15 +293,10 @@ fun ForumTopicsList(
                                         ?.optLong(
                                             "custom_emoji_id"
                                         ) ?: 0L
-                                    val fileId = sticker
-                                        .optJSONObject("sticker")
-                                        ?.optInt("id") ?: 0
                                     if (emojiId != 0L &&
-                                        fileId != 0
+                                        emojiId !in collected
                                     ) {
-                                        collected.add(
-                                            emojiId to fileId
-                                        )
+                                        collected.add(emojiId)
                                     }
                                 }
                             }
@@ -310,12 +304,11 @@ fun ForumTopicsList(
                             if (pending == 0) {
                                 iconChoices = collected
                                 iconChoicesLoaded = true
-                                CustomEmojiStore
-                                    .ensureStickerFiles(
-                                        collected.map {
-                                            it.first to it.second
-                                        }
-                                    )
+                                // Rendering resolves through
+                                // the shared store: it fetches
+                                // and downloads the sticker
+                                // files for these ids.
+                                CustomEmojiStore.ensure(collected)
                             }
                         }
                 }
@@ -358,7 +351,7 @@ fun ForumTopicsList(
                                     items(
                                         iconChoices.size
                                     ) { index ->
-                                        val (emojiId, _) =
+                                        val emojiId =
                                             iconChoices[index]
                                         Box(
                                             modifier = Modifier
@@ -893,6 +886,7 @@ fun ForumTopicView(
         if (trimTarget != null) {
             VideoTrimScreen(
                 path = trimTarget.first,
+                fileName = trimTarget.third,
                 onDone = { trimmedPath ->
                     trimmingVideo = null
                     val base = trimTarget.third
