@@ -56,6 +56,7 @@ fun MeScreen(
     onOpenSavedChat: (Long) -> Unit,
     onOpenSettingsTab: () -> Unit,
     onOpenChangelog: () -> Unit,
+    onOpenAbout: () -> Unit,
     // Back target (v0.9.19, Z5): the host always passes
     // the chats tab, so the system Back key behaves here
     // exactly like on the contacts and settings tabs
@@ -223,6 +224,12 @@ fun MeScreen(
                 Icons.Filled.List, "更新日志",
                 "每个版本都改了什么",
                 onClick = onOpenChangelog
+            )
+            SettingsDivider()
+            IconRow(
+                Icons.Filled.Info, "关于",
+                "关于我们这个软件",
+                onClick = onOpenAbout
             )
         }
         Spacer(Modifier.height(16.dp))

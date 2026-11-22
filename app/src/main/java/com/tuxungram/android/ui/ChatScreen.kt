@@ -97,6 +97,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -894,7 +895,7 @@ fun ChatScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(headerPalette.actionBarBg)
-                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { selectedIds = emptySet() }) {
@@ -937,7 +938,7 @@ fun ChatScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(headerPalette.actionBarBg)
-                .padding(horizontal = 4.dp, vertical = 6.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
@@ -2653,7 +2654,11 @@ fun ChatScreen(
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent,
                         disabledIndicatorColor = Color.Transparent
-                    )
+                    ),
+                    // Official input text size (v0.9.22,
+                    // S2): the official message field sets
+                    // 18 sp; the Material default is 16.
+                    textStyle = TextStyle(fontSize = 18.sp)
                 )
                 if (canPhotos) {
                     Box {
@@ -3965,7 +3970,7 @@ fun MessageBubble(
                             }
                         }
                     )
-                    .padding(horizontal = 10.dp, vertical = 7.dp)
+                    .padding(horizontal = 11.dp, vertical = 8.dp)
             ) {
                 if (isGroup && !outgoing && msg.senderName.isNotEmpty()) {
                     Text(

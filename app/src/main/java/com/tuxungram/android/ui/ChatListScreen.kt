@@ -798,12 +798,12 @@ fun ArchiveEntryRow(unread: Int, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(54.dp)
+                .size(52.dp)
                 .background(palette.graySection, CircleShape),
             contentAlignment = Alignment.Center
         ) {
@@ -818,7 +818,7 @@ fun ArchiveEntryRow(unread: Int, onClick: () -> Unit) {
             "归档",
             color = palette.textPrimary,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 16.sp,
+            fontSize = 17.sp,
             maxLines = 1,
             modifier = Modifier.weight(1f, fill = false)
         )
@@ -1079,7 +1079,8 @@ private fun SwipeActionCell(
 @Composable
 fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
     var menuOpen by remember { mutableStateOf(false) }
-    // Official list layout (v0.9.17, X3): 54 dp avatar,
+    // Official list layout (v0.9.17, X3; metrics
+    // re-measured v0.9.22, S2): 52 dp avatar,
     // official placeholder gradient (avatar_background*),
     // online dot in chats_onlineCircle at the avatar's
     // bottom-right, hairline divider starting after the
@@ -1094,16 +1095,16 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     onClick = onClick,
                     onLongClick = { menuOpen = true }
                 )
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
         Box {
             if (chat.photoPath != null) {
-                AvatarImage(path = chat.photoPath, sizeDp = 54)
+                AvatarImage(path = chat.photoPath, sizeDp = 52)
             } else {
                 Box(
                     modifier = Modifier
-                        .size(54.dp)
+                        .size(52.dp)
                         .background(
                             Brush.verticalGradient(
                                 listOf(avatarPair.first, avatarPair.second)
@@ -1149,7 +1150,7 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     chat.title,
                     color = palette.textPrimary,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     maxLines = 1,
                     modifier = Modifier.weight(1f, fill = false)
                 )
@@ -1182,13 +1183,13 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                         "草稿：",
                         // chats_draft (v0.9.17, X3 recalibration).
                         color = palette.draftRed,
-                        fontSize = 15.sp,
+                        fontSize = 16.sp,
                         maxLines = 1
                     )
                     Text(
                         chat.draftText,
                         color = palette.textSecondary,
-                        fontSize = 15.sp,
+                        fontSize = 16.sp,
                         maxLines = 1,
                         modifier = Modifier.weight(1f)
                     )
@@ -1207,7 +1208,7 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                                 chat.previewSenderId,
                                 OfficialTheme.dark
                             ),
-                            fontSize = 15.sp,
+                            fontSize = 16.sp,
                             maxLines = 1,
                             modifier = Modifier.widthIn(max = 120.dp)
                         )
@@ -1215,7 +1216,7 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     Text(
                         chat.preview,
                         color = palette.textSecondary,
-                        fontSize = 15.sp,
+                        fontSize = 16.sp,
                         maxLines = 1,
                         modifier = Modifier.weight(1f)
                     )
@@ -1265,12 +1266,12 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
         }
         }
         // Hairline divider (v0.9.17, X3): starts after the
-        // avatar column (16 + 54 + 12 = 82 dp), official
+        // avatar column (16 + 52 + 12 = 80 dp), official
         // divider color.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 82.dp)
+                .padding(start = 80.dp)
                 .fillMaxWidth()
                 .height(0.5.dp)
                 .background(palette.divider)

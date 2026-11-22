@@ -186,7 +186,12 @@ fun IconRow(
                 Modifier
             }
         )
-        .padding(vertical = 10.dp)
+        // Official settings cell height (v0.9.22, S2):
+        // the official settings row measures 50 dp, so
+        // the official rendering pads 13 dp around the
+        // 24 dp glyph (13 + 24 + 13); the custom tile
+        // rendering keeps its 10 dp padding.
+        .padding(vertical = if (accentMode == UiSettings.ACCENT_OFFICIAL) 13.dp else 10.dp)
     if (accentMode == UiSettings.ACCENT_OFFICIAL) {
         val palette = OfficialTheme.current()
         Row(
@@ -205,7 +210,7 @@ fun IconRow(
             Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    title, fontSize = 15.sp,
+                    title, fontSize = 16.sp,
                     color = if (danger) {
                         MaterialTheme.colorScheme.error
                     } else {

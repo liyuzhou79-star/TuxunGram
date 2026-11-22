@@ -139,6 +139,7 @@ import com.tuxungram.android.ui.EventLogScreen
 import com.tuxungram.android.ui.JoinRequestsScreen
 import com.tuxungram.android.ui.NetworkStatsScreen
 import com.tuxungram.android.ui.StatsScreen
+import com.tuxungram.android.ui.AboutScreen
 import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.OfficialTheme
 import com.tuxungram.android.ui.GuideScreen
@@ -470,6 +471,10 @@ private sealed interface Route {
         override val depth = 1
     }
 
+    data object About : Route {
+        override val depth = 1
+    }
+
     data object GuideReplay : Route {
         override val depth = 1
     }
@@ -595,6 +600,7 @@ private fun ReadyHost() {
         mutableStateOf(seen.isEmpty() || seen == BuildConfig.VERSION_NAME)
     }
     var showChangelog by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
     var showGuideReplay by remember { mutableStateOf(false) }
     var showEditProfile by remember { mutableStateOf(false) }
     var showBlocked by remember { mutableStateOf(false) }
@@ -720,6 +726,7 @@ private fun ReadyHost() {
     // transition can animate between.
     val route: Route = when {
         showChangelog -> Route.Changelog
+        showAbout -> Route.About
         showGuideReplay -> Route.GuideReplay
         thread != null -> Route.Thread(thread.first, thread.second)
         showEditProfile -> Route.EditProfile
@@ -781,6 +788,9 @@ private fun ReadyHost() {
             when (r) {
                 is Route.Changelog -> ChangelogScreen(
                     onBack = { showChangelog = false }
+                )
+                is Route.About -> AboutScreen(
+                    onBack = { showAbout = false }
                 )
                 is Route.GuideReplay -> GuideScreen(
                     onDone = { showGuideReplay = false }
@@ -966,7 +976,8 @@ private fun ReadyHost() {
                             onEditProfile = { showEditProfile = true },
                             onOpenSavedChat = { openChatId = it },
                             onOpenSettingsTab = { homeTab = 2 },
-                            onOpenChangelog = { showChangelog = true }
+                            onOpenChangelog = { showChangelog = true },
+                            onOpenAbout = { showAbout = true }
                         )
                         else -> ChatListScreen(
                             onOpenChat = { openChatId = it },

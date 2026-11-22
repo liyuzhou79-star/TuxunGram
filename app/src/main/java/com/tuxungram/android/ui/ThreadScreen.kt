@@ -223,7 +223,7 @@ fun SimpleMessageBubble(
                         },
                         onLongClick = { menuOpen = true }
                     )
-                    .padding(horizontal = 10.dp, vertical = 7.dp)
+                    .padding(horizontal = 11.dp, vertical = 8.dp)
             ) {
                 if (isGroup && !outgoing && msg.senderName.isNotEmpty()) {
                     Text(
@@ -831,7 +831,7 @@ fun ThreadScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 6.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
