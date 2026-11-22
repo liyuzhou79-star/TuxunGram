@@ -282,6 +282,7 @@ fun ChatListScreen(
     onOpenCreate: () -> Unit,
     onOpenStory: (Long) -> Unit,
     onOpenContacts: () -> Unit,
+    onOpenSearch: () -> Unit,
     // Hoisted by the host (v0.9.9, W4) so switching bottom-nav
     // tabs away and back keeps the list scroll position.
     listState: LazyListState = rememberLazyListState()
@@ -292,16 +293,15 @@ fun ChatListScreen(
     val selectedFolder by ChatStore.selectedFolder.collectAsState()
     val folderChats by ChatStore.folderChats.collectAsState()
     val folderLoaded by ChatStore.folderLoaded.collectAsState()
-    var query by remember { mutableStateOf("") }
     // Swipe actions (v0.9.2, L3): the chat id whose row is
     // currently swiped open, so only one row shows its action
     // panel at a time.
     var swipeOpenId by remember { mutableStateOf<Long?>(null) }
 
+    // Search lives on its own full-screen page since v0.9.19
+    // (Z4); this screen only ever shows the plain list now.
     val baseList = if (selectedFolder == null) chats else folderChats
-    val shown = if (query.isBlank()) baseList else baseList.filter {
-        it.title.contains(query.trim(), ignoreCase = true)
-    }
+    val shown = baseList
 
     LaunchedEffect(listState, shown.size, folderLoaded, selectedFolder) {
         snapshotFlow {
@@ -312,23 +312,6 @@ fun ChatListScreen(
             ) {
                 ChatStore.loadFolderMore()
             }
-        }
-    }
-
-    // Global message search, debounced; the local title filter
-    // above stays instant, server results stream in below it.
-    val searchHits by SearchStore.results.collectAsState()
-    val searching by SearchStore.searching.collectAsState()
-    val searchExhausted by SearchStore.exhausted.collectAsState()
-    // Collected so the contacts section refreshes when the
-    // address book finishes loading.
-    val allContacts by ContactsStore.contacts.collectAsState()
-    LaunchedEffect(query) {
-        if (query.isBlank()) {
-            SearchStore.search("")
-        } else {
-            delay(500)
-            SearchStore.search(query)
         }
     }
 
@@ -367,15 +350,30 @@ fun ChatListScreen(
                 Icon(Icons.Filled.Settings, contentDescription = "设置")
             }
         }
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text("搜索") },
-            singleLine = true,
+        // Search entry (v0.9.19, Z4): a fake field that opens
+        // the full-screen search page — the official shape.
+        // (The Z1 top bar replaces this bar with the search
+        // icon in the same version.)
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-        )
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant,
+                    RoundedCornerShape(10.dp)
+                )
+                .clickable { onOpenSearch() }
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Search, contentDescription = null,
+                    tint = Color.Gray, modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("搜索", color = Color.Gray, fontSize = 15.sp)
+            }
+        }
         Spacer(Modifier.height(8.dp))
         // Folder tabs (B7 + editor): selecting one swaps the
         // list below to that folder's chats; long-press opens
@@ -507,7 +505,7 @@ fun ChatListScreen(
         // shows even when nobody has an active story, so the
         // entry is always reachable.
         val storyRings by StoryStore.rings.collectAsState()
-        if (query.isBlank() && selectedFolder == null) {
+        if (selectedFolder == null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -614,7 +612,7 @@ fun ChatListScreen(
         // Saved Messages pinned entry (v0.9.1, J5): always at
         // the top of the main list, resolving the self chat on
         // tap (getMe -> createPrivateChat with one's own id).
-        if (query.isBlank() && selectedFolder == null) {
+        if (selectedFolder == null) {
             SavedMessagesRow(onClick = {
                 ContactsStore.openSavedMessages { chatId ->
                     if (chatId != null) onOpenChat(chatId)
@@ -627,7 +625,7 @@ fun ChatListScreen(
                     .background(MaterialTheme.colorScheme.outlineVariant)
             )
         }
-        if (shown.isEmpty() && query.isBlank()) {
+        if (shown.isEmpty()) {
             CenterColumn {
                 if (selectedFolder != null && !folderLoaded) {
                     CircularProgressIndicator()
@@ -648,15 +646,6 @@ fun ChatListScreen(
                         "在 Telegram 里有聊天后，这里会自动出现。"
                     )
                 }
-            }
-        } else if (shown.isEmpty()) {
-            // Search (or a filter) matched nothing: say so with
-            // a graphic instead of a blank page (W1/W5).
-            CenterColumn {
-                EmptyState(
-                    Icons.Filled.Search, "没有找到对话",
-                    "换个关键词试试，或者检查一下拼写。"
-                )
             }
         } else {
             LazyColumn(
@@ -685,105 +674,6 @@ fun ChatListScreen(
                             onOpenChange = { swipeOpenId = it },
                             onClick = { onOpenChat(chat.id) }
                         )
-                    }
-                }
-                if (query.isNotBlank() && selectedFolder == null) {
-                    val contactHits = ContactsStore.search(query)
-                    if (contactHits.isNotEmpty()) {
-                        item(key = "contacts_header") {
-                            Text(
-                                "联系人",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.Gray,
-                                modifier = Modifier.padding(
-                                    horizontal = 16.dp, vertical = 8.dp
-                                )
-                            )
-                        }
-                        items(
-                            items = contactHits,
-                            key = { "contact_${it.userId}" }
-                        ) { contact ->
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        ContactsStore.openPrivateChat(
-                                            contact.userId
-                                        ) { chatId ->
-                                            if (chatId != null) onOpenChat(chatId)
-                                        }
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    contact.name,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp
-                                )
-                                if (contact.username.isNotEmpty()) {
-                                    Text(
-                                        "@${contact.username}",
-                                        color = Color.Gray, fontSize = 13.sp
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    item(key = "hits_header") {
-                        Text(
-                            "消息",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.Gray,
-                            modifier = Modifier.padding(
-                                horizontal = 16.dp, vertical = 8.dp
-                            )
-                        )
-                    }
-                    items(
-                        items = searchHits,
-                        key = { "hit_${it.chatId}_${it.messageId}" }
-                    ) { hit ->
-                        SearchHitRow(hit) {
-                            onOpenChatLocated(hit.chatId, hit.messageId)
-                        }
-                    }
-                    if (searching) {
-                        item(key = "hits_loading") {
-                            Row(
-                                modifier = Modifier.padding(
-                                    horizontal = 16.dp, vertical = 10.dp
-                                ),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text("搜索中…", color = Color.Gray, fontSize = 13.sp)
-                            }
-                        }
-                    } else if (!searchExhausted && searchHits.isNotEmpty()) {
-                        item(key = "hits_more") {
-                            TextButton(
-                                onClick = { SearchStore.loadMore() },
-                                modifier = Modifier.padding(horizontal = 8.dp)
-                            ) {
-                                Text("加载更多结果")
-                            }
-                        }
-                    } else if (searchHits.isEmpty()) {
-                        item(key = "hits_empty") {
-                            Text(
-                                "没有搜到消息",
-                                color = Color.Gray, fontSize = 13.sp,
-                                modifier = Modifier.padding(
-                                    horizontal = 16.dp, vertical = 10.dp
-                                )
-                            )
-                        }
                     }
                 }
             }

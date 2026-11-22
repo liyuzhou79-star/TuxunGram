@@ -156,6 +156,7 @@ import com.tuxungram.android.ui.PasswordScreen
 import com.tuxungram.android.ui.PhoneScreen
 import com.tuxungram.android.ui.ProfileScreen
 import com.tuxungram.android.ui.RegistrationScreen
+import com.tuxungram.android.ui.SearchScreen
 import com.tuxungram.android.ui.SessionsScreen
 import com.tuxungram.android.ui.SettingsScreen
 import com.tuxungram.android.ui.SharedMediaScreen
@@ -480,6 +481,10 @@ private sealed interface Route {
         override val depth = 1
     }
 
+    data object Search : Route {
+        override val depth = 1
+    }
+
     data object Create : Route {
         override val depth = 1
     }
@@ -579,6 +584,9 @@ private fun ReadyHost() {
     var showNetworkStats by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
     var showContacts by remember { mutableStateOf(false) }
+    // Full-screen search page (v0.9.19, Z4): opened from the
+    // chat list's search entry, results open chats from here.
+    var showSearch by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }
     // Members page (v0.9.2, L4): opened from a group/channel
     // profile; Back returns to that profile.
@@ -698,6 +706,7 @@ private fun ReadyHost() {
         showSettings -> Route.SettingsOverlay
         showArchive -> Route.Archive
         showContacts -> Route.ContactsOverlay
+        showSearch -> Route.Search
         groupSettingsChatId != null ->
             Route.GroupSettings(groupSettingsChatId!!)
         statsChatId != null ->
@@ -825,6 +834,18 @@ private fun ReadyHost() {
                         openChatId = it
                     }
                 )
+                is Route.Search -> SearchScreen(
+                    onBack = { showSearch = false },
+                    onOpenChat = {
+                        showSearch = false
+                        openChatId = it
+                    },
+                    onOpenChatLocated = { cid, mid ->
+                        showSearch = false
+                        MessageStore.pendingLocateId = mid
+                        openChatId = cid
+                    }
+                )
                 is Route.GroupSettings -> GroupPermissionsScreen(
                     chatId = r.chatId,
                     onBack = { groupSettingsChatId = null }
@@ -935,6 +956,7 @@ private fun ReadyHost() {
                             onOpenCreate = { showCreate = true },
                             onOpenStory = { storyChatId = it },
                             onOpenContacts = { homeTab = 1 },
+                            onOpenSearch = { showSearch = true },
                             listState = homeListState
                         )
                     }
