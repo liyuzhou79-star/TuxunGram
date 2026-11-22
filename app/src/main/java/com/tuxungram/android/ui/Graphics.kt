@@ -45,10 +45,6 @@ import androidx.compose.ui.unit.sp
  * only); the color chips follow this app's own seed themes.
  */
 
-/** A section title: the section's icon in a tinted rounded
- *  square, then the title. Used at the head of every settings
- *  group and profile section. */
-@Composable
 /** A radio-choice label (v0.9.9, W1 sweep): the selected
  *  state is a drawn radio glyph (ring + dot) instead of the
  *  text bullets the option rows used before. */
@@ -105,6 +101,10 @@ fun TabDotText(selected: Boolean, text: String) {
     }
 }
 
+/** A section title: the section's icon in a tinted rounded
+ *  square, then the title. Used at the head of every settings
+ *  group and profile section. */
+@Composable
 fun SectionTitle(icon: ImageVector, text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
