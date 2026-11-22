@@ -2010,13 +2010,10 @@ fun InlineButtonGrid(msg: MsgItem, chatId: Long) {
         Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
     }
     fun openUrl(url: String) {
-        try {
-            context.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-            )
-        } catch (t: Throwable) {
-            toast("打不开这个链接")
-        }
+        // All URL taps route through the link router (W3):
+        // Telegram links stay in the app, the rest go to the
+        // browser as before.
+        com.tuxungram.android.td.LinkRouter.open(context, url)
     }
     fun onAnswer(text: String, showAlert: Boolean, url: String) {
         when {
@@ -3504,14 +3501,8 @@ fun LinkPreviewCard(msg: MsgItem) {
             .background(Color(0x0D000000), RoundedCornerShape(8.dp))
             .clickable {
                 try {
-                    context.startActivity(
-                        android.content.Intent(
-                            android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse(msg.lpUrl)
-                        ).apply {
-                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                    )
+                    com.tuxungram.android.td.LinkRouter
+                        .open(context, msg.lpUrl)
                 } catch (t: Throwable) {
                     // No browser / bad URL: nothing sensible to do.
                 }

@@ -241,12 +241,10 @@ fun SharedMediaScreen(chatId: Long, onBack: () -> Unit) {
                                         .clickable(enabled = url != null) {
                                             if (url != null) {
                                                 try {
-                                                    context.startActivity(
-                                                        Intent(
-                                                            Intent.ACTION_VIEW,
-                                                            Uri.parse(url)
+                                                    com.tuxungram.android.td
+                                                        .LinkRouter.open(
+                                                            context, url
                                                         )
-                                                    )
                                                 } catch (t: Throwable) {
                                                 }
                                             }

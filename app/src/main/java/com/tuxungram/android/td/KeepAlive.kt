@@ -38,6 +38,11 @@ object DeepLink {
      *  the @) whose profile page should open, resolved through
      *  searchPublicChat. */
     val pendingProfileName = MutableStateFlow<String?>(null)
+
+    /** A t.me/proxy or t.me/socks link tap (v0.9.9, W3): the
+     *  host should show the Settings tab, where the proxy
+     *  editor opens prefilled from ProxyStore.pendingPrefill. */
+    val pendingOpenSettings = MutableStateFlow(false)
 }
 
 /**

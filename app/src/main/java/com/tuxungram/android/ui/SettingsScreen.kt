@@ -182,6 +182,18 @@ fun SettingsScreen(
     val activeProxyId by ProxyStore.activeId.collectAsState()
     var proxyEditor by remember { mutableStateOf<ProxyConfig?>(null) }
     var proxyEditorOpen by remember { mutableStateOf(false) }
+    // Proxy-link prefill (v0.9.9, W3): a t.me/proxy or
+    // t.me/socks tap lands here with the editor already open
+    // on the parsed parameters; saving stays a manual tap.
+    val proxyPrefill by ProxyStore.pendingPrefill.collectAsState()
+    LaunchedEffect(proxyPrefill) {
+        val pre = proxyPrefill
+        if (pre != null) {
+            ProxyStore.pendingPrefill.value = null
+            proxyEditor = pre
+            proxyEditorOpen = true
+        }
+    }
     var proxyDeleteTarget by remember { mutableStateOf<ProxyConfig?>(null) }
     var pingResults by remember {
         mutableStateOf<Map<Long, String>>(emptyMap())

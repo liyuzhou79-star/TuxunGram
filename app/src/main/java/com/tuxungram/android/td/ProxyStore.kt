@@ -35,6 +35,12 @@ data class ProxyConfig(
  * on first init.
  */
 object ProxyStore {
+
+    /** A proxy link (t.me/proxy / t.me/socks) waiting to be
+     *  reviewed in the editor (v0.9.9, W3): SettingsScreen
+     *  opens the editor with this config and clears it. The
+     *  user still confirms before anything is saved. */
+    val pendingPrefill = MutableStateFlow<ProxyConfig?>(null)
     private const val PREFS = "proxy"
     private const val KEY_LIST = "list_json"
     private const val KEY_ACTIVE = "active_id"

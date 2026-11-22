@@ -213,7 +213,11 @@ fun RichMessageText(
                                 style = SpanStyle(color = linkColor)
                             )
                         ) {
-                            openExternal(context, target)
+                            // Telegram links resolve in-app
+                            // (v0.9.9, W3); everything else
+                            // still goes to the browser.
+                            com.tuxungram.android.td.LinkRouter
+                                .open(context, target)
                         },
                         start, end
                     )

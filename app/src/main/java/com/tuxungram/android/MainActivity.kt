@@ -104,6 +104,7 @@ import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.ContactsStore
 import com.tuxungram.android.td.CrashLog
 import com.tuxungram.android.td.DeepLink
+import com.tuxungram.android.td.LinkRouter
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdClient
@@ -120,6 +121,7 @@ import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.GuideScreen
 import com.tuxungram.android.ui.WhatsNewScreen
 import com.tuxungram.android.ui.ChatListScreen
+import com.tuxungram.android.ui.AvatarImage
 import com.tuxungram.android.ui.MeScreen
 import com.tuxungram.android.ui.ChatBubbleIcon
 import com.tuxungram.android.ui.PeopleIcon
@@ -412,6 +414,19 @@ private fun ReadyHost() {
     val allChats by ChatStore.chats.collectAsState()
     val homeUnread = allChats.sumOf { it.unreadCount }
     val unreadCap by UiSettings.unreadCap.collectAsState()
+    // Proxy links (v0.9.9, W3) ask for the Settings tab,
+    // where the proxy editor opens prefilled.
+    val openSettingsWanted by DeepLink.pendingOpenSettings.collectAsState()
+    LaunchedEffect(openSettingsWanted) {
+        if (openSettingsWanted) {
+            DeepLink.pendingOpenSettings.value = false
+            openChatId = null
+            homeTab = 2
+        }
+    }
+    // Invite-link previews (W3) wait here for the join
+    // decision, whichever screen raised them.
+    val invitePreview by LinkRouter.pendingInvite.collectAsState()
     var storyChatId by remember { mutableStateOf<Long?>(null) }
     // Forward flow: (fromChatId, messageIds) plus where to return
     // to. A list since v0.7.0 — multi-select forwards in one call.
@@ -648,6 +663,42 @@ private fun ReadyHost() {
             onOpenThread = { postId -> threadReq = chatId to postId }
         )
     }
+        val invite = invitePreview
+        if (invite != null) {
+            AlertDialog(
+                onDismissRequest = { LinkRouter.pendingInvite.value = null },
+                title = { Text(invite.title) },
+                text = {
+                    Column {
+                        val path = invite.photoPath
+                        if (path != null) {
+                            AvatarImage(path, 56)
+                        }
+                        if (invite.memberCount > 0) {
+                            Text(
+                                "${invite.memberCount} 名成员",
+                                color = Color.Gray
+                            )
+                        }
+                        if (invite.description.isNotEmpty()) {
+                            Text(invite.description)
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        LinkRouter.joinInvite(hostContext, invite)
+                    }) {
+                        Text(if (invite.createsJoinRequest) "申请加入" else "加入")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        LinkRouter.pendingInvite.value = null
+                    }) { Text("取消") }
+                }
+            )
+        }
     }
 }
 
