@@ -579,14 +579,13 @@ val ChatBubbleIcon: ImageVector = icon("ChatBubble") {
     moveTo(5f, 21.5f)
     lineTo(8.2f, 17.5f)
     lineTo(18.5f, 17.5f)
-    quadraticBezierTo(21f, 17.5f, 21f, 15f)
+    arcTo(2.5f, 2.5f, 0f, false, true, 21f, 15f)
     lineTo(21f, 5.5f)
-    quadraticBezierTo(21f, 3f, 18.5f, 3f)
+    arcTo(2.5f, 2.5f, 0f, false, true, 18.5f, 3f)
     lineTo(5.5f, 3f)
-    quadraticBezierTo(3f, 3f, 3f, 5.5f)
+    arcTo(2.5f, 2.5f, 0f, false, true, 3f, 5.5f)
     lineTo(3f, 15f)
-    quadraticBezierTo(3f, 17.5f, 5.5f, 17.5f)
-    lineTo(5f, 17.5f)
+    arcTo(2.5f, 2.5f, 0f, false, true, 5.5f, 17.5f)
     close()
 }
 
