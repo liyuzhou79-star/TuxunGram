@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -42,15 +43,19 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -373,7 +378,7 @@ fun ForumTopicsList(
                                             val path =
                                                 iconPaths[emojiId]
                                             if (path != null) {
-                                                CustomEmojiImage(
+                                                CustomEmojiGlyph(
                                                     path = path,
                                                     sizeDp = 34
                                                 )
@@ -524,18 +529,20 @@ fun ForumTopicsList(
                                 } else {
                                     null
                                 }
+                            // The initial letter stays as
+                            // the base layer; the emoji glyph
+                            // draws over it once decoded.
+                            Text(
+                                topic.name.trim().firstOrNull()
+                                    ?.toString() ?: "#",
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                             if (topicEmojiPath != null) {
-                                CustomEmojiImage(
+                                CustomEmojiGlyph(
                                     path = topicEmojiPath,
                                     sizeDp = 28
-                                )
-                            } else {
-                                Text(
-                                    topic.name.trim().firstOrNull()
-                                        ?.toString() ?: "#",
-                                    color = Color.White,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
@@ -1143,5 +1150,31 @@ fun ForumTopicView(
                 modifier = Modifier.padding(16.dp)
             )
         }
+    }
+}
+
+/** A downloaded custom-emoji sticker file drawn at a
+ *  fixed size (v0.9.35, B3). Same decode path as the
+ *  inline custom emoji in message text (decodeCached);
+ *  while the file is missing or undecodable (animated
+ *  formats), nothing is drawn and the caller's fallback
+ *  stays visible. */
+@Composable
+private fun CustomEmojiGlyph(path: String?, sizeDp: Int) {
+    if (path == null) return
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = withContext(Dispatchers.IO) {
+            decodeCached(path, 128)
+        }
+    }
+    val bmp = bitmap
+    if (bmp != null) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = null,
+            modifier = Modifier.size(sizeDp.dp)
+        )
     }
 }
