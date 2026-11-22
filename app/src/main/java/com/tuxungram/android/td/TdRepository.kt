@@ -181,6 +181,15 @@ object TdRepository {
                 // keep-alive service + message notifications.
                 appContext?.let { ctx ->
                     Notifier.init(ctx)
+                    // This account may have posted background
+                    // notifications in a previous process
+                    // generation (v0.9.10): it is the
+                    // foreground now, so withdraw them — its
+                    // messages follow the foreground rules
+                    // from here on.
+                    Notifier.sweepBackgroundForSlot(
+                        ctx, AccountStore.currentSlot()
+                    )
                     if (UiSettings.keepAlive.value) {
                         KeepAliveService.start(ctx)
                     }

@@ -347,6 +347,18 @@ object Notifier {
         }
         linesByChat.clear()
         lastMessageIdByChat.clear()
+        // Background accounts (v0.9.10): the same rule
+        // extended to every slot — an account switch restarts
+        // the process, and NO account's notifications may
+        // survive into another account's session.
+        for ((_, id) in registeredBgIds(ctx)) {
+            try {
+                nm.cancel(id)
+            } catch (t: Throwable) {
+            }
+        }
+        ctx.getSharedPreferences(BG_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(BG_KEY_IDS).apply()
     }
 
     /** Withdraw a chat's notification (it was read in the app,
@@ -360,25 +372,42 @@ object Notifier {
         postSummary(ctx)
     }
 
+    private fun viewMessagesQuery(chatId: Long, messageId: Long): JSONObject =
+        TdClient.request("viewMessages").apply {
+            put("chat_id", chatId)
+            put(
+                "message_ids",
+                org.json.JSONArray().put(messageId)
+            )
+            put(
+                "source",
+                JSONObject().put("@type", "messageSourceChatHistory")
+            )
+            put("force_read", true)
+        }
+
+    private fun sendTextQuery(chatId: Long, text: String): JSONObject =
+        TdClient.request("sendMessage").apply {
+            put("chat_id", chatId)
+            put("input_message_content", JSONObject().apply {
+                put("@type", "inputMessageText")
+                put("text", JSONObject().apply {
+                    put("@type", "formattedText")
+                    put("text", text)
+                    put("entities", org.json.JSONArray())
+                })
+                put("link_preview_options", JSONObject.NULL)
+                put("clear_draft", false)
+            })
+        }
+
     /** Mark-read action: viewMessages on the newest known
      *  message advances the read position (same call the chat
      *  screen uses), then the notification goes away. */
     fun markReadFromNotification(ctx: Context, chatId: Long) {
         val messageId = lastMessageIdByChat[chatId]
         if (messageId != null && messageId != 0L) {
-            val query = TdClient.request("viewMessages").apply {
-                put("chat_id", chatId)
-                put(
-                    "message_ids",
-                    org.json.JSONArray().put(messageId)
-                )
-                put(
-                    "source",
-                    JSONObject().put("@type", "messageSourceChatHistory")
-                )
-                put("force_read", true)
-            }
-            TdRepository.sendRaw(query) {}
+            TdRepository.sendRaw(viewMessagesQuery(chatId, messageId)) {}
         }
         dismissForChat(ctx, chatId)
     }
@@ -392,19 +421,7 @@ object Notifier {
             postReplyFailure(ctx, chatId)
             return
         }
-        val query = TdClient.request("sendMessage").apply {
-            put("chat_id", chatId)
-            put("input_message_content", JSONObject().apply {
-                put("@type", "inputMessageText")
-                put("text", JSONObject().apply {
-                    put("@type", "formattedText")
-                    put("text", text)
-                    put("entities", org.json.JSONArray())
-                })
-                put("link_preview_options", JSONObject.NULL)
-                put("clear_draft", false)
-            })
-        }
+        val query = sendTextQuery(chatId, text)
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {
                 postReplyFailure(ctx, chatId)
@@ -436,6 +453,232 @@ object Notifier {
                 .notify(chatId.hashCode() xor 0x77, notif)
         } catch (t: Throwable) {
         }
+    }
+
+    // ---- Background-account notifications (v0.9.10) ----
+    // Posted by BackgroundAccounts for every account that is
+    // online in the background. Ids derive from (slot,
+    // chatId) in a high range the foreground scheme (raw
+    // chatId.hashCode()) is vanishingly unlikely to reach —
+    // the same accepted-collision argument as audit K4.
+    // Every posted id is registered in SharedPreferences,
+    // because it must stay cancellable by a LATER process
+    // generation: when the account becomes the foreground
+    // one, TdRepository sweeps its registered ids at Ready;
+    // an account switch cancels all of them via clearAll.
+    // In-memory maps alone cannot do either across the
+    // restart-based switch.
+    private const val BG_PREFS = "bg_notifications"
+    private const val BG_KEY_IDS = "ids"
+    private const val BG_GROUP_PREFIX = "tuxungram.messages.acc"
+
+    private fun bgNotifId(slot: Int, chatId: Long): Int =
+        1_000_000 + slot * 100_003 + (chatId.hashCode() and 0xFFFF)
+
+    private fun bgFailureId(slot: Int, chatId: Long): Int =
+        bgNotifId(slot, chatId) xor 0x5A5A
+
+    private fun registerBgId(ctx: Context, slot: Int, notifId: Int) {
+        val prefs = ctx.getSharedPreferences(BG_PREFS, Context.MODE_PRIVATE)
+        val ids = HashSet(
+            prefs.getStringSet(BG_KEY_IDS, emptySet()) ?: emptySet()
+        )
+        if (ids.add("$slot:$notifId")) {
+            prefs.edit().putStringSet(BG_KEY_IDS, ids).apply()
+        }
+    }
+
+    private fun registeredBgIds(ctx: Context): List<Pair<Int, Int>> {
+        val prefs = ctx.getSharedPreferences(BG_PREFS, Context.MODE_PRIVATE)
+        val ids = prefs.getStringSet(BG_KEY_IDS, emptySet()) ?: emptySet()
+        return ids.mapNotNull { entry ->
+            val parts = entry.split(":")
+            val slot = parts.getOrNull(0)?.toIntOrNull()
+            val id = parts.getOrNull(1)?.toIntOrNull()
+            if (slot != null && id != null) slot to id else null
+        }
+    }
+
+    private fun removeBgRegistration(
+        ctx: Context,
+        slot: Int,
+        ids: Set<Int>
+    ) {
+        if (ids.isEmpty()) return
+        val prefs = ctx.getSharedPreferences(BG_PREFS, Context.MODE_PRIVATE)
+        val current = HashSet(
+            prefs.getStringSet(BG_KEY_IDS, emptySet()) ?: emptySet()
+        )
+        val removed = current.removeAll { entry ->
+            val parts = entry.split(":")
+            parts.getOrNull(0)?.toIntOrNull() == slot &&
+                parts.getOrNull(1)?.toIntOrNull() in ids
+        }
+        if (removed) {
+            prefs.edit().putStringSet(BG_KEY_IDS, current).apply()
+        }
+    }
+
+    /** Post one background account's new-message
+     *  notification. The account label rides along as the
+     *  sub-text and in the per-account group, so the shade
+     *  always says WHICH account a message belongs to. The
+     *  tap intent carries the slot: MainActivity switches to
+     *  that account before the chat opens (see
+     *  AccountStore.setPendingOpen). Reply and mark-read
+     *  carry the slot too and are routed to that account's
+     *  own client by the receiver below. */
+    fun postBackground(
+        ctx: Context,
+        slot: Int,
+        label: String,
+        chatId: Long,
+        title: String,
+        text: String
+    ) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                ctx, Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) return
+        val id = bgNotifId(slot, chatId)
+        val tapIntent = openChatIntent(ctx, chatId).apply {
+            putExtra("open_chat_slot", slot)
+        }
+        val pending = PendingIntent.getActivity(
+            ctx, id, tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val replyIntent = Intent(ctx, NotificationActionReceiver::class.java)
+            .setAction(ACTION_REPLY)
+            .putExtra("chat_id", chatId)
+            .putExtra("slot", slot)
+        val replyPending = PendingIntent.getBroadcast(
+            ctx, id * 2 + 1, replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+        val replyAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_send, "回复", replyPending
+        ).addRemoteInput(
+            RemoteInput.Builder(KEY_REPLY).setLabel("回复…").build()
+        ).build()
+        val readIntent = Intent(ctx, NotificationActionReceiver::class.java)
+            .setAction(ACTION_MARK_READ)
+            .putExtra("chat_id", chatId)
+            .putExtra("slot", slot)
+        val readPending = PendingIntent.getBroadcast(
+            ctx, id * 2 + 2, readIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val readAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_view, "标记已读", readPending
+        ).build()
+        val notif = NotificationCompat.Builder(ctx, KeepAliveService.CHANNEL_MESSAGES)
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSubText(label)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setGroup(BG_GROUP_PREFIX + slot)
+            .addAction(replyAction)
+            .addAction(readAction)
+            .build()
+        try {
+            NotificationManagerCompat.from(ctx).notify(id, notif)
+        } catch (t: Throwable) {
+        }
+        registerBgId(ctx, slot, id)
+    }
+
+    /** Withdraw one background chat's notifications (it was
+     *  marked read or replied to). */
+    fun dismissBackground(ctx: Context, slot: Int, chatId: Long) {
+        val nm = NotificationManagerCompat.from(ctx)
+        val ids = setOf(bgNotifId(slot, chatId), bgFailureId(slot, chatId))
+        for (id in ids) {
+            try {
+                nm.cancel(id)
+            } catch (t: Throwable) {
+            }
+        }
+        removeBgRegistration(ctx, slot, ids)
+    }
+
+    /** Withdraw EVERY notification a slot posted while it
+     *  was a background account. Called when that account
+     *  becomes the foreground one: from here on its messages
+     *  are the foreground's business, and the foreground
+     *  notification rules (open-chat suppression, the shared
+     *  summary) take over. */
+    fun sweepBackgroundForSlot(ctx: Context, slot: Int) {
+        val nm = NotificationManagerCompat.from(ctx)
+        val mine = registeredBgIds(ctx).filter { it.first == slot }
+        for ((_, id) in mine) {
+            try {
+                nm.cancel(id)
+            } catch (t: Throwable) {
+            }
+        }
+        removeBgRegistration(ctx, slot, mine.map { it.second }.toSet())
+    }
+
+    /** Background mark-read: viewMessages through the
+     *  OWNING account's client, never the foreground one. */
+    fun markReadFromBackground(ctx: Context, slot: Int, chatId: Long) {
+        val messageId = BackgroundAccounts.lastMessageId(slot, chatId)
+        if (messageId != null && messageId != 0L) {
+            BackgroundAccounts.sendRaw(
+                slot, viewMessagesQuery(chatId, messageId)
+            ) {}
+        }
+        dismissBackground(ctx, slot, chatId)
+    }
+
+    /** Background reply: the text is sent by the OWNING
+     *  account's background client. When that client is not
+     *  live (the process was woken only for this broadcast),
+     *  BackgroundAccounts answers with an error and the
+     *  honest failure notice is posted — the same contract
+     *  the foreground reply has always had. */
+    fun replyFromBackground(ctx: Context, slot: Int, chatId: Long, text: String) {
+        BackgroundAccounts.sendRaw(slot, sendTextQuery(chatId, text)) { response ->
+            if (TdClient.isError(response)) {
+                postBackgroundReplyFailure(ctx, slot, chatId)
+            } else {
+                markReadFromBackground(ctx, slot, chatId)
+            }
+        }
+    }
+
+    private fun postBackgroundReplyFailure(ctx: Context, slot: Int, chatId: Long) {
+        val tapIntent = openChatIntent(ctx, chatId).apply {
+            putExtra("open_chat_slot", slot)
+        }
+        val pending = PendingIntent.getActivity(
+            ctx, bgFailureId(slot, chatId), tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val label = AccountStore.labels.value[slot] ?: "账号 ${slot + 1}"
+        val notif = NotificationCompat.Builder(
+            ctx, KeepAliveService.CHANNEL_MESSAGES
+        )
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle("回复没有发出去")
+            .setContentText("刚才那条回复发送失败，点开对话再试一次。")
+            .setSubText(label)
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+        try {
+            NotificationManagerCompat.from(ctx)
+                .notify(bgFailureId(slot, chatId), notif)
+        } catch (t: Throwable) {
+        }
+        registerBgId(ctx, slot, bgFailureId(slot, chatId))
     }
 
     private fun registerNetworkCallback(context: Context) {
@@ -491,15 +734,32 @@ class NotificationActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val chatId = intent.getLongExtra("chat_id", 0L)
         if (chatId == 0L) return
+        // Background-account actions (v0.9.10) carry the
+        // owning slot and are routed to that account's own
+        // client — acting through the foreground account on
+        // another account's chat id is exactly the
+        // cross-account mixup R1 banned. A slot that IS the
+        // running account (its notification outlived the
+        // switch) takes the normal foreground path.
+        val slot = intent.getIntExtra("slot", -1)
+        val forBackground = slot >= 0 && slot != AccountStore.currentSlot()
         when (intent.action) {
             Notifier.ACTION_MARK_READ ->
-                Notifier.markReadFromNotification(context, chatId)
+                if (forBackground) {
+                    Notifier.markReadFromBackground(context, slot, chatId)
+                } else {
+                    Notifier.markReadFromNotification(context, chatId)
+                }
             Notifier.ACTION_REPLY -> {
                 val text = RemoteInput.getResultsFromIntent(intent)
                     ?.getCharSequence(Notifier.KEY_REPLY)
                     ?.toString()?.trim().orEmpty()
                 if (text.isNotEmpty()) {
-                    Notifier.replyFromNotification(context, chatId, text)
+                    if (forBackground) {
+                        Notifier.replyFromBackground(context, slot, chatId, text)
+                    } else {
+                        Notifier.replyFromNotification(context, chatId, text)
+                    }
                 }
             }
         }

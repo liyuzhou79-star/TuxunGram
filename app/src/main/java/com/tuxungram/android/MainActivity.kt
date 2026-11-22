@@ -95,6 +95,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.AccountStore
 import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
@@ -172,7 +173,7 @@ class MainActivity : ComponentActivity() {
         // so nothing hides under the status bar or the gesture
         // bar on any page.
         enableEdgeToEdge()
-        handleOpenChatIntent(intent)
+        handleOpenChatIntent(intent, coldStart = true)
         TdRepository.start(applicationContext)
         setContent {
             // App theme (Batch 3, C3): persisted dark/light mode
@@ -215,7 +216,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleOpenChatIntent(intent)
+        handleOpenChatIntent(intent, coldStart = false)
     }
 
     override fun onStart() {
@@ -228,11 +229,38 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
-    /** Notification taps carry the chat to open (Batch 3, C1). */
-    private fun handleOpenChatIntent(intent: Intent?) {
+    /** Notification taps carry the chat to open (Batch 3, C1).
+     *  A tap on a BACKGROUND account's notification (v0.9.10)
+     *  also carries its slot, and the chat must open under
+     *  THAT account — feeding another account's chat id to
+     *  the running client is the cross-account mixup R1
+     *  banned. The (slot, chat) is persisted as a pending
+     *  open: on a cold start the process simply boots into
+     *  that slot (nothing is running yet, so no restart is
+     *  needed), on a warm start the restart-based switch
+     *  takes us there, and TdRepository opens the chat once
+     *  that account reaches Ready. */
+    private fun handleOpenChatIntent(intent: Intent?, coldStart: Boolean) {
         val chatId = intent?.getLongExtra("open_chat_id", 0L) ?: 0L
-        if (chatId != 0L) {
+        if (chatId == 0L) return
+        val slot = intent?.getIntExtra("open_chat_slot", -1) ?: -1
+        if (slot < 0 || slot == AccountStore.currentSlot()) {
             DeepLink.pendingChat.value = chatId
+            return
+        }
+        // AccountStore may not be initialized yet on the
+        // cold-start path (TdRepository.start does it later
+        // in onCreate); init is idempotent.
+        AccountStore.init(applicationContext)
+        if (slot == AccountStore.currentSlot()) {
+            DeepLink.pendingChat.value = chatId
+            return
+        }
+        AccountStore.setPendingOpen(slot, chatId)
+        if (coldStart) {
+            AccountStore.setCurrent(slot)
+        } else {
+            TdRepository.switchAccount(slot)
         }
     }
 }
