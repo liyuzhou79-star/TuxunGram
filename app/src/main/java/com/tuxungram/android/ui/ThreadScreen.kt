@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.DeepLink
+import com.tuxungram.android.td.UiSettings
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.PollUi
@@ -81,6 +82,27 @@ import java.io.File
  * through [onVotePoll], with the same semantics as the main
  * chat's poll bubble.
  */
+/** Same-sender run tails, shared rule (v0.9.18, Y3): the
+ *  ids of the messages that END a run — the chronologically
+ *  next message changes direction or sender, or opens a new
+ *  day. The main chat computes the same set inline (its
+ *  day-break rides the separator set); the thread / topic
+ *  lists use this helper. Input is ascending by time. */
+fun tailIdsOf(messages: List<MsgItem>): Set<Long> {
+    val show = HashSet<Long>()
+    for (i in messages.indices) {
+        val m = messages[i]
+        val n = messages.getOrNull(i + 1)
+        if (n == null || n.outgoing != m.outgoing ||
+            n.senderUserId != m.senderUserId ||
+            dayKey(n.dateSeconds) != dayKey(m.dateSeconds)
+        ) {
+            show.add(m.id)
+        }
+    }
+    return show
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SimpleMessageBubble(
@@ -93,7 +115,11 @@ fun SimpleMessageBubble(
     onToggleReaction: (MsgItem, String) -> Unit,
     onVotePoll: (MsgItem, List<Int>) -> Unit,
     onOpenVideo: (MsgItem) -> Unit,
-    onBotCommand: (String) -> Unit = {}
+    onBotCommand: (String) -> Unit = {},
+    // Grouped-run tail (v0.9.18, Y3): the caller marks the
+    // last message of a same-sender run; its own-side bottom
+    // corner shrinks to the tail radius, like the main chat.
+    showTail: Boolean = false
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -101,9 +127,34 @@ fun SimpleMessageBubble(
     var deleteOpen by remember { mutableStateOf(false) }
     val outgoing = msg.outgoing
     // Official palette (v0.9.17, X2): same bubble language
-    // as the main chat. Thread/topic lists do not compute
-    // same-sender runs, so the shape stays uniform here.
+    // as the main chat, including the grouped-run tail
+    // corner since v0.9.18 (Y3) — the caller computes the
+    // runs with tailIdsOf and passes showTail.
     val palette = OfficialTheme.current()
+    val bubbleStyle by UiSettings.bubbleStyle.collectAsState()
+    val corner = if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
+        8.dp
+    } else {
+        18.dp
+    }
+    val tailCorner = if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
+        8.dp
+    } else {
+        5.dp
+    }
+    val bubbleShape = if (outgoing) {
+        RoundedCornerShape(
+            topStart = corner, topEnd = corner,
+            bottomStart = corner,
+            bottomEnd = if (showTail) tailCorner else corner
+        )
+    } else {
+        RoundedCornerShape(
+            topStart = corner, topEnd = corner,
+            bottomEnd = corner,
+            bottomStart = if (showTail) tailCorner else corner
+        )
+    }
     val threadBubbleBg = when {
         msg.kind == MsgKind.STICKER ||
             msg.kind == MsgKind.ANIMATED_EMOJI -> Modifier
@@ -111,11 +162,9 @@ fun SimpleMessageBubble(
             Brush.verticalGradient(
                 listOf(palette.outBubbleGradient, palette.outBubble)
             ),
-            RoundedCornerShape(18.dp)
+            bubbleShape
         )
-        else -> Modifier.background(
-            palette.inBubble, RoundedCornerShape(18.dp)
-        )
+        else -> Modifier.background(palette.inBubble, bubbleShape)
     }
     Row(
         modifier = Modifier
@@ -783,6 +832,8 @@ fun ThreadScreen(
                 Text("还没有评论，来发第一条", color = Color.Gray)
             }
         } else {
+            // Run tails for the bubbles below (v0.9.18, Y3).
+            val tailIds = remember(messages) { tailIdsOf(messages) }
             LazyColumn(
                 state = listState,
                 reverseLayout = true,
@@ -807,7 +858,8 @@ fun ThreadScreen(
                             ThreadStore.setPollAnswer(m, ids)
                         },
                         onOpenVideo = { m -> videoItem = m },
-                        onBotCommand = { ThreadStore.sendText(it) }
+                        onBotCommand = { ThreadStore.sendText(it) },
+                        showTail = msg.id in tailIds
                     )
                 }
             }

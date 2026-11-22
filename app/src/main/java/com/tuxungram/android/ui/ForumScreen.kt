@@ -631,6 +631,8 @@ fun ForumTopicView(
                 Text("这个话题还没有消息", color = Color.Gray)
             }
         } else {
+            // Run tails for the bubbles below (v0.9.18, Y3).
+            val tailIds = remember(messages) { tailIdsOf(messages) }
             LazyColumn(
                 state = listState,
                 reverseLayout = true,
@@ -655,7 +657,8 @@ fun ForumTopicView(
                             ForumStore.setPollAnswer(m, ids)
                         },
                         onOpenVideo = { m -> videoItem = m },
-                        onBotCommand = { ForumStore.sendText(it) }
+                        onBotCommand = { ForumStore.sendText(it) },
+                        showTail = msg.id in tailIds
                     )
                 }
             }
