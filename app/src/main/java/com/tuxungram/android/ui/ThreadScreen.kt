@@ -124,7 +124,8 @@ fun SimpleMessageBubble(
                                 // In-app player (v0.9.1, J3).
                                 onOpenVideo(msg)
                             } else if (msg.fileId != 0 &&
-                                msg.kind != MsgKind.STICKER
+                                msg.kind != MsgKind.STICKER &&
+                                msg.kind != MsgKind.VOICE
                             ) {
                                 val path = msg.filePath
                                 if (path != null) {
@@ -198,8 +199,15 @@ fun SimpleMessageBubble(
                             RichMessageText(msg, onBotCommand = onBotCommand)
                         }
                     }
-                    MsgKind.DOCUMENT, MsgKind.VIDEO, MsgKind.VOICE -> {
+                    MsgKind.DOCUMENT, MsgKind.VIDEO -> {
                         FileBubbleContent(msg)
+                        if (msg.text.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            RichMessageText(msg, onBotCommand = onBotCommand)
+                        }
+                    }
+                    MsgKind.VOICE -> {
+                        VoiceBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(msg, onBotCommand = onBotCommand)

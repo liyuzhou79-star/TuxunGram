@@ -109,6 +109,10 @@ data class MsgItem(
     // Sticker emoji (STICKER kind); the image itself rides the
     // generic fileId/filePath fields and renders from filePath.
     val stickerEmoji: String = "",
+    // Voice-note waveform amplitudes 0..31 (VOICE kind),
+    // decoded from voice_note.waveform's 5-bit packing
+    // (v0.9.2, L5). Empty when TDLib ships none.
+    val waveform: List<Int> = emptyList(),
     // Poll payload (POLL kind).
     val pollId: Long = 0L,
     val poll: PollUi? = null,
@@ -1031,6 +1035,33 @@ object MessageStore {
         return out
     }
 
+    /** Decode a voice note's waveform (v0.9.2, L5): base64 of
+     *  5-bit amplitudes packed LSB-first — the exact inverse
+     *  of the packing the recorder uses when sending. A bad or
+     *  missing waveform decodes to an empty list and the bubble
+     *  falls back to flat bars; it never blocks rendering. */
+    fun decodeWaveform(base64: String?): List<Int> {
+        if (base64.isNullOrEmpty()) return emptyList()
+        return try {
+            val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+            val out = ArrayList<Int>()
+            var acc = 0
+            var bits = 0
+            for (b in bytes) {
+                acc = acc or ((b.toInt() and 0xFF) shl bits)
+                bits += 8
+                while (bits >= 5) {
+                    out.add(acc and 0x1F)
+                    acc = acc ushr 5
+                    bits -= 5
+                }
+            }
+            out
+        } catch (t: Throwable) {
+            emptyList()
+        }
+    }
+
     fun parseMessage(msg: JSONObject): MsgItem {
         val base = MsgItem(
             id = msg.optLong("id"),
@@ -1199,7 +1230,8 @@ object MessageStore {
                     fileName = "语音消息",
                     fileSize = fileSizeOf(file),
                     fileMime = voice?.optString("mime_type") ?: "",
-                    durationSec = voice?.optInt("duration", 0) ?: 0
+                    durationSec = voice?.optInt("duration", 0) ?: 0,
+                    waveform = decodeWaveform(voice?.optString("waveform"))
                 )
             }
             else -> base.copy(kind = MsgKind.OTHER, text = "")

@@ -103,6 +103,9 @@ import com.tuxungram.android.td.ThreadStore
 import com.tuxungram.android.td.UiSettings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
@@ -1445,10 +1448,13 @@ fun MessageBubble(
                                 // undownloaded video falls through
                                 // to the download branch below.
                                 onOpenVideo(msg)
-                            } else if (msg.fileId != 0 && msg.kind != MsgKind.STICKER) {
+                            } else if (msg.fileId != 0 && msg.kind != MsgKind.STICKER &&
+                                msg.kind != MsgKind.VOICE
+                            ) {
                                 // File-like messages: tap opens the
                                 // downloaded file, or starts the
-                                // download. (Stickers are display-only.)
+                                // download. (Stickers are display-only;
+                                // voice plays in its own bubble, L5.)
                                 val path = msg.filePath
                                 if (path != null) {
                                     openFileWithSystem(context, path, msg.fileMime)
@@ -1549,8 +1555,18 @@ fun MessageBubble(
                             )
                         }
                     }
-                    MsgKind.DOCUMENT, MsgKind.VIDEO, MsgKind.VOICE -> {
+                    MsgKind.DOCUMENT, MsgKind.VIDEO -> {
                         FileBubbleContent(msg)
+                        if (msg.text.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            RichMessageText(
+                                msg,
+                                onBotCommand = { MessageStore.sendText(it) }
+                            )
+                        }
+                    }
+                    MsgKind.VOICE -> {
+                        VoiceBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
@@ -2386,6 +2402,293 @@ private fun MediaPickerCell(entry: MediaEntry, onClick: () -> Unit) {
             ) {
                 Text("GIF", color = Color.White, fontSize = 8.sp)
             }
+        }
+    }
+}
+
+/**
+ * Voice-note playback (v0.9.2, L5): one MediaPlayer for the
+ * whole app, keyed by the voice file's path. Speed comes from
+ * UiSettings (one global 1x/1.5x/2x choice) and is applied
+ * through playbackParams — while preparing and while playing;
+ * a paused player picks the new speed up on resume, which
+ * sidesteps the ROMs that reject param changes mid-pause.
+ */
+object VoicePlayer {
+    private var player: android.media.MediaPlayer? = null
+    private val handler =
+        android.os.Handler(android.os.Looper.getMainLooper())
+
+    private val _activePath = MutableStateFlow<String?>(null)
+    val activePath: StateFlow<String?> = _activePath
+
+    private val _playing = MutableStateFlow(false)
+    val playing: StateFlow<Boolean> = _playing
+
+    private val _positionMs = MutableStateFlow(0)
+    val positionMs: StateFlow<Int> = _positionMs
+
+    private val _durationMs = MutableStateFlow(0)
+    val durationMs: StateFlow<Int> = _durationMs
+
+    private val ticker = object : Runnable {
+        override fun run() {
+            val p = player
+            if (p != null && _playing.value) {
+                try {
+                    _positionMs.value = p.currentPosition
+                } catch (t: Throwable) {
+                    // Player died under us; the next toggle
+                    // restarts it.
+                }
+                handler.postDelayed(this, 200)
+            }
+        }
+    }
+
+    fun toggle(path: String) {
+        if (player != null && _activePath.value == path) {
+            if (_playing.value) pause() else resume()
+        } else {
+            start(path)
+        }
+    }
+
+    private fun start(path: String) {
+        releasePlayer()
+        try {
+            val p = android.media.MediaPlayer()
+            p.setDataSource(path)
+            p.setOnCompletionListener {
+                _playing.value = false
+                _positionMs.value = 0
+                try {
+                    it.seekTo(0)
+                } catch (t: Throwable) {
+                }
+            }
+            p.setOnPreparedListener {
+                _durationMs.value = it.duration
+                applySpeed(it)
+                it.start()
+                _playing.value = true
+                handler.removeCallbacks(ticker)
+                handler.post(ticker)
+            }
+            p.prepareAsync()
+            player = p
+            _activePath.value = path
+        } catch (t: Throwable) {
+            releasePlayer()
+        }
+    }
+
+    private fun pause() {
+        try {
+            player?.pause()
+        } catch (t: Throwable) {
+        }
+        _playing.value = false
+    }
+
+    private fun resume() {
+        val p = player ?: return
+        try {
+            applySpeed(p)
+            p.start()
+            _playing.value = true
+            handler.removeCallbacks(ticker)
+            handler.post(ticker)
+        } catch (t: Throwable) {
+        }
+    }
+
+    /** Seek by waveform fraction (tap position on the bars). */
+    fun seekToFraction(fraction: Float) {
+        val p = player ?: return
+        val dur = _durationMs.value
+        if (dur <= 0) return
+        val target = (dur * fraction.coerceIn(0f, 1f)).toInt()
+        try {
+            p.seekTo(target)
+            _positionMs.value = target
+        } catch (t: Throwable) {
+        }
+    }
+
+    /** Cycle 1x -> 1.5x -> 2x; persisted globally, applied to
+     *  the live player when it is playing. */
+    fun cycleSpeed() {
+        val speeds = UiSettings.VOICE_SPEEDS
+        val current = UiSettings.voiceSpeed.value
+        val next = speeds[(speeds.indexOf(current) + 1) % speeds.size]
+        UiSettings.setVoiceSpeed(next)
+        val p = player
+        if (p != null && _playing.value) applySpeed(p)
+    }
+
+    private fun applySpeed(p: android.media.MediaPlayer) {
+        try {
+            p.playbackParams =
+                p.playbackParams.setSpeed(UiSettings.voiceSpeed.value)
+        } catch (t: Throwable) {
+            // Some ROMs reject params in odd states; playback
+            // continues at the old speed rather than failing.
+        }
+    }
+
+    private fun releasePlayer() {
+        handler.removeCallbacks(ticker)
+        try {
+            player?.release()
+        } catch (t: Throwable) {
+        }
+        player = null
+        _playing.value = false
+        _positionMs.value = 0
+        _durationMs.value = 0
+        _activePath.value = null
+    }
+}
+
+/** Voice-note bubble (v0.9.2, L5): play/pause, the waveform
+ *  with tap-to-seek, and the speed chip while this voice is
+ *  the active one. An undownloaded voice keeps the file-row
+ *  behavior (tap downloads) via FileBubbleContent. */
+@Composable
+fun VoiceBubbleContent(msg: MsgItem) {
+    val path = msg.filePath
+    if (path == null) {
+        FileBubbleContent(msg)
+        return
+    }
+    val activePath by VoicePlayer.activePath.collectAsState()
+    val playing by VoicePlayer.playing.collectAsState()
+    val positionMs by VoicePlayer.positionMs.collectAsState()
+    val durationMs by VoicePlayer.durationMs.collectAsState()
+    val speed by UiSettings.voiceSpeed.collectAsState()
+    val active = activePath == path
+    val totalMs = if (active && durationMs > 0) {
+        durationMs
+    } else {
+        msg.durationSec * 1000
+    }
+    val fraction = if (active && totalMs > 0) {
+        positionMs.toFloat() / totalMs
+    } else {
+        0f
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .background(Color(0xFF5B7C99), CircleShape)
+                .clickable { VoicePlayer.toggle(path) },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                if (active && playing) "❚❚" else "▶",
+                color = Color.White, fontSize = 14.sp
+            )
+        }
+        Spacer(Modifier.width(9.dp))
+        Column {
+            WaveformBars(
+                waveform = msg.waveform,
+                fraction = fraction,
+                seekable = active
+            ) { f -> VoicePlayer.seekToFraction(f) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (active) {
+                        "${formatDuration(positionMs / 1000)} / " +
+                            formatDuration(totalMs / 1000)
+                    } else {
+                        formatDuration(msg.durationSec)
+                    },
+                    color = Color.Gray, fontSize = 12.sp
+                )
+                if (active) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                Color(0x14000000), RoundedCornerShape(8.dp)
+                            )
+                            .clickable { VoicePlayer.cycleSpeed() }
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "${trimSpeed(speed)}x",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun trimSpeed(speed: Float): String =
+    if (speed == speed.toInt().toFloat()) {
+        speed.toInt().toString()
+    } else {
+        speed.toString()
+    }
+
+/** The waveform as a row of bars, resampled from TDLib's
+ *  amplitudes; the played share is tinted. Tapping seeks
+ *  (only meaningful for the active voice). */
+@Composable
+private fun WaveformBars(
+    waveform: List<Int>,
+    fraction: Float,
+    seekable: Boolean,
+    onSeek: (Float) -> Unit
+) {
+    val bars = 36
+    val heights = remember(waveform) {
+        if (waveform.isEmpty()) {
+            List(bars) { 0.35f }
+        } else {
+            List(bars) { i ->
+                val from = i * waveform.size / bars
+                val to = maxOf(from + 1, (i + 1) * waveform.size / bars)
+                var maxV = 0
+                for (j in from until minOf(to, waveform.size)) {
+                    maxV = maxOf(maxV, waveform[j])
+                }
+                0.15f + (maxV / 31f) * 0.85f
+            }
+        }
+    }
+    Row(
+        modifier = Modifier
+            .height(30.dp)
+            .pointerInput(seekable) {
+                if (seekable) {
+                    detectTapGestures { offset ->
+                        if (size.width > 0) {
+                            onSeek(offset.x / size.width)
+                        }
+                    }
+                }
+            },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        heights.forEachIndexed { i, h ->
+            val played = (i + 0.5f) / bars <= fraction
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height((30 * h).dp)
+                    .background(
+                        if (played) Color(0xFF5B7C99) else Color(0xFFBDBDBD),
+                        RoundedCornerShape(2.dp)
+                    )
+            )
+            if (i < bars - 1) Spacer(Modifier.width(2.dp))
         }
     }
 }

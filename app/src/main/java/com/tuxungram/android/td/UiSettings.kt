@@ -21,6 +21,7 @@ object UiSettings {
     private const val KEY_CHAT_BG = "chat_bg"
     private const val KEY_BUBBLE_STYLE = "bubble_style"
     private const val KEY_FONT_SIZE = "font_size"
+    private const val KEY_VOICE_SPEED = "voice_speed"
 
     val UNREAD_CAPS = listOf(99, 999, 9999)
 
@@ -83,6 +84,14 @@ object UiSettings {
     private val _fontSize = MutableStateFlow(1)
     val fontSize: StateFlow<Int> = _fontSize
 
+    /** Voice-message playback speed (v0.9.2, L5): one global
+     *  choice (1x / 1.5x / 2x), remembered across messages and
+     *  restarts, like the mature clients do it. */
+    private val _voiceSpeed = MutableStateFlow(1f)
+    val voiceSpeed: StateFlow<Float> = _voiceSpeed
+
+    val VOICE_SPEEDS = listOf(1f, 1.5f, 2f)
+
     @Volatile
     private var appContext: Context? = null
 
@@ -104,6 +113,14 @@ object UiSettings {
             if (bubble in BUBBLE_MODERN..BUBBLE_CLASSIC) bubble else BUBBLE_MODERN
         val font = prefs.getInt(KEY_FONT_SIZE, 1)
         _fontSize.value = if (font in FONT_SCALES.indices) font else 1
+        val speed = prefs.getFloat(KEY_VOICE_SPEED, 1f)
+        _voiceSpeed.value = if (speed in VOICE_SPEEDS) speed else 1f
+    }
+
+    fun setVoiceSpeed(speed: Float) {
+        if (speed !in VOICE_SPEEDS) return
+        _voiceSpeed.value = speed
+        persist { it.putFloat(KEY_VOICE_SPEED, speed) }
     }
 
     fun setChatBg(index: Int) {
