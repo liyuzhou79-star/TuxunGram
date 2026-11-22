@@ -9,12 +9,8 @@ import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -44,6 +40,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -93,6 +90,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
@@ -768,9 +767,15 @@ fun ChatListScreen(
     // weighted box above the Duck bar, so BottomEnd here
     // sits just above the bar, no overlap. It opens the
     // create screen (group/channel is chosen there); the
-    // drawer carries the two direct entries.
+    // drawer carries the two direct entries. Shape is a
+    // true circle (v0.9.22, AC1b): the official compose
+    // button is round — the Material default FAB shape
+    // (16 dp corners) read as a rounded square on device.
+    // Size/elevation stay the Material defaults (56 dp /
+    // 6 dp), matching the official button's footprint.
     FloatingActionButton(
         onClick = { onOpenCreate("group") },
+        shape = CircleShape,
         containerColor = OfficialTheme.current().accent,
         contentColor = Color.White,
         modifier = Modifier
@@ -1576,6 +1581,23 @@ fun FolderTab(
     onLongClick: (() -> Unit)? = null
 ) {
     val palette = OfficialTheme.current()
+    // Selection underline progress (v0.9.22, AC1b): the
+    // Z3 AnimatedVisibility version was invisible on
+    // device — the tab strip is a horizontally scrolling
+    // Row, which measures children with unbounded width,
+    // so the underline's fillMaxWidth() collapsed to the
+    // minimum constraint (0) and the bar was never seen.
+    // Two fixes: the Column takes IntrinsicSize.Max width
+    // (the label's own width — a finite constraint the
+    // underline can actually fill), and the grow animation
+    // is a graphicsLayer scale/alpha driven by state
+    // instead of a size animation inside a wrap-content
+    // parent.
+    val underlineProgress by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = Motion.tween(200),
+        label = "folderTabUnderline"
+    )
     Column(
         modifier = Modifier
             .then(
@@ -1588,7 +1610,8 @@ fun FolderTab(
                     Modifier.clickable { onClick() }
                 }
             )
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 14.dp)
+            .width(IntrinsicSize.Max),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
@@ -1607,20 +1630,20 @@ fun FolderTab(
             maxLines = 1,
             modifier = Modifier.padding(vertical = 10.dp)
         )
+        // Official indicator: accent, 3 dp, flush with the
+        // strip's bottom edge (the hairline divider sits
+        // directly below the strip).
         Box(modifier = Modifier.fillMaxWidth().height(3.dp)) {
-            // Fully qualified: inside a Column the name
-            // otherwise resolves to ColumnScope's member
-            // AnimatedVisibility, which needs its receiver.
-            androidx.compose.animation.AnimatedVisibility(
-                visible = selected,
-                enter = expandHorizontally(Motion.tween(200)) +
-                    fadeIn(Motion.tween(200)),
-                exit = shrinkHorizontally(Motion.tween(160)) +
-                    fadeOut(Motion.tween(160))
-            ) {
+            if (underlineProgress > 0f) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = underlineProgress
+                            alpha = underlineProgress
+                            transformOrigin =
+                                TransformOrigin(0.5f, 0.5f)
+                        }
                         .background(
                             palette.accent, RoundedCornerShape(2.dp)
                         )
