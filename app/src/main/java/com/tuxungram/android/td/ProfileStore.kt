@@ -15,6 +15,29 @@ data class MemberEntry(
     val statusKind: String = "member"
 )
 
+/** The chat's default member permissions, all 16
+ *  chatPermissions fields from td_api.tl (v0.9.5, O2). The
+ *  settings page exposes the content switches; the rest are
+ *  carried verbatim so a save never silently resets them. */
+data class GroupPerms(
+    val canSendBasic: Boolean = false,
+    val canSendAudios: Boolean = false,
+    val canSendDocuments: Boolean = false,
+    val canSendPhotos: Boolean = false,
+    val canSendVideos: Boolean = false,
+    val canSendVideoNotes: Boolean = false,
+    val canSendVoiceNotes: Boolean = false,
+    val canSendPolls: Boolean = false,
+    val canSendOther: Boolean = false,
+    val canAddLinkPreviews: Boolean = false,
+    val canReact: Boolean = false,
+    val canEditTag: Boolean = false,
+    val canChangeInfo: Boolean = false,
+    val canInviteUsers: Boolean = false,
+    val canPinMessages: Boolean = false,
+    val canCreateTopics: Boolean = false
+)
+
 /** Everything the profile page renders, flattened from the
  *  chat object plus the matching FullInfo. */
 data class ProfileUi(
@@ -40,7 +63,18 @@ data class ProfileUi(
     /** Primary invite link from the FullInfo's invite_link
      *  (v0.9.5, O1); empty when TDLib does not hand it out
      *  (no can_invite_users right, or a private group). */
-    val primaryInviteLink: String = ""
+    val primaryInviteLink: String = "",
+    /** Default member permissions from chat.permissions
+     *  (v0.9.5, O2); null for private/secret chats. */
+    val groupPerms: GroupPerms? = null,
+    /** chat.has_protected_content (v0.9.5, O2). */
+    val hasProtectedContent: Boolean = false,
+    /** supergroupFullInfo.slow_mode_delay in seconds
+     *  (v0.9.5, O2); 0 = off / not a supergroup. */
+    val slowModeDelay: Int = 0,
+    /** True when the chat is a supergroup or channel
+     *  (slow mode exists only there, per td_api.tl). */
+    val isSupergroup: Boolean = false
 )
 
 /**
@@ -64,6 +98,10 @@ object ProfileStore {
     private var currentAutoDelete = 0
     private var currentBlocked = false
     private var currentInviteLink = ""
+    private var currentPerms: GroupPerms? = null
+    private var currentProtected = false
+    private var currentSlowMode = 0
+    private var currentIsSupergroup = false
     private var supergroupId = 0L
     private var memberOffset = 0
     private var membersLoading = false
@@ -86,6 +124,10 @@ object ProfileStore {
         currentAutoDelete = 0
         currentBlocked = false
         currentInviteLink = ""
+        currentPerms = null
+        currentProtected = false
+        currentSlowMode = 0
+        currentIsSupergroup = false
         supergroupId = 0L
         memberOffset = 0
         membersLoading = false
@@ -96,6 +138,28 @@ object ProfileStore {
             if (TdClient.isError(chat) || currentChatId != chatId) return@sendRaw
             val title = chat.optString("title")
             currentAutoDelete = chat.optInt("message_auto_delete_time")
+            currentProtected = chat.optBoolean("has_protected_content")
+            val perms = chat.optJSONObject("permissions")
+            if (perms != null) {
+                currentPerms = GroupPerms(
+                    canSendBasic = perms.optBoolean("can_send_basic_messages"),
+                    canSendAudios = perms.optBoolean("can_send_audios"),
+                    canSendDocuments = perms.optBoolean("can_send_documents"),
+                    canSendPhotos = perms.optBoolean("can_send_photos"),
+                    canSendVideos = perms.optBoolean("can_send_videos"),
+                    canSendVideoNotes = perms.optBoolean("can_send_video_notes"),
+                    canSendVoiceNotes = perms.optBoolean("can_send_voice_notes"),
+                    canSendPolls = perms.optBoolean("can_send_polls"),
+                    canSendOther = perms.optBoolean("can_send_other_messages"),
+                    canAddLinkPreviews = perms.optBoolean("can_add_link_previews"),
+                    canReact = perms.optBoolean("can_react_to_messages"),
+                    canEditTag = perms.optBoolean("can_edit_tag"),
+                    canChangeInfo = perms.optBoolean("can_change_info"),
+                    canInviteUsers = perms.optBoolean("can_invite_users"),
+                    canPinMessages = perms.optBoolean("can_pin_messages"),
+                    canCreateTopics = perms.optBoolean("can_create_topics")
+                )
+            }
             val type = chat.optJSONObject("type") ?: return@sendRaw
             when (type.optString("@type")) {
                 "chatTypePrivate" -> loadUserProfile(chatId, title, type.optLong("user_id"))
@@ -135,7 +199,11 @@ object ProfileStore {
             isSecretChat = currentIsSecret,
             autoDeleteSeconds = currentAutoDelete,
             isBlocked = currentBlocked,
-            primaryInviteLink = currentInviteLink
+            primaryInviteLink = currentInviteLink,
+            groupPerms = currentPerms,
+            hasProtectedContent = currentProtected,
+            slowModeDelay = currentSlowMode,
+            isSupergroup = currentIsSupergroup
         )
     }
 
@@ -231,6 +299,8 @@ object ProfileStore {
             }
             currentInviteLink = full.optJSONObject("invite_link")
                 ?.optString("invite_link") ?: ""
+            currentIsSupergroup = true
+            currentSlowMode = full.optInt("slow_mode_delay")
             val memberCount = full.optInt("member_count")
             val adminCount = full.optInt("administrator_count")
             val lines = ArrayList<String>()

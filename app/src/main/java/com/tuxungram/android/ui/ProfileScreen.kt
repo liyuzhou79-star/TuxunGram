@@ -62,7 +62,8 @@ fun ProfileScreen(
     onBack: () -> Unit,
     onOpenSecretChat: (Long) -> Unit = {},
     onOpenMembers: () -> Unit = {},
-    onOpenSharedMedia: () -> Unit = {}
+    onOpenSharedMedia: () -> Unit = {},
+    onOpenGroupSettings: () -> Unit = {}
 ) {
     BackHandler { onBack() }
     val profile by ProfileStore.profile.collectAsState()
@@ -391,6 +392,14 @@ fun ProfileScreen(
                                 "点成员可以禁言、解禁或封禁。",
                                 fontSize = 12.sp, color = Color.Gray
                             )
+                        }
+                        if (caps.canRestrict || caps.isCreator) {
+                            // Group settings page (v0.9.5, O2):
+                            // permissions / slow mode / content
+                            // protection, each row gated there.
+                            TextButton(onClick = { onOpenGroupSettings() }) {
+                                Text("群权限与慢速模式")
+                            }
                         }
                         Spacer(Modifier.height(16.dp))
                     }

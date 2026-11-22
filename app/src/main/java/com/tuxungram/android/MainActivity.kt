@@ -317,6 +317,9 @@ private fun ReadyHost() {
     // Shared media page (v0.9.3, M4): same pattern — opened
     // from a profile, Back returns to it.
     var sharedMediaChatId by remember { mutableStateOf<Long?>(null) }
+    // Group settings page (v0.9.5, O2): opened from a group
+    // profile's 管理 section; Back returns to that profile.
+    var groupSettingsChatId by remember { mutableStateOf<Long?>(null) }
     // Rich-text mention taps (v0.9.2, L1): a mentionName carries
     // the user id (resolve via createPrivateChat), a plain
     // @mention carries the username (resolve via
@@ -417,6 +420,10 @@ private fun ReadyHost() {
                 openChatId = it
             }
         )
+        groupSettingsChatId != null -> GroupPermissionsScreen(
+            chatId = groupSettingsChatId!!,
+            onBack = { groupSettingsChatId = null }
+        )
         sharedMediaChatId != null -> SharedMediaScreen(
             chatId = sharedMediaChatId!!,
             onBack = { sharedMediaChatId = null }
@@ -433,7 +440,8 @@ private fun ReadyHost() {
                 openChatId = newChatId
             },
             onOpenMembers = { membersChatId = profileChatId },
-            onOpenSharedMedia = { sharedMediaChatId = profileChatId }
+            onOpenSharedMedia = { sharedMediaChatId = profileChatId },
+            onOpenGroupSettings = { groupSettingsChatId = profileChatId }
         )
         showCreate -> CreateChatScreen(
             onBack = { showCreate = false },

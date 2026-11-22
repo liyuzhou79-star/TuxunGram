@@ -24,7 +24,11 @@ data class AdminCaps(
     /** Group settings pages (v0.9.5, O2/O3: permissions,
      *  slow mode, content protection, group photo): creator,
      *  or an administrator with the can_change_info right. */
-    val canManageSettings: Boolean = false
+    val canManageSettings: Boolean = false,
+    /** True for the chat creator. Content protection
+     *  (toggleChatHasProtectedContent) is owner-only per
+     *  td_api.tl, so O2 gates that row on this flag. */
+    val isCreator: Boolean = false
 )
 
 /** One invite link row for the admin invite section
@@ -85,7 +89,8 @@ object AdminStore {
                     "chatMemberStatusCreator" ->
                         AdminCaps(
                             true, true, true, true, true,
-                            canInvite = true, canManageSettings = true
+                            canInvite = true, canManageSettings = true,
+                            isCreator = true
                         )
                     "chatMemberStatusAdministrator" -> {
                         val rights = status.optJSONObject("rights")
@@ -304,6 +309,130 @@ object AdminStore {
             ProfileStore.load(chatId)
         }
     }
+
+    // ---- Group settings (v0.9.5, O2) ----
+    // setChatPermissions / setChatSlowModeDelay need the
+    // can_restrict_members right; toggleChatHasProtectedContent
+    // is owner-only (all per td_api.tl). Each call reports back
+    // through [done] so the settings page can keep its local
+    // state on success and roll back to the server values on
+    // failure, with a plain-language sentence either way.
+
+    fun setPermissions(
+        chatId: Long,
+        perms: GroupPerms,
+        done: (Boolean, String) -> Unit
+    ) {
+        val p = JSONObject().put("@type", "chatPermissions")
+        p.put("can_send_basic_messages", perms.canSendBasic)
+        p.put("can_send_audios", perms.canSendAudios)
+        p.put("can_send_documents", perms.canSendDocuments)
+        p.put("can_send_photos", perms.canSendPhotos)
+        p.put("can_send_videos", perms.canSendVideos)
+        p.put("can_send_video_notes", perms.canSendVideoNotes)
+        p.put("can_send_voice_notes", perms.canSendVoiceNotes)
+        p.put("can_send_polls", perms.canSendPolls)
+        p.put("can_send_other_messages", perms.canSendOther)
+        p.put("can_add_link_previews", perms.canAddLinkPreviews)
+        p.put("can_react_to_messages", perms.canReact)
+        p.put("can_edit_tag", perms.canEditTag)
+        p.put("can_change_info", perms.canChangeInfo)
+        p.put("can_invite_users", perms.canInviteUsers)
+        p.put("can_pin_messages", perms.canPinMessages)
+        p.put("can_create_topics", perms.canCreateTopics)
+        val query = TdClient.request("setChatPermissions").apply {
+            put("chat_id", chatId)
+            put("permissions", p)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                done(false, settingsErrorText(response))
+            } else {
+                done(true, "群权限已更新。")
+                ProfileStore.load(chatId)
+            }
+        }
+    }
+
+    fun setSlowMode(
+        chatId: Long,
+        delaySeconds: Int,
+        done: (Boolean, String) -> Unit
+    ) {
+        val query = TdClient.request("setChatSlowModeDelay").apply {
+            put("chat_id", chatId)
+            put("slow_mode_delay", delaySeconds)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                done(false, settingsErrorText(response))
+            } else {
+                done(
+                    true,
+                    if (delaySeconds == 0) {
+                        "慢速模式已关闭。"
+                    } else {
+                        "慢速模式已设为 ${slowModeLabel(delaySeconds)}。"
+                    }
+                )
+                ProfileStore.load(chatId)
+            }
+        }
+    }
+
+    fun setProtectedContent(
+        chatId: Long,
+        on: Boolean,
+        done: (Boolean, String) -> Unit
+    ) {
+        val query = TdClient.request("toggleChatHasProtectedContent").apply {
+            put("chat_id", chatId)
+            put("has_protected_content", on)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                done(false, settingsErrorText(response))
+            } else {
+                done(
+                    true,
+                    if (on) {
+                        "内容保护已开启：成员不能保存、转发或复制这里的内容。"
+                    } else {
+                        "内容保护已关闭。"
+                    }
+                )
+                ProfileStore.load(chatId)
+            }
+        }
+    }
+
+    private fun settingsErrorText(error: JSONObject): String {
+        val message = error.optString("message")
+        return when {
+            message.contains("CHAT_ADMIN_REQUIRED") ||
+                message.contains("not enough rights") ||
+                message.contains("have no rights") ->
+                "改不了：你的管理员权限不够这一项。"
+            else ->
+                "改不了，再试一次。（错误码 ${error.optInt("code")}）"
+        }
+    }
+
+    fun slowModeLabel(seconds: Int): String = when (seconds) {
+        0 -> "关闭"
+        5 -> "5 秒"
+        10 -> "10 秒"
+        30 -> "30 秒"
+        60 -> "1 分钟"
+        300 -> "5 分钟"
+        900 -> "15 分钟"
+        3600 -> "1 小时"
+        else -> "$seconds 秒"
+    }
+
+    /** The slow-mode delays td_api.tl allows for
+     *  setChatSlowModeDelay. */
+    val SLOW_MODE_OPTIONS = listOf(0, 5, 10, 30, 60, 300, 900, 3600)
 
     private fun setMemberStatus(
         chatId: Long,
