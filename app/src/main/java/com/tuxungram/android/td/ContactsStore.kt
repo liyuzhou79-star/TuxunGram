@@ -130,7 +130,7 @@ object ContactsStore {
      *  LastMonth, userStatusEmpty). The exact last-seen time is
      *  only exposed in the Offline case; the rest are the
      *  coarse buckets the user's own privacy settings allow. */
-    private fun statusOf(status: JSONObject?): Pair<String, Boolean> {
+    fun statusOf(status: JSONObject?): Pair<String, Boolean> {
         if (status == null) return "" to false
         return when (status.optString("@type")) {
             "userStatusOnline" -> "在线" to true

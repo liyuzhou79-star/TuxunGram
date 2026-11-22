@@ -961,13 +961,41 @@ fun ChatScreen(
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
-                    // Peer typing / recording subtitle (F5):
-                    // official status line in the accent text
-                    // color (chat_status family).
+                    // Header subtitle (F5 + v0.9.18, Y6):
+                    // the peer action (typing / recording)
+                    // takes the slot while it lasts, like the
+                    // official client; otherwise a private
+                    // chat shows the peer's presence line
+                    // (accent while online, secondary when
+                    // not) and a group / channel its member
+                    // count. Unknown data shows nothing —
+                    // the subtitle is never guessed.
                     if (peerAction.isNotEmpty()) {
                         Text(
                             peerAction,
                             color = headerPalette.accentText,
+                            fontSize = 13.sp,
+                            maxLines = 1
+                        )
+                    } else if (!chat?.presenceText.isNullOrEmpty()) {
+                        Text(
+                            chat?.presenceText ?: "",
+                            color = if (chat?.isOnline == true) {
+                                headerPalette.accentText
+                            } else {
+                                headerPalette.textSecondary
+                            },
+                            fontSize = 13.sp,
+                            maxLines = 1
+                        )
+                    } else if ((chat?.memberCount ?: 0) > 0) {
+                        Text(
+                            if (chat?.isChannel == true) {
+                                "${chat?.memberCount} 位订阅者"
+                            } else {
+                                "${chat?.memberCount} 位成员"
+                            },
+                            color = headerPalette.textSecondary,
                             fontSize = 13.sp,
                             maxLines = 1
                         )

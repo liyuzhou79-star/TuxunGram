@@ -60,7 +60,18 @@ data class ChatItem(
     // mature clients. The draft's effect on list ORDER is
     // not computed here: updateChatDraftMessage carries
     // fresh positions and this store sorts by them verbatim.
-    val draftText: String = ""
+    val draftText: String = "",
+    // Top-bar subtitle data (v0.9.18, Y6), display-only:
+    // the peer's presence line for private chats (from the
+    // same user objects that feed the online dot, flattened
+    // by ContactsStore.statusOf) — "" when nothing is known,
+    // and the header shows no subtitle rather than a guess.
+    val presenceText: String = "",
+    // Member count for groups and channels, from the
+    // basicGroup / supergroup object's member_count (the
+    // chat object itself carries none; verified in
+    // td_api.tl). 0 = unknown, and the header hides it.
+    val memberCount: Int = 0
 )
 
 /**
@@ -92,6 +103,16 @@ object ChatStore {
     // bring in; drives the chat-list preview sender prefix.
     private val userNameById = ConcurrentHashMap<Long, String>()
     private val userNameRequested = ConcurrentHashMap.newKeySet<Long>()
+    // Header subtitle data (v0.9.18, Y6): presence lines by
+    // chat id (private chats; fed by the same updateUser /
+    // updateUserStatus stream as the online dot, plus the
+    // getUser answer in fetchUserPhoto), and member counts
+    // by chat id (groups/channels; fed by one-shot
+    // getBasicGroup / getSupergroup answers and by
+    // updateBasicGroup / updateSupergroup).
+    private val presenceByChat = ConcurrentHashMap<Long, String>()
+    private val memberCountByChat = ConcurrentHashMap<Long, Int>()
+    private val memberCountRequested = ConcurrentHashMap.newKeySet<Long>()
 
     @Volatile
     private var attached = false
@@ -456,6 +477,8 @@ object ChatStore {
                 onlineByChat[chatIdForUser] =
                     user.optJSONObject("status")?.optString("@type") ==
                     "userStatusOnline"
+                presenceByChat[chatIdForUser] =
+                    ContactsStore.statusOf(user.optJSONObject("status")).first
                 val smallId = user.optJSONObject("profile_photo")
                     ?.optJSONObject("small")?.optInt("id", 0) ?: 0
                 if (smallId != 0) {
@@ -471,6 +494,29 @@ object ChatStore {
                 onlineByChat[chatIdForUser] =
                     update.optJSONObject("status")?.optString("@type") ==
                     "userStatusOnline"
+                presenceByChat[chatIdForUser] =
+                    ContactsStore.statusOf(
+                        update.optJSONObject("status")
+                    ).first
+            }
+            "updateBasicGroup" -> {
+                // Member-count freshness (v0.9.18, Y6): the
+                // update carries the group object, not a chat
+                // id — resolve through the cached chat types.
+                val group = update.optJSONObject("basic_group") ?: return
+                noteMemberCount(
+                    basicGroupId = group.optLong("id"),
+                    supergroupId = 0L,
+                    count = group.optInt("member_count", 0)
+                )
+            }
+            "updateSupergroup" -> {
+                val group = update.optJSONObject("supergroup") ?: return
+                noteMemberCount(
+                    basicGroupId = 0L,
+                    supergroupId = group.optLong("id"),
+                    count = group.optInt("member_count", 0)
+                )
             }
             "updateChatPhoto" -> {
                 val chat = cache[chatId] ?: return
@@ -633,6 +679,11 @@ object ChatStore {
             ?.optInt("mute_for", 0) ?: 0
         val permissions = chat.optJSONObject("permissions")
         val senderPrefix = previewSenderOf(chat, last)
+        // Header subtitle data (v0.9.18, Y6): groups and
+        // channels kick off the one-shot count lookup while
+        // it is unknown; private chats read the presence
+        // cache the user updates feed.
+        if (isGroup || isChannel) fetchMemberCount(chat)
         return ChatItem(
             id = chat.optLong("id"),
             title = chat.optString("title"),
@@ -658,7 +709,9 @@ object ChatStore {
             previewThumbPath = AvatarStore.pathForFileObj(
                 previewThumbFile(last)
             ),
-            draftText = draftTextOf(chat)
+            draftText = draftTextOf(chat),
+            presenceText = presenceByChat[chat.optLong("id")] ?: "",
+            memberCount = memberCountByChat[chat.optLong("id")] ?: 0
         )
     }
 
@@ -771,6 +824,13 @@ object ChatStore {
             if (fetchedName.isNotEmpty()) {
                 userNameById[response.optLong("id")] = fetchedName
             }
+            // The same answer seeds presence for the header
+            // subtitle (v0.9.18, Y6).
+            val status = response.optJSONObject("status")
+            onlineByChat[chatId] =
+                status?.optString("@type") == "userStatusOnline"
+            presenceByChat[chatId] =
+                ContactsStore.statusOf(status).first
             val smallId = response.optJSONObject("profile_photo")
                 ?.optJSONObject("small")?.optInt("id", 0) ?: 0
             if (smallId != 0) {
@@ -889,6 +949,63 @@ object ChatStore {
             val name = userNameOf(response)
             if (name.isNotEmpty()) {
                 userNameById[userId] = name
+                requestRecompute()
+            }
+        }
+    }
+
+    /** Record a member count against the chat whose type
+     *  references the given group id (v0.9.18, Y6); counts
+     *  of 0 mean "unknown" in the tl and are dropped, so a
+     *  stale unknown never erases a known count. */
+    private fun noteMemberCount(
+        basicGroupId: Long,
+        supergroupId: Long,
+        count: Int
+    ) {
+        if (count <= 0) return
+        for (chat in cache.values) {
+            val type = chat.optJSONObject("type") ?: continue
+            val matches = when (type.optString("@type")) {
+                "chatTypeBasicGroup" ->
+                    basicGroupId != 0L &&
+                        type.optLong("basic_group_id") == basicGroupId
+                "chatTypeSupergroup" ->
+                    supergroupId != 0L &&
+                        type.optLong("supergroup_id") == supergroupId
+                else -> false
+            }
+            if (matches) {
+                memberCountByChat[chat.optLong("id")] = count
+                return
+            }
+        }
+    }
+
+    /** One-shot member-count lookup for a group/channel
+     *  whose count is not known yet (v0.9.18, Y6): the chat
+     *  object has no count field, so the group object is
+     *  fetched once per session; updateBasicGroup /
+     *  updateSupergroup keep it fresh afterwards. */
+    private fun fetchMemberCount(chat: JSONObject) {
+        val chatId = chat.optLong("id")
+        if (memberCountByChat.containsKey(chatId)) return
+        if (!memberCountRequested.add(chatId)) return
+        val type = chat.optJSONObject("type") ?: return
+        val query = when (type.optString("@type")) {
+            "chatTypeBasicGroup" -> TdClient.request("getBasicGroup").apply {
+                put("basic_group_id", type.optLong("basic_group_id"))
+            }
+            "chatTypeSupergroup" -> TdClient.request("getSupergroup").apply {
+                put("supergroup_id", type.optLong("supergroup_id"))
+            }
+            else -> return
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) return@sendRaw
+            val count = response.optInt("member_count", 0)
+            if (count > 0) {
+                memberCountByChat[chatId] = count
                 requestRecompute()
             }
         }
