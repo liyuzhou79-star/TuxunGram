@@ -101,6 +101,7 @@ object TdRepository {
         ProxyStore.init(context)
         UiSettings.init(context)
         LocalPins.init(context)
+        LocalLabels.init(context)
         DownloadStore.init(context)
         AutoDownloadStore.init(context)
         val gen = clientGeneration.get()

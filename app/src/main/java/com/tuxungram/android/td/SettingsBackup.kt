@@ -88,6 +88,10 @@ object SettingsBackup {
             put("ui", ui)
             put("chat_wallpapers", chatWallpapers)
             put("local_pins", localPins)
+            // Local labels (v0.9.25, R5): definitions plus
+            // chat assignments, same account-scoping caveat
+            // as local pins.
+            put("local_labels", LocalLabels.exportJson())
             put("proxies", proxies)
             put("active_proxy", activeIndex)
             // Proxy auto-failover switch (v0.9.16, W6 audit:
@@ -135,6 +139,7 @@ object SettingsBackup {
         var keepAlive: Boolean? = null
         var duckBar: Boolean? = null
         var localPins: List<Long>? = null
+        var localLabels: JSONObject? = null
         var proxyAutoFailover: Boolean? = null
         val uiObj = root.optJSONObject("ui")
         if (uiObj != null) {
@@ -246,6 +251,16 @@ object SettingsBackup {
             }
             localPins = staged
         }
+        if (root.has("local_labels")) {
+            val obj = root.optJSONObject("local_labels")
+                ?: return "备份里的本地标签部分格式不对，设置没有改动。"
+            // Structural check only; LocalLabels.replaceAll
+            // drops anything it cannot parse per-entry.
+            if (obj.optJSONArray("labels") == null) {
+                return "备份里的本地标签部分格式不对，设置没有改动。"
+            }
+            localLabels = obj
+        }
         if (root.has("proxy_auto_failover")) {
             proxyAutoFailover = try {
                 root.getBoolean("proxy_auto_failover")
@@ -327,6 +342,7 @@ object SettingsBackup {
             LocalPins.replaceAll(it)
             ChatStore.onLocalPinsChanged()
         }
+        localLabels?.let { LocalLabels.replaceAll(it) }
         keepAlive?.let { UiSettings.setKeepAlive(it) }
         duckBar?.let { UiSettings.setDuckBar(it) }
         proxyAutoFailover?.let { ProxyStore.setAutoFailover(it) }
