@@ -2396,25 +2396,47 @@ fun ChatScreen(
                                     verticalAlignment =
                                         Alignment.CenterVertically
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .background(
-                                                Color(0xFF5B7C99),
-                                                CircleShape
-                                            ),
-                                        contentAlignment =
-                                            Alignment.Center
-                                    ) {
-                                        Text(
-                                            user.name.trim()
-                                                .firstOrNull()
-                                                ?.toString() ?: "?",
-                                            color = Color.White,
-                                            fontSize = 14.sp,
-                                            fontWeight =
-                                                FontWeight.Bold
+                                    // Avatar (v0.9.20, AA5): the
+                                    // photo when there is one,
+                                    // else the official gradient
+                                    // disc — the legacy flat
+                                    // gray-blue is gone.
+                                    if (user.photoPath != null) {
+                                        AvatarImage(
+                                            path = user.photoPath,
+                                            sizeDp = 34
                                         )
+                                    } else {
+                                        val pair =
+                                            OfficialTheme.avatarColors(
+                                                user.userId,
+                                                OfficialTheme.dark
+                                            )
+                                        Box(
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .background(
+                                                    Brush.verticalGradient(
+                                                        listOf(
+                                                            pair.first,
+                                                            pair.second
+                                                        )
+                                                    ),
+                                                    CircleShape
+                                                ),
+                                            contentAlignment =
+                                                Alignment.Center
+                                        ) {
+                                            Text(
+                                                user.name.trim()
+                                                    .firstOrNull()
+                                                    ?.toString() ?: "?",
+                                                color = Color.White,
+                                                fontSize = 14.sp,
+                                                fontWeight =
+                                                    FontWeight.Bold
+                                            )
+                                        }
                                     }
                                     Spacer(Modifier.width(10.dp))
                                     Column {
@@ -2875,7 +2897,13 @@ fun ChatScreen(
                                     // (v0.9.17, X4).
                                     OfficialTheme.current().accent
                                 } else {
-                                    Color(0xFFBDBDBD)
+                                    // Disabled (v0.9.20, AA5):
+                                    // the accent at rest alpha
+                                    // instead of a hardcoded
+                                    // gray — the palette has no
+                                    // dedicated disabled-send key.
+                                    OfficialTheme.current().accent
+                                        .copy(alpha = 0.45f)
                                 },
                                 CircleShape
                             )
@@ -3169,7 +3197,10 @@ fun AlbumPreview(
                     modifier = Modifier
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFFE0E0E0)),
+                        // Placeholder (v0.9.20, AA5): the
+                        // palette's in-bubble surface instead
+                        // of the hardcoded light gray.
+                        .background(OfficialTheme.current().inBubble),
                     contentAlignment = Alignment.Center
                 ) {
                     if (bitmap != null) {
