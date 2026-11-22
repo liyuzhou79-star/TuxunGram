@@ -110,6 +110,9 @@ import kotlinx.coroutines.delay
 
 import com.tuxungram.android.ui.ArchiveScreen
 import com.tuxungram.android.ui.BlockedScreen
+import com.tuxungram.android.ui.ChangelogScreen
+import com.tuxungram.android.ui.GuideScreen
+import com.tuxungram.android.ui.WhatsNewScreen
 import com.tuxungram.android.ui.ChatListScreen
 import com.tuxungram.android.ui.ContactsScreen
 import com.tuxungram.android.ui.EditProfileScreen
@@ -230,6 +233,28 @@ private fun AppRoot() {
         }
         return
     }
+    // First-run onboarding (v0.9.6, P2): on the very first
+    // launch (no version ever marked seen) the full guide
+    // comes before everything else; finishing or skipping
+    // marks the running version as seen. Later launches and
+    // updates skip this — updates get the what's-new page in
+    // ReadyHost instead.
+    var guideDone by remember {
+        mutableStateOf(UiSettings.seenVersion().isNotEmpty())
+    }
+    if (!guideDone) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+        ) {
+            GuideScreen(onDone = {
+                UiSettings.markSeenVersion(BuildConfig.VERSION_NAME)
+                guideDone = true
+            })
+        }
+        return
+    }
     val authState by TdRepository.authState.collectAsState()
     var enteredPhone by remember { mutableStateOf("") }
     var forcePhone by remember { mutableStateOf(false) }
@@ -304,6 +329,18 @@ private fun ReadyHost() {
             notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+    // What's-new (v0.9.6, P2/P3): the first time the main UI
+    // is reached on a version the user has not seen yet, show
+    // that version's changelog entry once. It lives behind
+    // Ready, so it can never block the login flow; closing it
+    // marks the version seen. A first install never lands
+    // here (the full guide in AppRoot marks the version).
+    var newsDone by remember {
+        val seen = UiSettings.seenVersion()
+        mutableStateOf(seen.isEmpty() || seen == BuildConfig.VERSION_NAME)
+    }
+    var showChangelog by remember { mutableStateOf(false) }
+    var showGuideReplay by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showEditProfile by remember { mutableStateOf(false) }
     var showBlocked by remember { mutableStateOf(false) }
@@ -359,6 +396,19 @@ private fun ReadyHost() {
     val chatId = openChatId
     val req = forwardReq
     val thread = threadReq
+    if (!newsDone) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+        ) {
+            WhatsNewScreen(onClose = {
+                UiSettings.markSeenVersion(BuildConfig.VERSION_NAME)
+                newsDone = true
+            })
+        }
+        return
+    }
     // The story viewer bleeds full-screen behind the bars and
     // pads its own header (Phase D, D2); everything else gets
     // the standard system-bars safe distance.
@@ -375,6 +425,12 @@ private fun ReadyHost() {
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
     when {
+        showChangelog -> ChangelogScreen(
+            onBack = { showChangelog = false }
+        )
+        showGuideReplay -> GuideScreen(
+            onDone = { showGuideReplay = false }
+        )
         thread != null -> ThreadScreen(
             sourceChatId = thread.first,
             postId = thread.second,
@@ -405,6 +461,14 @@ private fun ReadyHost() {
             onOpenBlocked = {
                 showSettings = false
                 showBlocked = true
+            },
+            onOpenChangelog = {
+                showSettings = false
+                showChangelog = true
+            },
+            onOpenGuide = {
+                showSettings = false
+                showGuideReplay = true
             }
         )
         showArchive -> ArchiveScreen(

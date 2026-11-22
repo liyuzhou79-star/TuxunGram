@@ -23,6 +23,7 @@ object UiSettings {
     private const val KEY_BUBBLE_STYLE = "bubble_style"
     private const val KEY_FONT_SIZE = "font_size"
     private const val KEY_VOICE_SPEED = "voice_speed"
+    private const val KEY_SEEN_VERSION = "seen_version"
 
     val UNREAD_CAPS = listOf(99, 999, 9999)
 
@@ -207,6 +208,21 @@ object UiSettings {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(KEY_UNREAD_CAP, cap)
             .apply()
+    }
+
+    /** The newest version whose guide / what's-new page the
+     *  user has already seen (v0.9.6, P2). Empty = never (a
+     *  first install): the full onboarding shows. A version
+     *  different from the running one = an update happened:
+     *  the what's-new page shows once instead. */
+    fun seenVersion(): String {
+        val ctx = appContext ?: return ""
+        return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_SEEN_VERSION, "") ?: ""
+    }
+
+    fun markSeenVersion(version: String) {
+        persist { it.putString(KEY_SEEN_VERSION, version) }
     }
 
     /** Badge text for an unread count under the current cap. */
