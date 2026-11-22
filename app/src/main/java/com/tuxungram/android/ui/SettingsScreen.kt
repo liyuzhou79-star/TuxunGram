@@ -100,6 +100,7 @@ import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
+import com.tuxungram.android.td.UpdateChecker
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -1149,6 +1150,65 @@ fun SettingsScreen(
             }
         }
         Spacer(Modifier.height(28.dp))
+        // About + update check (v0.9.5, O5). The check is
+        // the app's only network call outside TDLib and runs
+        // only when this button is tapped — stated on the
+        // page itself, in small print under the button.
+        Text(
+            "关于",
+            fontSize = 15.sp, fontWeight = FontWeight.SemiBold
+        )
+        val updateInfo by UpdateChecker.state.collectAsState()
+        TextButton(
+            onClick = { UpdateChecker.check(BuildConfig.VERSION_NAME) },
+            enabled = updateInfo.state != "checking"
+        ) {
+            Text(
+                if (updateInfo.state == "checking") {
+                    "正在检查…"
+                } else {
+                    "检查更新"
+                }
+            )
+        }
+        when (updateInfo.state) {
+            "latest" -> Text(
+                "已是最新版本（${updateInfo.latestVersion}）。",
+                color = Color.Gray, fontSize = 13.sp
+            )
+            "available" -> Column {
+                Text(
+                    "有新版本：${updateInfo.latestVersion}",
+                    fontSize = 14.sp, fontWeight = FontWeight.SemiBold
+                )
+                if (updateInfo.notes.isNotEmpty()) {
+                    Text(
+                        updateInfo.notes,
+                        color = Color.Gray, fontSize = 12.sp,
+                        maxLines = 8,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                TextButton(onClick = {
+                    val intent = Intent(
+                        Intent.ACTION_VIEW,
+                        android.net.Uri.parse(updateInfo.url)
+                    )
+                    settingsContext.startActivity(intent)
+                }) {
+                    Text("去下载")
+                }
+            }
+            "error" -> Text(
+                "检查失败：连不上 GitHub。检查一下网络（或代理）再试一次。",
+                color = Color(0xFFC62828), fontSize = 13.sp
+            )
+        }
+        Text(
+            "检查更新只在你点上面这一项时才会联网，去 GitHub 看一眼有没有新版；平时不会自己联网。",
+            color = Color.Gray, fontSize = 12.sp
+        )
+        Spacer(Modifier.height(12.dp))
         Text(
             "TuxunGram ${BuildConfig.VERSION_NAME}",
             color = Color.Gray, fontSize = 13.sp
