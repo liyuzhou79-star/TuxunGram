@@ -312,6 +312,11 @@ fun ChatScreen(
         }
     }
 
+    // Pinned bar state (v0.9.4, N3): tapping the bar cycles
+    // through the pinned messages; 全部 opens the full list.
+    val pinnedMessages by MessageStore.pinnedMessages.collectAsState()
+    var pinCycle by remember(chatId) { mutableIntStateOf(0) }
+    var pinnedListOpen by remember { mutableStateOf(false) }
     var chatSearchOpen by remember { mutableStateOf(false) }
     var chatSearchQuery by remember { mutableStateOf("") }
     val chatSearchResults by MessageStore.searchResults.collectAsState()
@@ -811,6 +816,95 @@ fun ChatScreen(
             else -> systemDark
         }
         val chatBgArgb = UiSettings.chatBackgroundArgb(darkNow)
+        if (pinnedMessages.isNotEmpty()) {
+            // Pinned bar (v0.9.4, N3): the newest pinned
+            // message's summary; tapping jumps to it and
+            // advances to the next one, like mature clients.
+            val pinned = pinnedMessages[
+                pinCycle % pinnedMessages.size
+            ]
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable {
+                        MessageStore.jumpTo(pinned.id)
+                        pinCycle += 1
+                    }
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("📌", fontSize = 14.sp)
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "置顶消息" +
+                            if (pinnedMessages.size > 1) {
+                                "（${pinCycle % pinnedMessages.size + 1}/${pinnedMessages.size}）"
+                            } else {
+                                ""
+                            },
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        messageSummaryText(pinned),
+                        fontSize = 13.sp,
+                        maxLines = 1
+                    )
+                }
+                TextButton(onClick = { pinnedListOpen = true }) {
+                    Text("全部")
+                }
+            }
+        }
+        if (pinnedListOpen) {
+            AlertDialog(
+                onDismissRequest = { pinnedListOpen = false },
+                title = { Text("全部置顶消息") },
+                text = {
+                    val pinnedListState = rememberLazyListState()
+                    LazyColumn(
+                        state = pinnedListState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(320.dp)
+                            .lazyListScrollbar(pinnedListState)
+                    ) {
+                        items(
+                            items = pinnedMessages,
+                            key = { "pin_${it.id}" }
+                        ) { item ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        pinnedListOpen = false
+                                        MessageStore.jumpTo(item.id)
+                                    }
+                                    .padding(vertical = 8.dp)
+                            ) {
+                                Text(
+                                    messageSummaryText(item),
+                                    fontSize = 14.sp, maxLines = 2
+                                )
+                                Text(
+                                    formatMsgTime(item.dateSeconds),
+                                    color = Color.Gray, fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { pinnedListOpen = false }) {
+                        Text("关闭")
+                    }
+                }
+            )
+        }
         LazyColumn(
             state = listState,
             reverseLayout = true,
@@ -2084,6 +2178,23 @@ fun MessageBubble(
                         }
                     )
                 }
+                if (msg.sendingState.isEmpty()) {
+                    // Pin / unpin (v0.9.4, N3). The server
+                    // refuses without rights; the store turns
+                    // that into a plain sentence.
+                    DropdownMenuItem(
+                        text = { Text(if (msg.isPinned) "取消置顶" else "置顶") },
+                        onClick = {
+                            menuOpen = false
+                            MessageStore.clearSendError()
+                            if (msg.isPinned) {
+                                MessageStore.unpinMessage(msg)
+                            } else {
+                                MessageStore.pinMessage(msg)
+                            }
+                        }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("多选") },
                     onClick = {
@@ -2228,6 +2339,25 @@ fun formatDuration(totalSeconds: Int): String {
 
 /** Hand a downloaded file to whatever app can open it, via
  *  FileProvider (the file lives in TDLib's private directory). */
+/** One-line summary of a message for the pinned bar and
+ *  the pinned list (v0.9.4, N3): its text, or the standard
+ *  bracket label for media kinds. */
+fun messageSummaryText(msg: MsgItem): String =
+    msg.text.ifEmpty {
+        when (msg.kind) {
+            MsgKind.PHOTO -> "[图片]"
+            MsgKind.VIDEO -> "[视频]"
+            MsgKind.VOICE -> "[语音]"
+            MsgKind.DOCUMENT -> "[文件] ${msg.fileName}"
+            MsgKind.STICKER -> "[贴纸]"
+            MsgKind.ANIMATION -> "[动图]"
+            MsgKind.POLL -> "[投票] ${msg.poll?.question ?: ""}"
+            MsgKind.LOCATION -> "[位置]"
+            MsgKind.CONTACT -> "[联系人] ${msg.contactName}"
+            else -> "[消息]"
+        }
+    }
+
 /** One coordinate, five decimals — plenty for a shared pin
  *  and short enough to read (v0.9.4, N2). */
 fun formatCoord(value: Double): String =

@@ -130,6 +130,8 @@ data class MsgItem(
     // Channel post flag (message.is_channel_post); the comment
     // entry (G1) only makes sense on these.
     val isChannelPost: Boolean = false,
+    // Pinned flag (message.is_pinned, v0.9.4 N3).
+    val isPinned: Boolean = false,
     // Scheduled-send state from message.scheduling_state
     // (v0.9.3, M5): scheduledAtSec > 0 = the message goes out
     // at that unix time; scheduledWhenOnline = it goes out
@@ -222,6 +224,111 @@ object MessageStore {
 
     private var searchQuery = ""
     private var searchFromId = 0L
+
+    // ---- Pinned messages (v0.9.4, N3) ----
+
+    /** All pinned messages of the open chat, newest first.
+     *  This tl has no chat.pinned_message_id and no pinned
+     *  update, so the list comes from searchChatMessages with
+     *  the Pinned filter (verified in td_api.tl) and is
+     *  reloaded on open and after every pin/unpin. */
+    private val _pinnedMessages = MutableStateFlow<List<MsgItem>>(emptyList())
+    val pinnedMessages: StateFlow<List<MsgItem>> = _pinnedMessages
+
+    fun loadPinned(chatId: Long) {
+        val query = TdClient.request("searchChatMessages").apply {
+            put("chat_id", chatId)
+            put("topic_id", JSONObject.NULL)
+            put("query", "")
+            put("sender_id", JSONObject.NULL)
+            put("from_message_id", 0L)
+            put("offset", 0)
+            put("limit", 100)
+            put(
+                "filter",
+                JSONObject().put("@type", "searchMessagesFilterPinned")
+            )
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (currentChatId != chatId || TdClient.isError(response)) {
+                return@sendRaw
+            }
+            val arr = response.optJSONArray("messages") ?: JSONArray()
+            val out = ArrayList<MsgItem>()
+            for (i in 0 until arr.length()) {
+                val msg = arr.optJSONObject(i) ?: continue
+                out.add(parseMessage(msg))
+            }
+            _pinnedMessages.value = out
+        }
+    }
+
+    /** Pin a message for everyone in the chat (pinChatMessage,
+     *  verified in td_api.tl). A refusal — typically missing
+     *  rights in a group/channel — is translated to plain
+     *  language, never a raw code. */
+    fun pinMessage(item: MsgItem) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("pinChatMessage").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+            put("disable_notification", true)
+            put("only_for_self", false)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = pinErrorText(response, unpin = false)
+            } else {
+                byId[item.id]?.let {
+                    byId[item.id] = it.copy(isPinned = true)
+                }
+                publish()
+                loadPinned(chatId)
+            }
+        }
+    }
+
+    /** Unpin a message (unpinChatMessage, verified in
+     *  td_api.tl); same error treatment as pinMessage. */
+    fun unpinMessage(item: MsgItem) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("unpinChatMessage").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = pinErrorText(response, unpin = true)
+            } else {
+                byId[item.id]?.let {
+                    byId[item.id] = it.copy(isPinned = false)
+                }
+                publish()
+                loadPinned(chatId)
+            }
+        }
+    }
+
+    private fun pinErrorText(error: JSONObject, unpin: Boolean): String {
+        val message = error.optString("message")
+        return when {
+            message.contains("CHAT_ADMIN_REQUIRED") ||
+                message.contains("not enough rights") ||
+                message.contains("have no rights") ->
+                "你没有在这个对话里置顶消息的权限。"
+            message.contains("PIN", ignoreCase = true) &&
+                message.contains("not", ignoreCase = true) ->
+                "这条消息不能置顶。"
+            else ->
+                if (unpin) {
+                    "取消置顶失败，再试一次。（错误码 ${error.optInt("code")}）"
+                } else {
+                    "置顶失败，再试一次。（错误码 ${error.optInt("code")}）"
+                }
+        }
+    }
 
     /** Set by navigation (global search / in-chat search) before
      *  or after opening a chat; the chat screen consumes it and
@@ -358,6 +465,7 @@ object MessageStore {
         _replyTarget.value = null
         _searchResults.value = emptyList()
         _searchExhausted.value = true
+        _pinnedMessages.value = emptyList()
         searchQuery = ""
         searchFromId = 0L
         _locateId.value = 0L
@@ -398,6 +506,7 @@ object MessageStore {
         }
         loadHistory(fromMessageId = 0L)
         loadScheduled(chatId)
+        loadPinned(chatId)
     }
 
     /** Scheduled messages live outside the normal history in
@@ -432,6 +541,7 @@ object MessageStore {
         currentChatId = 0L
         byId.clear()
         _messages.value = emptyList()
+        _pinnedMessages.value = emptyList()
     }
 
     fun loadOlder() {
@@ -1305,6 +1415,7 @@ object MessageStore {
             reactions = reactionsOf(msg.optJSONObject("interaction_info")),
             buttons = parseButtons(msg.optJSONObject("reply_markup")),
             isChannelPost = msg.optBoolean("is_channel_post"),
+            isPinned = msg.optBoolean("is_pinned"),
             scheduledAtSec = when (
                 msg.optJSONObject("scheduling_state")?.optString("@type")
             ) {
