@@ -309,11 +309,8 @@ object ForumStore {
     fun sendText(text: String) {
         sendWithContent(JSONObject().apply {
             put("@type", "inputMessageText")
-            put("text", JSONObject().apply {
-                put("@type", "formattedText")
-                put("text", text)
-                put("entities", JSONArray())
-            })
+            // Same send markdown as the main chat (v0.9.15, V3).
+            put("text", MessageStore.richFormattedText(text))
             put("link_preview_options", JSONObject.NULL)
             put("clear_draft", true)
         })

@@ -1151,7 +1151,17 @@ object MessageStore {
         }
     }
 
-    fun sendText(text: String, mods: SendModifiers) {
+    fun sendText(text: String, mods: SendModifiers) =
+        sendText(text, mods, emptyList())
+
+    /** [extraEntities] are entities against the raw [text]
+     *  (V6 mention names); the markdown parser remaps them
+     *  into the sent text's coordinates. */
+    fun sendText(
+        text: String,
+        mods: SendModifiers,
+        extraEntities: List<TextEntityUi>
+    ) {
         val chatId = currentChatId
         if (chatId == 0L) return
         val replyTo = replyToJson()
@@ -1163,7 +1173,7 @@ object MessageStore {
             if (options != null) put("options", options)
             put("input_message_content", JSONObject().apply {
                 put("@type", "inputMessageText")
-                put("text", formattedText(text))
+                put("text", richFormattedText(text, extraEntities))
                 put("link_preview_options", JSONObject.NULL)
                 put("clear_draft", true)
             })
@@ -1492,6 +1502,51 @@ object MessageStore {
         put("@type", "formattedText")
         put("text", text)
         put("entities", JSONArray())
+    }
+
+    /** formattedText with the lightweight send markdown
+     *  applied (v0.9.15, V3; parser in Markdown.kt). [extra]
+     *  carries entities computed against the RAW text (the
+     *  V6 mention-name insertions) — they are remapped into
+     *  clean-text coordinates through the parser's boundary
+     *  map and dropped if their range did not survive. A
+     *  parser failure of any kind falls back to the plain
+     *  text, so a send can never lose characters to the
+     *  formatter. Public because the thread / forum stores
+     *  send through the same formatting as the main chat. */
+    fun richFormattedText(
+        raw: String,
+        extra: List<TextEntityUi> = emptyList()
+    ): JSONObject {
+        val parsed = try {
+            MarkdownSend.parse(raw)
+        } catch (t: Throwable) {
+            null
+        } ?: return formattedText(raw)
+        val entities = ArrayList<TextEntityUi>(parsed.entities)
+        for (e in extra) {
+            if (e.offset < 0 || e.offset + e.length > raw.length) {
+                continue
+            }
+            val start = parsed.rawToClean[e.offset]
+            val end = parsed.rawToClean[e.offset + e.length]
+            if (end <= start) continue
+            entities.add(
+                e.copy(offset = start, length = end - start)
+            )
+        }
+        if (entities.isEmpty() && parsed.text == raw) {
+            return formattedText(raw)
+        }
+        val arr = JSONArray()
+        for (e in entities) {
+            entityJson(e)?.let { arr.put(it) }
+        }
+        return JSONObject().apply {
+            put("@type", "formattedText")
+            put("text", parsed.text)
+            put("entities", arr)
+        }
     }
 
     private fun markRead(chatId: Long, messageId: Long) {

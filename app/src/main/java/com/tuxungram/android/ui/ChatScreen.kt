@@ -508,6 +508,8 @@ fun ChatScreen(
     }
 
     var attachMenuOpen by remember { mutableStateOf(false) }
+    // Send-format help sheet (v0.9.15, V3).
+    var formatHelpOpen by remember { mutableStateOf(false) }
     // Create-a-poll sheet (v0.9.4, N1).
     var pollCreateOpen by remember { mutableStateOf(false) }
     // Location sharing (v0.9.4, N2): a fetched fix waits here
@@ -920,6 +922,33 @@ fun ChatScreen(
                 dismissButton = {
                     TextButton(onClick = { pendingLocation = null }) {
                         Text("取消")
+                    }
+                }
+            )
+        }
+
+        if (formatHelpOpen) {
+            // Send-format help (v0.9.15, V3): the markers the
+            // client turns into real formatting on send.
+            AlertDialog(
+                onDismissRequest = { formatHelpOpen = false },
+                title = { Text("发送格式") },
+                text = {
+                    Text(
+                        "发消息时，下面这些标记会被识别成格式：\n\n" +
+                            "**粗体**　*斜体*\n" +
+                            "__下划线__　~~删除线~~\n" +
+                            "`代码`　||剧透||\n" +
+                            "[链接文字](https://example.com)\n\n" +
+                            "代码里的标记不会被识别；标记没配成对时，" +
+                            "就按普通文字发出去，不会丢字。" +
+                            "想原样打出星号这类符号，在它前面加一个 \\ 即可。",
+                        fontSize = 14.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { formatHelpOpen = false }) {
+                        Text("知道了")
                     }
                 }
             )
@@ -2046,6 +2075,16 @@ fun ChatScreen(
                                     attachMenuOpen = false
                                     AppLock.noteExternalLaunch()
                                     contactPicker.launch(null)
+                                }
+                            )
+                            DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(TextSizeIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
+                                text = { Text("格式说明") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    formatHelpOpen = true
                                 }
                             )
                         }
