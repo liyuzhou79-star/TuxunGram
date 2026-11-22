@@ -33,7 +33,10 @@ data class ProfileUi(
     val isSecretChat: Boolean = false,
     /** chat.message_auto_delete_time — in a secret chat this
      *  is the self-destruct timer (v0.6.0, E1). */
-    val autoDeleteSeconds: Int = 0
+    val autoDeleteSeconds: Int = 0,
+    /** True when this user sits on my block list
+     *  (userFullInfo.block_list == blockListMain, v0.9.3 M3). */
+    val isBlocked: Boolean = false
 )
 
 /**
@@ -55,6 +58,7 @@ object ProfileStore {
     private var currentUserId = 0L
     private var currentIsSecret = false
     private var currentAutoDelete = 0
+    private var currentBlocked = false
     private var supergroupId = 0L
     private var memberOffset = 0
     private var membersLoading = false
@@ -75,6 +79,7 @@ object ProfileStore {
         currentUserId = 0L
         currentIsSecret = false
         currentAutoDelete = 0
+        currentBlocked = false
         supergroupId = 0L
         memberOffset = 0
         membersLoading = false
@@ -122,7 +127,8 @@ object ProfileStore {
             memberSnapshot(), canGetMembers, membersExhausted,
             userId = currentUserId,
             isSecretChat = currentIsSecret,
-            autoDeleteSeconds = currentAutoDelete
+            autoDeleteSeconds = currentAutoDelete,
+            isBlocked = currentBlocked
         )
     }
 
@@ -165,6 +171,9 @@ object ProfileStore {
             if (!TdClient.isError(full)) {
                 bio = full.optJSONObject("bio")?.optString("text") ?: ""
                 commonGroups = full.optInt("group_in_common_count")
+                currentBlocked =
+                    full.optJSONObject("block_list")?.optString("@type") ==
+                    "blockListMain"
             }
             done()
         }

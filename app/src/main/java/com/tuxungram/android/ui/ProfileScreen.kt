@@ -41,7 +41,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AdminStore
+import com.tuxungram.android.td.BlockStore
 import com.tuxungram.android.td.ChatStore
+import com.tuxungram.android.td.MeStore
 import com.tuxungram.android.td.MemberEntry
 import com.tuxungram.android.td.ProfileStore
 import com.tuxungram.android.td.SecretChatStore
@@ -70,6 +72,11 @@ fun ProfileScreen(
     val secretInfo by SecretChatStore.info.collectAsState()
     val secretNotice by SecretChatStore.notice.collectAsState()
     var closeSecretConfirm by remember { mutableStateOf(false) }
+    // Block / unblock (v0.9.3, M3): shown on other users'
+    // profiles; my own profile (saved messages) hides it.
+    val me by MeStore.me.collectAsState()
+    var blockConfirm by remember { mutableStateOf(false) }
+    var blockNotice by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(chatId) {
         ProfileStore.load(chatId)
         AdminStore.loadCaps(chatId)
@@ -174,6 +181,47 @@ fun ProfileScreen(
                             fontSize = 12.sp, color = Color.Gray,
                             modifier = Modifier.padding(top = 4.dp)
                         )
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
+            if (p.userId != 0L && p.userId != me.id) {
+                item(key = "block") {
+                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                        TextButton(onClick = {
+                            if (p.isBlocked) {
+                                BlockStore.setUserBlocked(p.userId, false) { error ->
+                                    blockNotice = error ?: "已取消拉黑。"
+                                    if (error == null) ProfileStore.load(chatId)
+                                }
+                            } else {
+                                blockConfirm = true
+                            }
+                        }) {
+                            Text(
+                                if (p.isBlocked) "取消拉黑" else "拉黑",
+                                color = if (p.isBlocked) {
+                                    Color(0xFF1976D2)
+                                } else {
+                                    Color(0xFFC62828)
+                                }
+                            )
+                        }
+                        Text(
+                            if (p.isBlocked) {
+                                "你已拉黑对方：对方发来的消息你收不到。在设置 → 隐私 → 已拉黑名单里也能管理。"
+                            } else {
+                                "拉黑后，对方再给你发消息你收不到，对方也不会知道。"
+                            },
+                            fontSize = 12.sp, color = Color.Gray
+                        )
+                        if (blockNotice != null) {
+                            Text(
+                                blockNotice!!,
+                                fontSize = 13.sp, color = Color.Gray,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
                         Spacer(Modifier.height(16.dp))
                     }
                 }
@@ -522,6 +570,31 @@ fun ProfileScreen(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { memberAction = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+    if (blockConfirm && current != null && current.userId != 0L) {
+        AlertDialog(
+            onDismissRequest = { blockConfirm = false },
+            title = { Text("拉黑 ${current.title}？") },
+            text = {
+                Text("拉黑后你收不到对方发来的消息，对方不会收到通知。之后可以在对方资料页或设置 → 隐私 → 已拉黑名单里取消。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    blockConfirm = false
+                    BlockStore.setUserBlocked(current.userId, true) { error ->
+                        blockNotice = error ?: "已拉黑。"
+                        if (error == null) ProfileStore.load(chatId)
+                    }
+                }) {
+                    Text("拉黑", color = Color(0xFFC62828))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { blockConfirm = false }) {
                     Text("取消")
                 }
             }

@@ -151,7 +151,8 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenSessions: () -> Unit = {},
     onOpenStickerSets: () -> Unit = {},
-    onOpenEditProfile: () -> Unit = {}
+    onOpenEditProfile: () -> Unit = {},
+    onOpenBlocked: () -> Unit = {}
 ) {
     BackHandler { onBack() }
     val settingsContext = LocalContext.current
@@ -785,6 +786,14 @@ fun SettingsScreen(
             color = Color.Gray, fontSize = 12.sp
         )
         PrivacySection()
+        Spacer(Modifier.height(10.dp))
+        TextButton(onClick = onOpenBlocked) {
+            Text("已拉黑名单")
+        }
+        Text(
+            "被你拉黑的人都在这里，可以逐个解除。",
+            color = Color.Gray, fontSize = 12.sp
+        )
         val dialogMode = pinDialog
         if (dialogMode != null) {
             var currentPin by remember(dialogMode) { mutableStateOf("") }
