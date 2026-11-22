@@ -3130,6 +3130,40 @@ fun MessageBubble(
                         }
                     )
                 }
+                if (msg.sendingState.isEmpty()) {
+                    // Copy message link (v0.9.15, V1): the
+                    // store asks TDLib for the link; public
+                    // chats/channels get a t.me link on the
+                    // clipboard, everywhere else the answer is
+                    // a plain sentence, never a raw error.
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(LinkIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
+                        text = { Text("复制链接") },
+                        onClick = {
+                            menuOpen = false
+                            MessageStore.fetchMessageLink(
+                                msg,
+                                onLink = { link ->
+                                    clipboard.setText(
+                                        AnnotatedString(link)
+                                    )
+                                    Toast.makeText(
+                                        context, "链接已复制",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                },
+                                onFail = { why ->
+                                    Toast.makeText(
+                                        context, why,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            )
+                        }
+                    )
+                }
                 if (msg.text.isNotEmpty() && msg.sendingState.isEmpty()) {
                     // Translate (v0.9.5, O4): the result lands
                     // under the bubble via TranslationArea.

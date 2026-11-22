@@ -202,7 +202,11 @@ data class MsgItem(
     // the photo fields.
     val gameTitle: String = "",
     val gameDescription: String = "",
-    val gameShortName: String = ""
+    val gameShortName: String = "",
+    // Album membership (message.media_album_id, v0.9.15 V1/V4):
+    // non-zero when this message belongs to a media album;
+    // consecutive items sharing one id render as one grid.
+    val mediaAlbumId: Long = 0L
 )
 
 /** How one send should deviate from the plain immediate send
@@ -393,6 +397,51 @@ object MessageStore {
                 }
                 publish()
                 loadPinned(chatId)
+            }
+        }
+    }
+
+    /** Copy-link support (v0.9.15, V1): getMessageLink is
+     *  verified in td_api.tl — it takes media_timestamp /
+     *  checklist_task_id / poll_option_id (all neutral here),
+     *  for_album (true when the message belongs to an album,
+     *  so the link opens the whole album) and
+     *  in_message_thread (false: the main-chat surface asks
+     *  for the chat-level link). The answer is
+     *  messageLink{link, is_public}; a private link
+     *  (is_public = false) only works inside the chat, and
+     *  the server refuses outright where no link exists at
+     *  all (private chats, secret chats) — both cases are
+     *  reported in plain language through [onFail] instead of
+     *  copying something useless. */
+    fun fetchMessageLink(
+        item: MsgItem,
+        onLink: (String) -> Unit,
+        onFail: (String) -> Unit
+    ) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("getMessageLink").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+            put("media_timestamp", 0)
+            put("checklist_task_id", 0)
+            put("poll_option_id", "")
+            put("for_album", item.mediaAlbumId != 0L)
+            put("in_message_thread", false)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                onFail("这条消息没有可分享的链接。")
+                return@sendRaw
+            }
+            val link = response.optString("link")
+            when {
+                link.isEmpty() ->
+                    onFail("这条消息没有可分享的链接。")
+                !response.optBoolean("is_public") ->
+                    onFail("这条消息只能在对话内部打开，没有公开链接。")
+                else -> onLink(link)
             }
         }
     }
@@ -1657,6 +1706,7 @@ object MessageStore {
             replyToId = replyTargetId(msg),
             replyChatId = replyTargetChatId(msg),
             replySummary = replySummaryOf(msg),
+            mediaAlbumId = msg.optLong("media_album_id"),
             reactions = reactionsOf(msg.optJSONObject("interaction_info")),
             buttons = parseButtons(msg.optJSONObject("reply_markup")),
             isChannelPost = msg.optBoolean("is_channel_post"),
