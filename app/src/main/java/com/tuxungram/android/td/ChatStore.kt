@@ -15,6 +15,14 @@ data class ChatItem(
     val isChannel: Boolean,
     val isGroup: Boolean,
     val preview: String,
+    // Preview sender prefix (v0.9.18, Y4): for group chats,
+    // the last message's sender split out of the preview so
+    // the row can color the name with the official name
+    // color while the body stays secondary gray. Empty for
+    // private chats, channels and outgoing last messages
+    // (those keep the 你： prefix inside preview itself).
+    val previewSenderName: String = "",
+    val previewSenderId: Long = 0L,
     val dateSeconds: Int,
     val unreadCount: Int,
     val isPinned: Boolean,
@@ -79,6 +87,11 @@ object ChatStore {
     private val userPhotoFileByChat = ConcurrentHashMap<Long, Int>()
     private val chatIdByUserId = ConcurrentHashMap<Long, Long>()
     private val onlineByChat = ConcurrentHashMap<Long, Boolean>()
+    // User display names (v0.9.18, Y4): filled from every
+    // user object the update stream and getUser answers
+    // bring in; drives the chat-list preview sender prefix.
+    private val userNameById = ConcurrentHashMap<Long, String>()
+    private val userNameRequested = ConcurrentHashMap.newKeySet<Long>()
 
     @Volatile
     private var attached = false
@@ -435,6 +448,10 @@ object ChatStore {
             "updateUser" -> {
                 val user = update.optJSONObject("user") ?: return
                 AvatarStore.noteUser(user)
+                val seenName = userNameOf(user)
+                if (seenName.isNotEmpty()) {
+                    userNameById[user.optLong("id")] = seenName
+                }
                 val chatIdForUser = chatIdByUserId[user.optLong("id")] ?: return
                 onlineByChat[chatIdForUser] =
                     user.optJSONObject("status")?.optString("@type") ==
@@ -615,12 +632,15 @@ object ChatStore {
         val muteFor = chat.optJSONObject("notification_settings")
             ?.optInt("mute_for", 0) ?: 0
         val permissions = chat.optJSONObject("permissions")
+        val senderPrefix = previewSenderOf(chat, last)
         return ChatItem(
             id = chat.optLong("id"),
             title = chat.optString("title"),
             isChannel = isChannel,
             isGroup = isGroup,
             preview = previewOf(last),
+            previewSenderName = senderPrefix.first,
+            previewSenderId = senderPrefix.second,
             dateSeconds = last?.optInt("date", 0) ?: 0,
             unreadCount = chat.optInt("unread_count"),
             isPinned = position.optBoolean("is_pinned"),
@@ -747,6 +767,10 @@ object ChatStore {
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) return@sendRaw
             AvatarStore.noteUser(response)
+            val fetchedName = userNameOf(response)
+            if (fetchedName.isNotEmpty()) {
+                userNameById[response.optLong("id")] = fetchedName
+            }
             val smallId = response.optJSONObject("profile_photo")
                 ?.optJSONObject("small")?.optInt("id", 0) ?: 0
             if (smallId != 0) {
@@ -840,6 +864,85 @@ object ChatStore {
             put("chat_list", JSONObject().put("@type", "chatListArchive"))
         }
         TdRepository.sendRaw(query) { reportIfError(it) }
+    }
+
+    /** Display name of a user object (first + last name). */
+    private fun userNameOf(user: JSONObject): String {
+        val first = user.optString("first_name")
+        val last = user.optString("last_name")
+        return (first + " " + last).trim()
+    }
+
+    /** One-shot name lookup for a preview sender we have
+     *  never seen a user object for (v0.9.18, Y4); the
+     *  answer fills the name cache and republishes, so the
+     *  prefix appears as soon as it lands. */
+    private fun fetchUserName(userId: Long) {
+        if (userNameById.containsKey(userId)) return
+        if (!userNameRequested.add(userId)) return
+        val query = TdClient.request("getUser").apply {
+            put("user_id", userId)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) return@sendRaw
+            AvatarStore.noteUser(response)
+            val name = userNameOf(response)
+            if (name.isNotEmpty()) {
+                userNameById[userId] = name
+                requestRecompute()
+            }
+        }
+    }
+
+    /** The last message's sender as a (name, id) prefix for
+     *  group rows (v0.9.18, Y4); ("", 0) when the row shows
+     *  no prefix: private chats, channels, outgoing last
+     *  messages, sender-less service messages, and senders
+     *  whose name has not resolved yet (a getUser is kicked
+     *  off in that case). Chat senders (anonymous admins
+     *  posting as the chat) resolve through the cached
+     *  chat title. */
+    private fun previewSenderOf(
+        chat: JSONObject,
+        message: JSONObject?
+    ): Pair<String, Long> {
+        if (message == null || message.optBoolean("is_outgoing")) {
+            return "" to 0L
+        }
+        val type = chat.optJSONObject("type")
+        val typeName = type?.optString("@type")
+        val isGroupChat = typeName == "chatTypeBasicGroup" ||
+            (typeName == "chatTypeSupergroup" &&
+                type?.optBoolean("is_channel") != true)
+        if (!isGroupChat) return "" to 0L
+        val sender = message.optJSONObject("sender_id")
+            ?: return "" to 0L
+        return when (sender.optString("@type")) {
+            "messageSenderUser" -> {
+                val userId = sender.optLong("user_id")
+                if (userId == 0L) {
+                    "" to 0L
+                } else {
+                    val name = userNameById[userId]
+                    if (name.isNullOrEmpty()) {
+                        fetchUserName(userId)
+                        "" to 0L
+                    } else {
+                        name to userId
+                    }
+                }
+            }
+            "messageSenderChat" -> {
+                val senderChatId = sender.optLong("chat_id")
+                val name = if (senderChatId != 0L) {
+                    titleOf(senderChatId)
+                } else {
+                    ""
+                }
+                if (name.isEmpty()) "" to 0L else name to senderChatId
+            }
+            else -> "" to 0L
+        }
     }
 
     /** Chat-list preview line. Per-type labels since v0.9.1

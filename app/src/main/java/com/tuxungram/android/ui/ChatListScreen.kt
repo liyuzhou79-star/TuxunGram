@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -1141,6 +1142,21 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                         MediaThumbChip(chat.previewThumbPath)
                         Spacer(Modifier.width(6.dp))
                     }
+                    if (chat.previewSenderName.isNotEmpty()) {
+                        // Sender prefix (v0.9.18, Y4): the
+                        // official name color for the sender,
+                        // the preview body stays secondary gray.
+                        Text(
+                            "${chat.previewSenderName}：",
+                            color = OfficialTheme.nameColor(
+                                chat.previewSenderId,
+                                OfficialTheme.dark
+                            ),
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            modifier = Modifier.widthIn(max = 120.dp)
+                        )
+                    }
                     Text(
                         chat.preview,
                         color = palette.textSecondary,
@@ -1428,6 +1444,22 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                                     if (chat.previewThumbPath != null) {
                                         MediaThumbChip(chat.previewThumbPath)
                                         Spacer(Modifier.width(6.dp))
+                                    }
+                                    if (chat.previewSenderName.isNotEmpty()) {
+                                        // Sender prefix (v0.9.18,
+                                        // Y4), same as the main row.
+                                        Text(
+                                            "${chat.previewSenderName}：",
+                                            color = OfficialTheme.nameColor(
+                                                chat.previewSenderId,
+                                                OfficialTheme.dark
+                                            ),
+                                            fontSize = 14.sp,
+                                            maxLines = 1,
+                                            modifier = Modifier.widthIn(
+                                                max = 110.dp
+                                            )
+                                        )
                                     }
                                     Text(
                                         chat.preview,
