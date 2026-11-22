@@ -35,6 +35,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.RadioButton
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
@@ -290,6 +292,31 @@ fun ChatScreen(
         if (chat?.isChannel == true) ThreadStore.loadLinkedChat(chatId)
     }
     val messages by MessageStore.messages.collectAsState()
+    // Live-location sender refresh (v0.9.25, R2): while this
+    // chat stays open and I have a live location running in
+    // it, push a fresh fix about once a minute. Leaving the
+    // chat stops the loop (no background GPS drain); the
+    // shared point simply stays at its last pushed position
+    // until it expires or is stopped from the bubble.
+    val liveContext = LocalContext.current
+    LaunchedEffect(messages) {
+        val mine = messages.firstOrNull {
+            it.outgoing && it.liveExpiresIn > 0
+        } ?: return@LaunchedEffect
+        while (true) {
+            delay(60_000)
+            val current = MessageStore.messages.value
+                .firstOrNull { it.id == mine.id }
+            if (current == null || current.liveExpiresIn <= 0) break
+            fetchOneLocation(liveContext) { fix ->
+                if (fix != null) {
+                    MessageStore.updateLiveLocation(
+                        current, fix.first, fix.second
+                    )
+                }
+            }
+        }
+    }
     val sendError by MessageStore.sendError.collectAsState()
     TranslateErrorDialog()
     val clipboard = LocalClipboardManager.current
@@ -1345,21 +1372,68 @@ fun ChatScreen(
 
         val locationToSend = pendingLocation
         if (locationToSend != null) {
+            // Static vs live (v0.9.25, R2): the same fetched fix
+            // can go out as a one-shot pin or as a live location
+            // for 15 minutes / 1 hour / 8 hours.
+            var liveChoice by remember(locationToSend) {
+                mutableStateOf(0)
+            }
+            val liveOptions = listOf(
+                0 to "只发当前位置（静态）",
+                900 to "实时位置 · 15 分钟",
+                3600 to "实时位置 · 1 小时",
+                28800 to "实时位置 · 8 小时"
+            )
             AlertDialog(
                 onDismissRequest = { pendingLocation = null },
-                title = { Text("发送当前位置？") },
+                title = { Text("发送位置？") },
                 text = {
-                    Text(
-                        "纬度 ${formatCoord(locationToSend.first)}，" +
-                            "经度 ${formatCoord(locationToSend.second)}"
-                    )
+                    Column {
+                        Text(
+                            "纬度 ${formatCoord(locationToSend.first)}，" +
+                                "经度 ${formatCoord(locationToSend.second)}"
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        for ((period, label) in liveOptions) {
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { liveChoice = period }
+                                    .padding(vertical = 2.dp)
+                            ) {
+                                RadioButton(
+                                    selected = liveChoice == period,
+                                    onClick = { liveChoice = period }
+                                )
+                                Text(label, fontSize = 14.sp)
+                            }
+                        }
+                        if (liveChoice > 0) {
+                            Text(
+                                "共享期间，对方能看到你位置的更新；" +
+                                    "随时能在消息上点「停止共享」。",
+                                fontSize = 12.sp, color = Color.Gray
+                            )
+                        }
+                    }
                 },
                 confirmButton = {
                     Button(onClick = {
                         MessageStore.clearSendError()
-                        MessageStore.sendLocation(
-                            locationToSend.first, locationToSend.second
-                        )
+                        if (liveChoice > 0) {
+                            MessageStore.sendLiveLocation(
+                                locationToSend.first,
+                                locationToSend.second,
+                                liveChoice
+                            )
+                        } else {
+                            MessageStore.sendLocation(
+                                locationToSend.first,
+                                locationToSend.second
+                            )
+                        }
                         pendingLocation = null
                     }) { Text("发送") }
                 },
@@ -5562,15 +5636,44 @@ fun LocationBubbleContent(msg: MsgItem) {
         }
         Spacer(Modifier.height(5.dp))
         Text(
-            "位置",
+            if (msg.liveExpiresIn > 0) "实时位置" else "位置",
             color = mainText,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold
         )
+        if (msg.liveExpiresIn > 0) {
+            // Live state (v0.9.25, R2): expires_in is the
+            // seconds left when the message was parsed; the
+            // point itself moves via updateMessageContent.
+            val mins = (msg.liveExpiresIn + 59) / 60
+            Text(
+                if (mins >= 60) {
+                    "共享中 · 还剩约 ${mins / 60} 小时"
+                } else {
+                    "共享中 · 还剩约 $mins 分钟"
+                },
+                color = if (outgoing) palette.outText
+                else palette.accentText,
+                fontSize = 12.sp
+            )
+        }
         Text(
             "${formatCoord(msg.latitude)}, ${formatCoord(msg.longitude)}",
             color = subText, fontSize = 12.sp
         )
+        if (msg.liveExpiresIn > 0 && msg.outgoing) {
+            TextButton(
+                onClick = { MessageStore.stopLiveLocation(msg.id) },
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                Text(
+                    "停止共享",
+                    color = if (outgoing) palette.outText
+                    else palette.accentText,
+                    fontSize = 12.sp
+                )
+            }
+        }
         Text(
             "点开在地图里看",
             color = if (outgoing) palette.outText else palette.accentText,

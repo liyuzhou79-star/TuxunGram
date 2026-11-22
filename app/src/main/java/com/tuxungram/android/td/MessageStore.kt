@@ -191,6 +191,13 @@ data class MsgItem(
     // Location payload (LOCATION kind, v0.9.4 N2).
     val latitude: Double = 0.0,
     val longitude: Double = 0.0,
+    // Live location (v0.9.25, R2): > 0 while a messageLiveLocation
+    // can still be updated — the seconds left at parse time
+    // (messageLiveLocation.expires_in). Static messageLocation
+    // messages keep 0. TDLib does not push an update when this
+    // counts down to 0; the card treats a stale value loosely
+    // and the sender's stop/edit calls are what change state.
+    val liveExpiresIn: Int = 0,
     // Contact payload (CONTACT kind, v0.9.4 N2): display name,
     // phone number, and the Telegram user id when the shared
     // contact is a Telegram user (0 = not known / not a user).
@@ -1850,6 +1857,82 @@ object MessageStore {
         })
     }
 
+    /** Share a LIVE location in the open chat (v0.9.25, R2;
+     *  inputMessageLiveLocation + liveLocation verified in
+     *  td_api.tl). [livePeriodSec] is how long the point can
+     *  be updated for, counted from the send time. */
+    fun sendLiveLocation(
+        latitude: Double, longitude: Double, livePeriodSec: Int
+    ) {
+        sendContent(JSONObject().apply {
+            put("@type", "inputMessageLiveLocation")
+            put("location", liveLocationJson(
+                latitude, longitude, livePeriodSec
+            ))
+        })
+    }
+
+    private fun liveLocationJson(
+        latitude: Double, longitude: Double, livePeriodSec: Int
+    ): JSONObject = JSONObject().apply {
+        put("@type", "liveLocation")
+        put("location", JSONObject().apply {
+            put("@type", "location")
+            put("latitude", latitude)
+            put("longitude", longitude)
+            put("horizontal_accuracy", 0.0)
+        })
+        put("live_period", livePeriodSec)
+        put("heading", 0)
+        put("proximity_alert_radius", 0)
+    }
+
+    /** Push a fresh point into one of my live locations
+     *  (editMessageLiveLocation with a non-null location).
+     *  The remaining period is recomputed from the message's
+     *  own expiry so an edit never extends sharing by more
+     *  than the API allows. */
+    fun updateLiveLocation(msg: MsgItem, latitude: Double, longitude: Double) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("editMessageLiveLocation").apply {
+            put("chat_id", chatId)
+            put("message_id", msg.id)
+            put("reply_markup", JSONObject.NULL)
+            put("location", liveLocationJson(
+                latitude, longitude,
+                msg.liveExpiresIn.coerceAtLeast(60)
+            ))
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value =
+                    "实时位置更新失败。（错误码 ${response.optInt("code")}）"
+            }
+        }
+    }
+
+    /** Stop sharing one of my live locations
+     *  (editMessageLiveLocation with location = null, the
+     *  documented stop in td_api.tl). The bubble turns into a
+     *  static location when TDLib pushes the content update. */
+    fun stopLiveLocation(messageId: Long) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("editMessageLiveLocation").apply {
+            put("chat_id", chatId)
+            put("message_id", messageId)
+            put("reply_markup", JSONObject.NULL)
+            put("location", JSONObject.NULL)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value =
+                    "停止共享没成功，再试一次。（错误码 ${response.optInt("code")}）"
+            }
+        }
+    }
+
     /** Share a contact card in the open chat (v0.9.4, N2;
      *  inputMessageContact verified in td_api.tl). user_id
      *  stays 0 for contacts picked from the system address
@@ -2563,6 +2646,20 @@ object MessageStore {
                     kind = MsgKind.LOCATION,
                     latitude = loc?.optDouble("latitude", 0.0) ?: 0.0,
                     longitude = loc?.optDouble("longitude", 0.0) ?: 0.0
+                )
+            }
+            "messageLiveLocation" -> {
+                // Live location (v0.9.25, R2): the point lives
+                // one level down (liveLocation.location) and
+                // expires_in is the seconds left to update it.
+                val live = content.optJSONObject("location")
+                val loc = live?.optJSONObject("location")
+                base.copy(
+                    kind = MsgKind.LOCATION,
+                    latitude = loc?.optDouble("latitude", 0.0) ?: 0.0,
+                    longitude = loc?.optDouble("longitude", 0.0)
+                        ?: 0.0,
+                    liveExpiresIn = content.optInt("expires_in")
                 )
             }
             "messageContact" -> {
