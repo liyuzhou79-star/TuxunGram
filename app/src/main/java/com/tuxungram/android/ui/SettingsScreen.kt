@@ -91,6 +91,9 @@ import androidx.core.content.FileProvider
 import com.tuxungram.android.td.AccountStore
 import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.MeStore
+import com.tuxungram.android.td.PrivacySettingDef
+import com.tuxungram.android.td.PrivacyStore
+import com.tuxungram.android.td.PrivacyTier
 import com.tuxungram.android.td.KeepAliveService
 import com.tuxungram.android.td.StorageStore
 import com.tuxungram.android.td.ProxyConfig
@@ -781,6 +784,7 @@ fun SettingsScreen(
             "看哪些设备登着你的账号，不认识的可以踢下线。",
             color = Color.Gray, fontSize = 12.sp
         )
+        PrivacySection()
         val dialogMode = pinDialog
         if (dialogMode != null) {
             var currentPin by remember(dialogMode) { mutableStateOf("") }
@@ -1094,3 +1098,108 @@ fun SettingsScreen(
     }
 }
 
+
+/** Privacy settings (v0.9.3, M2), rendered inside the settings
+ *  page's 安全 section. One row per userPrivacySetting*: the
+ *  value shown is the tier PrivacyStore actually read back
+ *  from the server — while a read is outstanding the row says
+ *  读取中， and a failed read surfaces as an error with a
+ *  retry, never as a guessed tier. Tapping a row opens the
+ *  three-tier picker （所有人 / 联系人 / 没人）. */
+@Composable
+fun PrivacySection() {
+    val tiers by PrivacyStore.tiers.collectAsState()
+    val loadError by PrivacyStore.loadError.collectAsState()
+    LaunchedEffect(Unit) { PrivacyStore.load() }
+    var editing by remember { mutableStateOf<PrivacySettingDef?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    Spacer(Modifier.height(18.dp))
+    Text("隐私", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "这些是账号级设置，在哪个客户端改都算数。点一项就能改。",
+        color = Color.Gray, fontSize = 13.sp
+    )
+    if (loadError != null) {
+        Text(
+            loadError!!,
+            color = Color(0xFFC62828), fontSize = 13.sp,
+            modifier = Modifier.padding(top = 6.dp)
+        )
+        TextButton(onClick = { PrivacyStore.load() }) { Text("重试") }
+    }
+    for (def in PrivacyStore.SETTINGS) {
+        val tier = tiers[def.type] ?: PrivacyTier.UNKNOWN
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { editing = def }
+                .padding(vertical = 9.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(def.label, fontSize = 15.sp)
+                Text(def.hint, color = Color.Gray, fontSize = 12.sp)
+            }
+            Text(
+                PrivacyStore.tierLabel(tier),
+                color = Color.Gray, fontSize = 13.sp
+            )
+        }
+    }
+    if (notice != null) {
+        Text(
+            notice!!, color = Color.Gray, fontSize = 13.sp,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    }
+    val def = editing
+    if (def != null) {
+        val current = tiers[def.type] ?: PrivacyTier.UNKNOWN
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text(def.label) },
+            text = {
+                Column {
+                    Text(def.hint, color = Color.Gray, fontSize = 13.sp)
+                    if (current == PrivacyTier.CUSTOM) {
+                        Text(
+                            "现在是「自定义」：你在其他客户端单独设过例外名单。改成下面三档之一会把那些例外清掉。",
+                            color = Color.Gray, fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                    for (tier in listOf(
+                        PrivacyTier.EVERYONE,
+                        PrivacyTier.CONTACTS,
+                        PrivacyTier.NOBODY
+                    )) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    editing = null
+                                    PrivacyStore.set(def, tier) { error ->
+                                        notice = error
+                                            ?: "「${def.label}」已设为${PrivacyStore.tierLabel(tier)}。"
+                                    }
+                                }
+                                .padding(vertical = 10.dp)
+                        ) {
+                            Text(
+                                (if (current == tier) "● " else "○ ") +
+                                    PrivacyStore.tierLabel(tier),
+                                fontSize = 15.sp
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { editing = null }) { Text("取消") }
+            }
+        )
+    }
+}
