@@ -1281,11 +1281,27 @@ fun FolderEditorDialog(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    // Membership load state (regression fix R2, v0.9.6): 0 =
+    // loading, 1 = loaded, 2 = failed. Saving is only possible
+    // in state 1 — before the server's included list lands (or
+    // after it failed to load), the selection here is not the
+    // folder's real membership, and writing it back would wipe
+    // members the user never touched. A brand-new folder has
+    // nothing to load, so it starts in state 1.
+    var loadState by remember {
+        mutableStateOf(if (folderId == null) 1 else 0)
+    }
 
     LaunchedEffect(folderId) {
         if (folderId != null) {
-            FolderStore.loadIncluded(folderId) { included ->
-                selected = included.toSet()
+            FolderStore.loadIncluded(folderId) { included, ok ->
+                if (ok) {
+                    selected = included.toSet()
+                    loadState = 1
+                } else {
+                    loadState = 2
+                    error = "文件夹成员没加载出来，先别保存，关掉重开试试。"
+                }
             }
         }
     }
@@ -1315,6 +1331,12 @@ fun FolderEditorDialog(
                         fontSize = 12.sp, color = Color.Gray
                     )
                 }
+                if (loadState == 0) {
+                    Text(
+                        "正在加载文件夹成员…",
+                        fontSize = 12.sp, color = Color.Gray
+                    )
+                }
                 val editorListState = rememberLazyListState()
                 LazyColumn(
                     state = editorListState,
@@ -1328,7 +1350,7 @@ fun FolderEditorDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
+                                .clickable(enabled = loadState == 1) {
                                     selected = if (chat.id in selected) {
                                         selected - chat.id
                                     } else {
@@ -1339,6 +1361,7 @@ fun FolderEditorDialog(
                         ) {
                             Checkbox(
                                 checked = chat.id in selected,
+                                enabled = loadState == 1,
                                 onCheckedChange = { checked ->
                                     selected = if (checked) {
                                         selected + chat.id
@@ -1386,7 +1409,7 @@ fun FolderEditorDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = !busy && name.isNotBlank(),
+                enabled = !busy && name.isNotBlank() && loadState == 1,
                 onClick = {
                     busy = true
                     error = null

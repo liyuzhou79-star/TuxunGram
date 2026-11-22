@@ -15,14 +15,22 @@ import org.json.JSONObject
  */
 object FolderStore {
 
-    /** The folder's explicitly included chat ids. */
-    fun loadIncluded(folderId: Int, onResult: (List<Long>) -> Unit) {
+    /** The folder's explicitly included chat ids. The second
+     *  callback value says whether the load actually succeeded
+     *  (regression fix R2, v0.9.6): an error must NOT collapse
+     *  into an empty list — the editor would take that for a
+     *  genuinely empty folder and a save would wipe the real
+     *  membership. */
+    fun loadIncluded(
+        folderId: Int,
+        onResult: (List<Long>, Boolean) -> Unit
+    ) {
         val query = TdClient.request("getChatFolder").apply {
             put("chat_folder_id", folderId)
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {
-                onResult(emptyList())
+                onResult(emptyList(), false)
                 return@sendRaw
             }
             val arr = response.optJSONArray("included_chat_ids")
@@ -30,7 +38,7 @@ object FolderStore {
             if (arr != null) {
                 for (i in 0 until arr.length()) out.add(arr.optLong(i))
             }
-            onResult(out)
+            onResult(out, true)
         }
     }
 
