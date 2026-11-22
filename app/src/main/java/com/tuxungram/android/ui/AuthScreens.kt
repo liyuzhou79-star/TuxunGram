@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
@@ -77,6 +79,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.AnnotatedString
@@ -585,6 +588,80 @@ fun CountryPickerScreen(
     }
 }
 
+/** Boxed digit cells for the code page (v0.9.21, AB3):
+ *  the official large-type code entry, approximated with
+ *  stock pieces — a row of rounded cells (the next empty
+ *  cell carries the accent border) over a transparent
+ *  real input that owns the keyboard and the same
+ *  digits-only filtering the old outlined field had.
+ *  The cell count grows past five if a longer code is
+ *  pasted, so no length cap appears. */
+@Composable
+private fun CodeBoxes(
+    code: String,
+    onCodeChange: (String) -> Unit
+) {
+    val palette = OfficialTheme.current()
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    val cells = maxOf(5, code.length)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { focusRequester.requestFocus() }
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            for (i in 0 until cells) {
+                val ch = code.getOrNull(i)
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .size(width = 46.dp, height = 54.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(palette.graySection)
+                        .border(
+                            1.5.dp,
+                            if (i == code.length) {
+                                palette.accent
+                            } else {
+                                palette.divider
+                            },
+                            RoundedCornerShape(10.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (ch != null) {
+                        Text(
+                            ch.toString(), fontSize = 24.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = palette.textPrimary
+                        )
+                    }
+                }
+            }
+        }
+        BasicTextField(
+            value = code,
+            onValueChange = { v ->
+                onCodeChange(v.filter { it.isDigit() })
+            },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.NumberPassword
+            ),
+            modifier = Modifier
+                .size(1.dp)
+                .alpha(0f)
+                .focusRequester(focusRequester)
+        )
+    }
+}
+
 @Composable
 fun CodeScreen(phone: String, onChangePhone: () -> Unit) {
     var code by remember { mutableStateOf("") }
@@ -600,48 +677,39 @@ fun CodeScreen(phone: String, onChangePhone: () -> Unit) {
         }
     }
 
-    FormColumn(title = "输入验证码") {
-        if (phone.isNotEmpty()) {
-            Text("已发送到 $phone", color = Color.Gray, fontSize = 14.sp)
-            Spacer(Modifier.height(12.dp))
-        }
-        OutlinedTextField(
-            value = code,
-            onValueChange = { code = it.filter { ch -> ch.isDigit() } },
-            label = { Text("验证码") },
-            leadingIcon = {
-                Icon(Icons.Filled.MailOutline, contentDescription = null)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
-        )
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = {
-                TdRepository.clearError()
-                busy = true
-                TdRepository.checkCode(code)
-            },
-            enabled = !busy && code.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (busy) "处理中…" else "登录")
-        }
-        Row {
-            TextButton(
-                onClick = {
-                    TdRepository.resendCode()
-                    resendLeft = 30
-                },
-                enabled = resendLeft == 0
-            ) {
-                Text(if (resendLeft > 0) "重新发送（${resendLeft}）" else "重新发送验证码")
-            }
-            TextButton(onClick = onChangePhone) {
-                Text("换个手机号")
+    // Same shell as the phone page (v0.9.21, AB3). State,
+    // the resend countdown and both actions are the old
+    // ones verbatim; there is still NO auto-submit — the
+    // old flow never had it and adding it would be a
+    // behaviour change, recorded here on purpose.
+    AuthFormShell(
+        title = "输入验证码",
+        subtitle = if (phone.isNotEmpty()) "已发送到 $phone" else null,
+        buttonText = if (busy) "处理中…" else "登录",
+        buttonEnabled = !busy && code.isNotEmpty(),
+        onButton = {
+            TdRepository.clearError()
+            busy = true
+            TdRepository.checkCode(code)
+        },
+        footer = {
+            Row {
+                TextButton(
+                    onClick = {
+                        TdRepository.resendCode()
+                        resendLeft = 30
+                    },
+                    enabled = resendLeft == 0
+                ) {
+                    Text(if (resendLeft > 0) "重新发送（${resendLeft}）" else "重新发送验证码")
+                }
+                TextButton(onClick = onChangePhone) {
+                    Text("换个手机号")
+                }
             }
         }
+    ) {
+        CodeBoxes(code) { code = it }
     }
 }
 
@@ -654,45 +722,46 @@ fun PasswordScreen(hint: String) {
     val error by TdRepository.lastError.collectAsState()
     LaunchedEffect(authState, error) { busy = false }
 
-    FormColumn(title = "输入两步验证密码") {
-        if (hint.isNotEmpty()) {
-            Text("密码提示：$hint", color = Color.Gray, fontSize = 14.sp)
-            Spacer(Modifier.height(12.dp))
+    // Same shell (v0.9.21, AB3): the hint rides in the
+    // subtitle slot, the field is the underline form with
+    // the same show/hide toggle, and the submit still
+    // clears the local password right after handing it
+    // over — every line of the old logic kept.
+    val palette = OfficialTheme.current()
+    AuthFormShell(
+        title = "输入两步验证密码",
+        subtitle = if (hint.isNotEmpty()) "密码提示：$hint" else null,
+        buttonText = if (busy) "处理中…" else "登录",
+        buttonEnabled = !busy && password.isNotEmpty(),
+        onButton = {
+            TdRepository.clearError()
+            busy = true
+            TdRepository.checkPassword(password)
+            password = ""
+        },
+        footer = {
+            Text(
+                "忘了密码只能走 Telegram 官方的找回流程，本 App 第一版不做找回。",
+                color = palette.textSecondary, fontSize = 13.sp
+            )
         }
-        OutlinedTextField(
+    ) {
+        AuthUnderlineField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("密码") },
-            leadingIcon = {
-                Icon(Icons.Filled.Lock, contentDescription = null)
-            },
+            label = "密码",
             modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
+            visualTransformation = if (show) {
+                VisualTransformation.None
+            } else {
+                PasswordVisualTransformation()
+            },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             trailingIcon = {
                 TextButton(onClick = { show = !show }) {
                     Text(if (show) "隐藏" else "显示")
                 }
             }
-        )
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = {
-                TdRepository.clearError()
-                busy = true
-                TdRepository.checkPassword(password)
-                password = ""
-            },
-            enabled = !busy && password.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (busy) "处理中…" else "登录")
-        }
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "忘了密码只能走 Telegram 官方的找回流程，本 App 第一版不做找回。",
-            color = Color.Gray, fontSize = 13.sp
         )
     }
 }
@@ -706,37 +775,33 @@ fun RegistrationScreen() {
     val error by TdRepository.lastError.collectAsState()
     LaunchedEffect(authState, error) { busy = false }
 
-    FormColumn(title = "这个号码还没注册") {
-        OutlinedTextField(
+    // Same shell (v0.9.21, AB3): two underline fields and
+    // the old submit rule (first name required, both
+    // trimmed) unchanged.
+    AuthFormShell(
+        title = "这个号码还没注册",
+        subtitle = null,
+        buttonText = if (busy) "处理中…" else "注册",
+        buttonEnabled = !busy && first.isNotBlank(),
+        onButton = {
+            TdRepository.clearError()
+            busy = true
+            TdRepository.registerUser(first.trim(), last.trim())
+        }
+    ) {
+        AuthUnderlineField(
             value = first,
             onValueChange = { first = it },
-            label = { Text("名字") },
-            leadingIcon = {
-                Icon(Icons.Filled.Person, contentDescription = null)
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+            label = "名字",
+            modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
+        AuthUnderlineField(
             value = last,
             onValueChange = { last = it },
-            label = { Text("姓氏（可空）") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = {
-                TdRepository.clearError()
-                busy = true
-                TdRepository.registerUser(first.trim(), last.trim())
-            },
-            enabled = !busy && first.isNotBlank(),
+            label = "姓氏（可空）",
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (busy) "处理中…" else "注册")
-        }
+        )
     }
 }
 

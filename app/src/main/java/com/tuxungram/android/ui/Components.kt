@@ -213,33 +213,11 @@ fun CenterColumn(content: @Composable () -> Unit) {
     ) { content() }
 }
 
-@Composable
-fun FormColumn(
-    title: String,
-    content: @Composable () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center
-    ) {
-        // Brand header (v0.9.9, W1): the paper-plane badge
-        // heads every auth form — login, code, password,
-        // registration all share this shell.
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            PlaneBadge(72)
-        }
-        Spacer(Modifier.height(18.dp))
-        Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(20.dp))
-        content()
-        ErrorText()
-    }
-}
+// The old auth form shell (FormColumn: centered column
+// with the plane badge over outlined fields) was retired
+// in v0.9.21 (AB3) once every auth page had moved to
+// AuthFormShell in AuthScreens.kt; it had no other
+// callers.
 
 /** Decode an image file downsampled so its long edge stays
  *  under [maxDim] px. A full-size decode of a camera original
