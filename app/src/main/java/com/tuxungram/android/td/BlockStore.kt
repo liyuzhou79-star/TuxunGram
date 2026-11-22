@@ -133,17 +133,8 @@ object BlockStore {
                     }
                     if (id == 0L) continue
                     val key = "$kind:$id"
-                    synchronized(entries) {
-                        if (entries.any {
-                                it.senderKind == kind && it.senderId == id
-                            }
-                        ) {
-                            continue
-                        }
-                        entries.add(
-                            BlockedEntry(kind, id, nameBySender[key] ?: "")
-                        )
-                    }
+                    val entry = BlockedEntry(kind, id, nameBySender[key] ?: "")
+                    if (!addEntryIfAbsent(entry)) continue
                     added++
                     if (!nameBySender.containsKey(key)) fetchName(kind, id)
                 }
@@ -155,6 +146,24 @@ object BlockStore {
             publish()
         }
     }
+
+    /** Append unless the same sender is already listed.
+     *  (A helper because `continue` inside the inline
+     *  synchronized lambda is an experimental language
+     *  feature this Kotlin version rejects.) */
+    private fun addEntryIfAbsent(entry: BlockedEntry): Boolean =
+        synchronized(entries) {
+            if (entries.any {
+                    it.senderKind == entry.senderKind &&
+                        it.senderId == entry.senderId
+                }
+            ) {
+                false
+            } else {
+                entries.add(entry)
+                true
+            }
+        }
 
     private fun publish() {
         _blocked.value = synchronized(entries) { ArrayList(entries) }
