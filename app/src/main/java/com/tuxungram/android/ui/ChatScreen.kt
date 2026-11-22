@@ -1064,7 +1064,7 @@ fun ChatScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(0.5.dp)
-                .background(headerPalette.divider)
+                .background(OfficialTheme.current().divider)
         )
 
         if (isForum) {

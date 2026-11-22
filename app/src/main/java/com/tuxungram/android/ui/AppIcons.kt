@@ -163,20 +163,100 @@ val ImageIcon: ImageVector = icon("Image", evenOdd = true) {
     close()
 }
 
-/** Paperclip (attach file). */
-val ClipIcon: ImageVector = icon("Clip") {
-    moveTo(20.8f, 12.2f)
-    lineTo(12.6f, 20.4f)
-    arcTo(5.6f, 5.6f, 0f, true, true, 4.7f, 12.5f)
-    lineTo(12.8f, 4.4f)
-    arcTo(3.7f, 3.7f, 0f, true, true, 18f, 9.6f)
-    lineTo(10.2f, 17.4f)
-    arcTo(1.85f, 1.85f, 0f, true, true, 7.6f, 14.8f)
-    lineTo(14.9f, 7.5f)
-    lineTo(16.2f, 8.8f)
-    lineTo(8.9f, 16.1f)
-    arcTo(3.7f, 3.7f, 0f, true, false, 14.1f, 21.3f)
-    lineTo(22.2f, 13.2f)
+/** Paperclip (attach file). Redrawn in the official
+ *  outline style (v0.9.17, X6): a thin stroked clip instead
+ *  of the filled silhouette. */
+val ClipIcon: ImageVector =
+    ImageVector.Builder(
+        name = "Clip",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.9f,
+            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round
+        ) {
+            moveTo(20.6f, 12.4f)
+            lineTo(12.2f, 20.8f)
+            arcTo(5.9f, 5.9f, 0f, true, true, 4.9f, 12.6f)
+            lineTo(12.9f, 4.6f)
+            arcTo(3.9f, 3.9f, 0f, true, true, 18.4f, 9.5f)
+            lineTo(10.3f, 17.6f)
+            arcTo(1.95f, 1.95f, 0f, true, true, 7.5f, 14.7f)
+            lineTo(14.9f, 7.3f)
+        }
+    }.build()
+
+/** Emoji face (input-bar panel toggle), official outline
+ *  style (v0.9.17, X6): stroked circle and smile, filled
+ *  eyes. */
+val FaceIcon: ImageVector =
+    ImageVector.Builder(
+        name = "Face",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.9f,
+            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round
+        ) {
+            moveTo(12f, 3.2f)
+            arcTo(8.8f, 8.8f, 0f, true, true, 12f, 20.8f)
+            arcTo(8.8f, 8.8f, 0f, true, true, 12f, 3.2f)
+            moveTo(8.2f, 14.2f)
+            arcTo(4.6f, 4.6f, 0f, false, false, 15.8f, 14.2f)
+        }
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(9f, 9.4f)
+            arcTo(1.15f, 1.15f, 0f, true, true, 9f, 11.7f)
+            arcTo(1.15f, 1.15f, 0f, true, true, 9f, 9.4f)
+            moveTo(15f, 9.4f)
+            arcTo(1.15f, 1.15f, 0f, true, true, 15f, 11.7f)
+            arcTo(1.15f, 1.15f, 0f, true, true, 15f, 9.4f)
+        }
+    }.build()
+
+/** Magnifier (search), official outline style (v0.9.17, X6). */
+val SearchIcon: ImageVector =
+    ImageVector.Builder(
+        name = "Search",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.9f,
+            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round
+        ) {
+            moveTo(11f, 4.4f)
+            arcTo(6.6f, 6.6f, 0f, true, true, 11f, 17.6f)
+            arcTo(6.6f, 6.6f, 0f, true, true, 11f, 4.4f)
+            moveTo(15.8f, 15.8f)
+            lineTo(20.6f, 20.6f)
+        }
+    }.build()
+
+/** Paper plane (send), official silhouette (v0.9.17, X6):
+ *  a filled plane angled up-right, replacing the generic
+ *  Material send triangle in the chat dock. */
+val PlaneIcon: ImageVector = icon("Plane") {
+    moveTo(2.2f, 11.6f)
+    lineTo(21.8f, 2.6f)
+    lineTo(15.9f, 21.4f)
+    lineTo(10.4f, 14.6f)
+    close()
+    moveTo(10.4f, 14.6f)
+    lineTo(21.8f, 2.6f)
+    lineTo(12.8f, 12.4f)
     close()
 }
 
