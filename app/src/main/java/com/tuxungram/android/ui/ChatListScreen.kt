@@ -88,6 +88,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
@@ -497,7 +498,10 @@ fun ChatListScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .padding(end = 14.dp)
-                        .clickable { storyPicker.launch("image/*") }
+                        .clickable {
+                            AppLock.noteExternalLaunch()
+                            storyPicker.launch("image/*")
+                        }
                 ) {
                     Box(
                         modifier = Modifier

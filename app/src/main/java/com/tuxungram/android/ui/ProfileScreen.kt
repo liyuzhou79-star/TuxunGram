@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AdminStore
+import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.BlockStore
 import com.tuxungram.android.td.InviteLinkUi
 import com.tuxungram.android.td.ChatStore
@@ -417,6 +418,7 @@ fun ProfileScreen(
                                     Text("改简介")
                                 }
                                 TextButton(onClick = {
+                                    AppLock.noteExternalLaunch()
                                     groupPhotoPicker.launch("image/*")
                                 }) {
                                     Text("设置群头像")

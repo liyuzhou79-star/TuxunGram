@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.ForumStore
 import com.tuxungram.android.td.ForumTopicUi
 import com.tuxungram.android.td.MsgItem
@@ -467,6 +468,7 @@ fun ForumTopicView(
                             text = { Text("发图片") },
                             onClick = {
                                 attachMenuOpen = false
+                                AppLock.noteExternalLaunch()
                                 photoPicker.launch("image/*")
                             }
                         )
@@ -474,6 +476,7 @@ fun ForumTopicView(
                             text = { Text("发文件 / 视频 / 语音") },
                             onClick = {
                                 attachMenuOpen = false
+                                AppLock.noteExternalLaunch()
                                 filePicker.launch("*/*")
                             }
                         )

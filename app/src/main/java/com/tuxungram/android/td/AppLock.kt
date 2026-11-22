@@ -179,6 +179,22 @@ object AppLock {
         _locked.value = false
     }
 
+    @Volatile
+    private var externalLaunchAt = 0L
+
+    /** Stamp that the app is about to hand over to a system
+     *  picker (photo / file / contact). Returning from a picker
+     *  the app itself opened must not trip the auto-lock
+     *  (regression fix R3, v0.9.6): with auto-lock set to
+     *  立即 every picker return used to land on the lock
+     *  screen, and with the 1-minute default a slow browse of
+     *  the gallery locked the app mid-send. The stamp is
+     *  one-shot and stays valid for 10 minutes — long enough
+     *  for a slow pick, too short to be a standing bypass. */
+    fun noteExternalLaunch() {
+        externalLaunchAt = System.currentTimeMillis()
+    }
+
     /** Activity went to background: remember when. */
     fun onBackground() {
         if (backgroundedAt == 0L) {
@@ -191,6 +207,13 @@ object AppLock {
     fun onForeground() {
         val since = backgroundedAt
         backgroundedAt = 0L
+        val launchedAt = externalLaunchAt
+        externalLaunchAt = 0L
+        if (launchedAt != 0L &&
+            System.currentTimeMillis() - launchedAt < 10 * 60_000L
+        ) {
+            return
+        }
         if (!_pinSet.value || since == 0L) return
         val minutes = _autoLockMinutes.value
         if (minutes < 0) return

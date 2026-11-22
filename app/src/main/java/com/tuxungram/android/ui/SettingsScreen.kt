@@ -153,7 +153,9 @@ fun SettingsScreen(
     onOpenSessions: () -> Unit = {},
     onOpenStickerSets: () -> Unit = {},
     onOpenEditProfile: () -> Unit = {},
-    onOpenBlocked: () -> Unit = {}
+    onOpenBlocked: () -> Unit = {},
+    onOpenChangelog: () -> Unit = {},
+    onOpenGuide: () -> Unit = {}
 ) {
     BackHandler { onBack() }
     val settingsContext = LocalContext.current
@@ -670,7 +672,10 @@ fun SettingsScreen(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(top = 6.dp)
         ) {
-            TextButton(onClick = { wallpaperPicker.launch("image/*") }) {
+            TextButton(onClick = {
+                AppLock.noteExternalLaunch()
+                wallpaperPicker.launch("image/*")
+            }) {
                 Text(if (chatBgImage.isEmpty()) "选择图片" else "换一张")
             }
             if (chatBgImage.isNotEmpty()) {
@@ -1208,6 +1213,13 @@ fun SettingsScreen(
             "检查更新只在你点上面这一项时才会联网，去 GitHub 看一眼有没有新版；平时不会自己联网。",
             color = Color.Gray, fontSize = 12.sp
         )
+        // Changelog + guide replay (v0.9.6, P2/P3).
+        TextButton(onClick = onOpenChangelog) {
+            Text("更新日志")
+        }
+        TextButton(onClick = onOpenGuide) {
+            Text("新手引导（再看一遍）")
+        }
         Spacer(Modifier.height(12.dp))
         Text(
             "TuxunGram ${BuildConfig.VERSION_NAME}",

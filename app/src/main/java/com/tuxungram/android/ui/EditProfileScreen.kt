@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.MeStore
 import java.io.File
 
@@ -140,7 +141,10 @@ fun EditProfileScreen(onBack: () -> Unit) {
                 }
                 Column(modifier = Modifier.padding(start = 14.dp)) {
                     TextButton(
-                        onClick = { photoPicker.launch("image/*") },
+                        onClick = {
+                            AppLock.noteExternalLaunch()
+                            photoPicker.launch("image/*")
+                        },
                         enabled = !busy
                     ) { Text("换头像") }
                     if (me.photoId != 0L) {

@@ -83,6 +83,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.provider.ContactsContract
 import com.tuxungram.android.td.AdminStore
+import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
@@ -1195,6 +1196,7 @@ fun ChatScreen(
                                 text = { Text("发图片") },
                                 onClick = {
                                     attachMenuOpen = false
+                                    AppLock.noteExternalLaunch()
                                     picker.launch("image/*")
                                 }
                             )
@@ -1202,6 +1204,7 @@ fun ChatScreen(
                                 text = { Text("发文件 / 视频 / 语音") },
                                 onClick = {
                                     attachMenuOpen = false
+                                    AppLock.noteExternalLaunch()
                                     filePicker.launch("*/*")
                                 }
                             )
@@ -1266,6 +1269,7 @@ fun ChatScreen(
                                 text = { Text("联系人") },
                                 onClick = {
                                     attachMenuOpen = false
+                                    AppLock.noteExternalLaunch()
                                     contactPicker.launch(null)
                                 }
                             )

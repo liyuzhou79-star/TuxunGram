@@ -58,6 +58,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.PollUi
@@ -770,6 +771,7 @@ fun ThreadScreen(
                             text = { Text("发图片") },
                             onClick = {
                                 attachMenuOpen = false
+                                AppLock.noteExternalLaunch()
                                 photoPicker.launch("image/*")
                             }
                         )
@@ -777,6 +779,7 @@ fun ThreadScreen(
                             text = { Text("发文件 / 视频 / 语音") },
                             onClick = {
                                 attachMenuOpen = false
+                                AppLock.noteExternalLaunch()
                                 filePicker.launch("*/*")
                             }
                         )
