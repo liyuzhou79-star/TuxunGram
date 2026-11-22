@@ -5,13 +5,21 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Transport layer over libtdjson: owns one client instance, a receiver
- * thread, and request/response correlation via "@extra".
+ * Transport layer over libtdjson: owns one client instance and
+ * request/response correlation via "@extra".
+ *
+ * Receiving is NOT done here: td_receive is a single global
+ * queue shared by every client, so [TdHub] owns the one
+ * receiver thread and routes each event to the client named
+ * by its "@client_id" (see TdHub for why per-client receiver
+ * threads corrupt each other's traffic). This client only
+ * registers with the hub in [start] and receives its events
+ * through [deliver].
  *
  * Responses (objects whose "@extra" matches a pending request) go to
  * that request's callback; everything else is an update and goes to
- * [onUpdate]. All callbacks run on the receiver thread — UI code must
- * hop to the main thread itself.
+ * [onUpdate]. All callbacks run on the hub's receiver thread — UI
+ * code must hop to the main thread itself.
  */
 class TdClient(
     private val onUpdate: (JSONObject) -> Unit
@@ -22,34 +30,23 @@ class TdClient(
 
     @Volatile
     private var running = false
-    private var receiver: Thread? = null
 
     fun start() {
         if (running) return
         running = true
-        receiver = Thread({
-            while (running) {
-                val bytes = try {
-                    TdNative.receive(2.0)
-                } catch (t: Throwable) {
-                    null
-                } ?: continue
-                val obj = try {
-                    JSONObject(String(bytes, Charsets.UTF_8))
-                } catch (t: Throwable) {
-                    continue
-                }
-                val extra = obj.optString("@extra", "")
-                val callback = if (extra.isNotEmpty()) callbacks.remove(extra) else null
-                if (callback != null) {
-                    callback(obj)
-                } else {
-                    onUpdate(obj)
-                }
-            }
-        }, "td-receiver").apply {
-            isDaemon = true
-            start()
+        TdHub.register(clientId, this)
+    }
+
+    /** One event routed to this client by [TdHub]. Runs on the
+     *  hub's receiver thread. */
+    internal fun deliver(obj: JSONObject) {
+        if (!running) return
+        val extra = obj.optString("@extra", "")
+        val callback = if (extra.isNotEmpty()) callbacks.remove(extra) else null
+        if (callback != null) {
+            callback(obj)
+        } else {
+            onUpdate(obj)
         }
     }
 
@@ -78,6 +75,10 @@ class TdClient(
 
     fun close() {
         running = false
+        // Unregister first: from here on the hub drops every
+        // event still queued for this client, so nothing stale
+        // can reach onUpdate or a callback after close.
+        TdHub.unregister(clientId)
         // Audit K3 (v0.9.1): requests still in flight on a dying
         // client can never be answered once the receiver stops;
         // drop their callbacks now instead of leaving them in
