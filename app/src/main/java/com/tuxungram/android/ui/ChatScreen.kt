@@ -129,6 +129,7 @@ import com.tuxungram.android.td.MediaEntry
 import com.tuxungram.android.td.MediaStore
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.SoundFx
+import com.tuxungram.android.td.WebAppStore
 import com.tuxungram.android.td.AnimEffect
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
@@ -3213,7 +3214,9 @@ fun ChatScreen(
                 }
                 // Reply keyboard grid: rows straight from the
                 // markup; a text button sends its label as a
-                // message, other button types render disabled.
+                // message, a Web App button opens the bot's
+                // Web App (v0.9.36, C1), other button types
+                // render disabled.
                 AnimatedVisibility(
                     visible = kb is ReplyKb.Shown &&
                         kbDismissedSource != kb.sourceMessageId &&
@@ -3238,10 +3241,67 @@ fun ChatScreen(
                             Row(modifier = Modifier.fillMaxWidth()) {
                                 for (btn in row) {
                                     Button(
-                                        enabled = btn.isText,
+                                        enabled = btn.isText ||
+                                            btn.isWebApp,
                                         onClick = {
-                                            MessageStore.clearSendError()
-                                            MessageStore.sendText(btn.text)
+                                            if (btn.isWebApp) {
+                                                // Web App keyboard
+                                                // button (v0.9.36,
+                                                // C1): the bot is
+                                                // the private chat's
+                                                // peer, or the
+                                                // sender of the
+                                                // message that
+                                                // carried the
+                                                // keyboard.
+                                                val botId =
+                                                    ChatStore
+                                                        .userIdOfChat(
+                                                            chatId
+                                                        )
+                                                        .takeIf {
+                                                            it != 0L
+                                                        }
+                                                        ?: MessageStore
+                                                            .senderOfMessage(
+                                                                kb
+                                                                    .sourceMessageId
+                                                            )
+                                                val botName =
+                                                    ChatStore.titleOf(
+                                                        ChatStore
+                                                            .chatIdOfUser(
+                                                                botId
+                                                            )
+                                                    ).ifEmpty {
+                                                        chat?.title
+                                                            ?: ""
+                                                    }
+                                                WebAppStore
+                                                    .openFromKeyboardButton(
+                                                        botUserId = botId,
+                                                        botName = botName,
+                                                        url = btn.url,
+                                                        buttonText =
+                                                            btn.text,
+                                                        palette =
+                                                            OfficialTheme
+                                                                .current(),
+                                                        onError = {
+                                                            Toast.makeText(
+                                                                context,
+                                                                it,
+                                                                Toast
+                                                                    .LENGTH_SHORT
+                                                            ).show()
+                                                        }
+                                                    )
+                                            } else {
+                                                MessageStore
+                                                    .clearSendError()
+                                                MessageStore
+                                                    .sendText(btn.text)
+                                            }
                                             if (kb.oneTime) {
                                                 kbDismissedSource =
                                                     kb.sourceMessageId
@@ -4411,6 +4471,17 @@ fun InlineButtonGrid(msg: MsgItem, chatId: Long) {
     fun press(btn: InlineBtn) {
         when (btn.kind) {
             "url" -> if (btn.url.isNotEmpty()) openUrl(btn.url)
+            // Web App button (v0.9.36, C1): openWebApp with
+            // the message sender as the bot; the URL TDLib
+            // returns is what the WebView carries.
+            "webapp" -> WebAppStore.openFromInlineButton(
+                chatId = chatId,
+                botUserId = msg.senderUserId,
+                botName = msg.senderName,
+                url = btn.url,
+                palette = OfficialTheme.current(),
+                onError = { toast(it) }
+            )
             "copy" -> {
                 clipboard.setText(AnnotatedString(btn.copyText))
                 toast("已复制")

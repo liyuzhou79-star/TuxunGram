@@ -153,13 +153,24 @@ data class ReactionChip(
  *  (verified in td_api.tl). [kind] is one of: url, callback,
  *  callbackPw (callback that needs the 2FA password), switch
  *  (switch-inline query), copy (copy-text), user, game, buy,
+ *  webapp (inlineKeyboardButtonTypeWebApp, v0.9.36),
  *  disabled. [data] is the callback payload, base64 as TDLib's
  *  JSON interface ships bytes. */
-/** One button of a bot reply keyboard (v0.9.9, W2). Only
+/** One button of a bot reply keyboard (v0.9.9, W2).
  *  keyboardButtonTypeText buttons send their text when
- *  tapped; the other types (request contact / location /
- *  poll ...) render greyed and do nothing yet. */
-data class KbButton(val text: String, val isText: Boolean)
+ *  tapped; keyboardButtonTypeWebApp buttons (v0.9.36, C1)
+ *  open a Web App through getWebAppUrl; the other types
+ *  (request contact / location / poll ...) render greyed
+ *  and do nothing yet. [kind] is "text", "webapp" or
+ *  "other"; [url] is the Web App button's URL. */
+data class KbButton(
+    val text: String,
+    val kind: String,
+    val url: String = ""
+) {
+    val isText: Boolean get() = kind == "text"
+    val isWebApp: Boolean get() = kind == "webapp"
+}
 
 /** Reply-keyboard state of the open chat (v0.9.9, W2),
  *  driven by chat.reply_markup_message_id at open time and
@@ -2389,6 +2400,13 @@ object MessageStore {
         })
     }
 
+    /** Sender user id of a message in the open chat's
+     *  window (0 when unknown): how a reply keyboard finds
+     *  the bot that sent it, for Web App keyboard buttons
+     *  in group chats (v0.9.36, C1). */
+    fun senderOfMessage(messageId: Long): Long =
+        byId[messageId]?.senderUserId ?: 0L
+
     fun clearSendError() {
         _sendError.value = null
     }
@@ -3992,8 +4010,18 @@ object MessageStore {
                         val text = btn.optString("text")
                         if (text.isEmpty()) continue
                         val type = btn.optJSONObject("type")
-                            ?.optString("@type") ?: ""
-                        row.add(KbButton(text, type == "keyboardButtonTypeText"))
+                        row.add(
+                            when (type?.optString("@type")) {
+                                "keyboardButtonTypeText" ->
+                                    KbButton(text, "text")
+                                "keyboardButtonTypeWebApp" ->
+                                    KbButton(
+                                        text, "webapp",
+                                        url = type.optString("url")
+                                    )
+                                else -> KbButton(text, "other")
+                            }
+                        )
                     }
                     if (row.isNotEmpty()) rows.add(row)
                 }
@@ -4036,9 +4064,14 @@ object MessageStore {
                         "inlineKeyboardButtonTypeUrl" -> InlineBtn(
                             text, "url", url = type.optString("url")
                         )
-                        "inlineKeyboardButtonTypeLoginUrl",
-                        "inlineKeyboardButtonTypeWebApp" -> InlineBtn(
+                        "inlineKeyboardButtonTypeLoginUrl" -> InlineBtn(
                             text, "url", url = type.optString("url")
+                        )
+                        // Web App button (v0.9.36, C1): the
+                        // URL is only the input to openWebApp,
+                        // never opened directly.
+                        "inlineKeyboardButtonTypeWebApp" -> InlineBtn(
+                            text, "webapp", url = type.optString("url")
                         )
                         "inlineKeyboardButtonTypeCallback" -> InlineBtn(
                             text, "callback", data = type.optString("data")

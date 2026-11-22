@@ -358,6 +358,25 @@ object ChatStore {
     fun titleOf(chatId: Long): String =
         cache[chatId]?.optString("title") ?: ""
 
+    /** The other user's id for a private chat (from the
+     *  cached chatTypePrivate), 0 for anything else or when
+     *  the chat is not cached. Web App keyboard buttons in
+     *  a private chat belong to this user (v0.9.36, C1). */
+    fun userIdOfChat(chatId: Long): Long {
+        val type = cache[chatId]?.optJSONObject("type")
+            ?: return 0L
+        return if (type.optString("@type") == "chatTypePrivate") {
+            type.optLong("user_id")
+        } else {
+            0L
+        }
+    }
+
+    /** The private chat id for a user id, 0 when no such
+     *  chat has been seen yet. */
+    fun chatIdOfUser(userId: Long): Long =
+        chatIdByUserId[userId] ?: 0L
+
     /** A flattened item for any cached chat, whatever list it is
      *  on; used when navigating somewhere from a folder/search. */
     fun itemOf(chatId: Long): ChatItem? {

@@ -127,6 +127,7 @@ import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdClient
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
+import com.tuxungram.android.td.WebAppStore
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -146,6 +147,7 @@ import com.tuxungram.android.ui.MyQrScreen
 import com.tuxungram.android.ui.MyStoriesScreen
 import com.tuxungram.android.ui.QrLoginScreen
 import com.tuxungram.android.ui.QrScanScreen
+import com.tuxungram.android.ui.WebAppScreen
 import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.OfficialTheme
 import com.tuxungram.android.ui.GuideScreen
@@ -764,6 +766,19 @@ private fun ReadyHost() {
         StoryViewerScreen(
             chatId = storyChatId!!,
             onBack = { storyChatId = null }
+        )
+        return
+    }
+    // Bot Web App (v0.9.36, C1): a live session covers the
+    // whole host like the story viewer; closing it (the X,
+    // the page's own web_app_close, or TDLib's
+    // updateWebAppMessageSent) clears the store and the
+    // screen underneath returns untouched.
+    val webAppSession by WebAppStore.session.collectAsState()
+    if (webAppSession != null) {
+        WebAppScreen(
+            session = webAppSession!!,
+            onClose = { WebAppStore.close() }
         )
         return
     }
