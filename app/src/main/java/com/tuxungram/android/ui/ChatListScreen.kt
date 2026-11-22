@@ -9,11 +9,20 @@ import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -261,6 +270,10 @@ fun ChatListScreen(
     val folderLoaded by ChatStore.folderLoaded.collectAsState()
     var query by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    // Swipe actions (v0.9.2, L3): the chat id whose row is
+    // currently swiped open, so only one row shows its action
+    // panel at a time.
+    var swipeOpenId by remember { mutableStateOf<Long?>(null) }
 
     val baseList = if (selectedFolder == null) chats else folderChats
     val shown = if (query.isBlank()) baseList else baseList.filter {
@@ -618,7 +631,13 @@ fun ChatListScreen(
                     items = shown,
                     key = { it.id }
                 ) { chat ->
-                    ChatRow(chat, onClick = { onOpenChat(chat.id) })
+                    SwipeableChatRow(
+                        chat = chat,
+                        inArchive = false,
+                        openId = swipeOpenId,
+                        onOpenChange = { swipeOpenId = it },
+                        onClick = { onOpenChat(chat.id) }
+                    )
                 }
                 if (query.isNotBlank() && selectedFolder == null) {
                     val contactHits = ContactsStore.search(query)
@@ -752,6 +771,201 @@ fun SearchHitRow(hit: SearchHit, onClick: () -> Unit) {
             hit.summary,
             color = Color.Gray, fontSize = 14.sp, maxLines = 2
         )
+    }
+}
+
+/** One action cell behind a swiped chat row (v0.9.2, L3). */
+data class SwipeAction(
+    val label: String,
+    val glyph: String,
+    val bg: Color,
+    val run: () -> Unit
+)
+
+/**
+ * A chat row with swipe-revealed actions (v0.9.2, L3), the
+ * Nekogram / Telegram X pattern: swipe right for archive +
+ * read/unread, swipe left for pin + mute — the same actions
+ * the long-press menu offers, so gestures and menu never
+ * disagree. The panel stays open until an action is tapped,
+ * the row itself is tapped, or another row opens. In the
+ * archive list the archive action becomes unarchive and the
+ * pin action is trimmed (pinning is a main-list concept
+ * there), per the context-trimming rule.
+ */
+@Composable
+fun SwipeableChatRow(
+    chat: ChatItem,
+    inArchive: Boolean,
+    openId: Long?,
+    onOpenChange: (Long?) -> Unit,
+    onClick: () -> Unit
+) {
+    val hasUnread = chat.unreadCount > 0 || chat.isMarkedAsUnread
+    val leftActions = listOf(
+        if (inArchive) {
+            SwipeAction("取消归档", "📤", Color(0xFF78909C)) {
+                ChatStore.unarchive(chat)
+            }
+        } else {
+            SwipeAction("归档", "📥", Color(0xFF78909C)) {
+                ChatStore.archive(chat)
+            }
+        },
+        if (hasUnread) {
+            SwipeAction("标已读", "✓", Color(0xFF5B7C99)) {
+                ChatStore.markRead(chat)
+            }
+        } else {
+            SwipeAction("标未读", "●", Color(0xFF5B7C99)) {
+                ChatStore.markUnread(chat)
+            }
+        }
+    )
+    val rightActions = if (inArchive) {
+        listOf(
+            SwipeAction(
+                if (chat.isMuted) "取消静音" else "静音",
+                "🔕", Color(0xFF7E57C2)
+            ) { ChatStore.toggleMute(chat) }
+        )
+    } else {
+        listOf(
+            SwipeAction(
+                if (chat.isPinned) "取消置顶" else "置顶",
+                "📌", Color(0xFF8D6E63)
+            ) { ChatStore.togglePin(chat) },
+            SwipeAction(
+                if (chat.isMuted) "取消静音" else "静音",
+                "🔕", Color(0xFF7E57C2)
+            ) { ChatStore.toggleMute(chat) }
+        )
+    }
+    SwipeActionsContainer(
+        leftActions = leftActions,
+        rightActions = rightActions,
+        openKey = chat.id,
+        openId = openId,
+        onOpenChange = onOpenChange
+    ) {
+        ChatRow(chat, onClick = onClick)
+    }
+}
+
+/** The drag/reveal machinery behind [SwipeableChatRow]:
+ *  action panels sit behind an opaque foreground that follows
+ *  the finger horizontally and springs open past 45% of a
+ *  panel's width, or back shut below it. */
+@Composable
+fun SwipeActionsContainer(
+    leftActions: List<SwipeAction>,
+    rightActions: List<SwipeAction>,
+    openKey: Long,
+    openId: Long?,
+    onOpenChange: (Long?) -> Unit,
+    content: @Composable () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val anim = remember(openKey) { Animatable(0f) }
+    val cellWidth = 76.dp
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val leftPx = with(density) { (cellWidth * leftActions.size).toPx() }
+    val rightPx = with(density) { (cellWidth * rightActions.size).toPx() }
+    val isOpen = openId == openKey
+    LaunchedEffect(openId) {
+        if (!isOpen && anim.value != 0f) {
+            anim.animateTo(0f)
+        }
+    }
+    fun close() {
+        scope.launch { anim.animateTo(0f) }
+        if (isOpen) onOpenChange(null)
+    }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.matchParentSize()) {
+            Row {
+                for (action in leftActions) {
+                    SwipeActionCell(action, cellWidth) { close() }
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            Row {
+                for (action in rightActions) {
+                    SwipeActionCell(action, cellWidth) { close() }
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(anim.value.roundToInt(), 0) }
+                .background(MaterialTheme.colorScheme.surface)
+                .pointerInput(openKey) {
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            if (openId != null && openId != openKey) {
+                                onOpenChange(null)
+                            }
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            val next = (anim.value + dragAmount)
+                                .coerceIn(-rightPx, leftPx)
+                            scope.launch { anim.snapTo(next) }
+                        },
+                        onDragEnd = {
+                            val v = anim.value
+                            when {
+                                v > leftPx * 0.45f -> {
+                                    scope.launch { anim.animateTo(leftPx) }
+                                    onOpenChange(openKey)
+                                }
+                                v < -rightPx * 0.45f -> {
+                                    scope.launch { anim.animateTo(-rightPx) }
+                                    onOpenChange(openKey)
+                                }
+                                else -> close()
+                            }
+                        },
+                        onDragCancel = { close() }
+                    )
+                }
+        ) {
+            content()
+        }
+        // While open, a tap on the row closes the panel
+        // instead of opening the chat.
+        if (isOpen) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .offset { IntOffset(anim.value.roundToInt(), 0) }
+                    .clickable { close() }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SwipeActionCell(
+    action: SwipeAction,
+    width: androidx.compose.ui.unit.Dp,
+    onDone: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .width(width)
+            .fillMaxHeight()
+            .background(action.bg)
+            .clickable {
+                action.run()
+                onDone()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(action.glyph, color = Color.White, fontSize = 19.sp)
+            Text(action.label, color = Color.White, fontSize = 11.sp)
+        }
     }
 }
 
@@ -899,6 +1113,7 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
     BackHandler { onBack() }
     val archived by ChatStore.archivedChats.collectAsState()
     val archiveLoaded by ChatStore.archiveLoaded.collectAsState()
+    var swipeOpenId by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(Unit) { ChatStore.loadArchived() }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -929,6 +1144,33 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                     .lazyListScrollbar(archiveListState)
             ) {
                 items(items = archived, key = { it.id }) { chat ->
+                    SwipeActionsContainer(
+                        leftActions = listOf(
+                            SwipeAction("取消归档", "📤", Color(0xFF78909C)) {
+                                ChatStore.unarchive(chat)
+                            },
+                            if (chat.unreadCount > 0 ||
+                                chat.isMarkedAsUnread
+                            ) {
+                                SwipeAction("标已读", "✓", Color(0xFF5B7C99)) {
+                                    ChatStore.markRead(chat)
+                                }
+                            } else {
+                                SwipeAction("标未读", "●", Color(0xFF5B7C99)) {
+                                    ChatStore.markUnread(chat)
+                                }
+                            }
+                        ),
+                        rightActions = listOf(
+                            SwipeAction(
+                                if (chat.isMuted) "取消静音" else "静音",
+                                "🔕", Color(0xFF7E57C2)
+                            ) { ChatStore.toggleMute(chat) }
+                        ),
+                        openKey = chat.id,
+                        openId = swipeOpenId,
+                        onOpenChange = { swipeOpenId = it }
+                    ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -971,6 +1213,7 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                         TextButton(onClick = { ChatStore.unarchive(chat) }) {
                             Text("取消归档")
                         }
+                    }
                     }
                 }
             }

@@ -730,6 +730,19 @@ object ChatStore {
         TdRepository.sendRaw(query) { reportIfError(it) }
     }
 
+    /** Mark a chat as unread from the list (v0.9.2, L3 swipe
+     *  action): toggleChatIsMarkedAsUnread, verified in
+     *  td_api.tl. The row then shows the dot badge through
+     *  updateChatIsMarkedAsUnread, which ChatStore already
+     *  patches. */
+    fun markUnread(chat: ChatItem) {
+        val query = TdClient.request("toggleChatIsMarkedAsUnread").apply {
+            put("chat_id", chat.id)
+            put("is_marked_as_unread", true)
+        }
+        TdRepository.sendRaw(query) { reportIfError(it) }
+    }
+
     /** Archive: move the chat to the archive list (addChatToList
      *  with chatListArchive). TDLib then drops it from the main
      *  list positions and this store stops showing it. */
