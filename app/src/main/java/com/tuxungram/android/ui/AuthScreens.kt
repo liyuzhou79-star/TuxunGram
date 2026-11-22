@@ -304,7 +304,10 @@ fun ClosedScreen() {
 }
 
 @Composable
-fun PhoneScreen(onSubmit: (String) -> Unit) {
+fun PhoneScreen(
+    onSubmit: (String) -> Unit,
+    onQrLogin: () -> Unit = {}
+) {
     // Official form (v0.9.21, AB1): a country row (flag,
     // name, dial code) over an underline number field.
     // The starting country is inferred from the system
@@ -350,10 +353,22 @@ fun PhoneScreen(onSubmit: (String) -> Unit) {
             }
         },
         footer = {
-            Text(
-                "验证码会发到你其他设备上的 Telegram 里，也可能走短信，以 Telegram 实际发送为准。",
-                color = palette.textSecondary, fontSize = 13.sp
-            )
+            Column {
+                Text(
+                    "验证码会发到你其他设备上的 Telegram 里，也可能走短信，以 Telegram 实际发送为准。",
+                    color = palette.textSecondary, fontSize = 13.sp
+                )
+                // QR-code login (v0.9.24, Q6): this device
+                // shows a code; another device that is already
+                // logged in scans it to confirm. No camera or
+                // decoder is needed in this direction.
+                TextButton(onClick = onQrLogin) {
+                    Text(
+                        "用二维码登录",
+                        color = palette.accentText, fontSize = 14.sp
+                    )
+                }
+            }
         }
     ) {
         Row(
@@ -805,3 +820,69 @@ fun RegistrationScreen() {
     }
 }
 
+
+/**
+ * QR-code login screen (v0.9.24, Q6): shown while TDLib sits
+ * in authorizationStateWaitOtherDeviceConfirmation. This
+ * device displays the code; the user scans it from another
+ * device that is already logged in (Telegram 设置 → 设备 →
+ * 关联桌面设备 / 扫码), which confirms the login here — the
+ * state then moves on by itself. "Back to phone login" goes
+ * through TdRepository.logOut, the only exit TDLib accepts
+ * from this state before authorization (verified against
+ * TDLib's AuthManager). The reverse direction — this app
+ * scanning another device's code — needs a QR decoder,
+ * which the app deliberately does not ship, so it is not
+ * offered anywhere.
+ */
+@Composable
+fun QrLoginScreen(link: String, onBackToPhone: () -> Unit) {
+    BackHandler { onBackToPhone() }
+    val palette = OfficialTheme.current()
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.windowBg)
+            .padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(Modifier.height(48.dp))
+        PlaneBadge(76)
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "二维码登录",
+            fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+            color = palette.textPrimary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "在另一台已经登录的 Telegram 里打开「设置 → 设备」，" +
+                "点「关联桌面设备」或扫一扫，对准下面的二维码。",
+            color = palette.textSecondary, fontSize = 14.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(24.dp))
+        if (link.isNotEmpty()) {
+            QrImage(link, 240)
+        } else {
+            CircularProgressIndicator(color = palette.accent)
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "对方确认后，这台设备会自动登录，不用再输验证码。",
+            color = palette.textSecondary, fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(12.dp))
+        TextButton(onClick = onBackToPhone) {
+            Text(
+                "改用手机号登录",
+                color = palette.accentText, fontSize = 15.sp
+            )
+        }
+    }
+}

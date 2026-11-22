@@ -109,6 +109,7 @@ import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.MeStore
 import com.tuxungram.android.td.PrivacySettingDef
 import com.tuxungram.android.td.PrivacyStore
+import com.tuxungram.android.td.AccountPrefsStore
 import com.tuxungram.android.td.PrivacyTier
 import com.tuxungram.android.td.KeepAliveService
 import com.tuxungram.android.td.CrashLog
@@ -2085,6 +2086,56 @@ fun PrivacySection() {
             )
         }
     }
+    // Account self-destruct period + default auto-delete
+    // (v0.9.24, Q1/Q4): account-level values read back from
+    // the server through AccountPrefsStore; a failed write
+    // lands in the same notice line as the rules above.
+    val ttlDays by AccountPrefsStore.ttlDays.collectAsState()
+    val autoDeleteSec by
+        AccountPrefsStore.autoDeleteSec.collectAsState()
+    var ttlOpen by remember { mutableStateOf(false) }
+    var autoDeleteOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { AccountPrefsStore.load() }
+    SettingsDivider()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { ttlOpen = true }
+            .padding(vertical = 9.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("账号自毁期限", fontSize = 15.sp)
+            Text(
+                "超过这个期限不上线，账号和全部数据会被自动删除",
+                color = Color.Gray, fontSize = 12.sp
+            )
+        }
+        Text(
+            AccountPrefsStore.ttlLabel(ttlDays),
+            color = Color.Gray, fontSize = 13.sp
+        )
+    }
+    SettingsDivider()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { autoDeleteOpen = true }
+            .padding(vertical = 9.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("新对话默认自动删除", fontSize = 15.sp)
+            Text(
+                "之后新建的对话会带上这个自动删除计时，老对话不受影响",
+                color = Color.Gray, fontSize = 12.sp
+            )
+        }
+        Text(
+            AccountPrefsStore.autoDeleteLabel(autoDeleteSec),
+            color = Color.Gray, fontSize = 13.sp
+        )
+    }
     if (notice != null) {
         Text(
             notice!!, color = Color.Gray, fontSize = 13.sp,
@@ -2136,6 +2187,79 @@ fun PrivacySection() {
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { editing = null }) { Text("取消") }
+            }
+        )
+    }
+    if (ttlOpen) {
+        AlertDialog(
+            onDismissRequest = { ttlOpen = false },
+            title = { Text("账号自毁期限") },
+            text = {
+                Column {
+                    Text(
+                        "从最后一次上线算起，超过这个期限账号会被服务器自动删除，数据找不回来。",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                    for ((days, label) in AccountPrefsStore.TTL_OPTIONS) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    ttlOpen = false
+                                    AccountPrefsStore.setTtl(days) { error ->
+                                        notice = error
+                                            ?: "账号自毁期限已设为$label。"
+                                    }
+                                }
+                                .padding(vertical = 10.dp)
+                        ) {
+                            RadioText(ttlDays == days, label)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { ttlOpen = false }) { Text("取消") }
+            }
+        )
+    }
+    if (autoDeleteOpen) {
+        AlertDialog(
+            onDismissRequest = { autoDeleteOpen = false },
+            title = { Text("新对话默认自动删除") },
+            text = {
+                Column {
+                    Text(
+                        "只影响之后新建的对话；已经在聊的对话要单独在对话里设置。",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                    for ((seconds, label) in
+                        AccountPrefsStore.AUTO_DELETE_OPTIONS) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    autoDeleteOpen = false
+                                    AccountPrefsStore.setAutoDelete(seconds) { error ->
+                                        notice = error
+                                            ?: "新对话默认自动删除已设为$label。"
+                                    }
+                                }
+                                .padding(vertical = 10.dp)
+                        ) {
+                            RadioText(autoDeleteSec == seconds, label)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { autoDeleteOpen = false }) {
+                    Text("取消")
+                }
             }
         )
     }

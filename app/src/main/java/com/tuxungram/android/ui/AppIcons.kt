@@ -735,3 +735,26 @@ val AtIcon: ImageVector = icon("At", evenOdd = true) {
     horizontalLineTo(13.2f)
     close()
 }
+
+/** QR code (my-code page, v0.9.24 Q2): three finder squares
+ *  drawn as nested rects under even-odd fill (ring + solid
+ *  core), plus a few data squares in the empty corner. */
+val QrIcon: ImageVector = icon("Qr", evenOdd = true) {
+    // top-left finder
+    moveTo(3f, 3f); horizontalLineTo(10f); verticalLineTo(10f); horizontalLineTo(3f); close()
+    moveTo(4.6f, 4.6f); horizontalLineTo(8.4f); verticalLineTo(8.4f); horizontalLineTo(4.6f); close()
+    moveTo(5.6f, 5.6f); horizontalLineTo(7.4f); verticalLineTo(7.4f); horizontalLineTo(5.6f); close()
+    // top-right finder
+    moveTo(14f, 3f); horizontalLineTo(21f); verticalLineTo(10f); horizontalLineTo(14f); close()
+    moveTo(15.6f, 4.6f); horizontalLineTo(19.4f); verticalLineTo(8.4f); horizontalLineTo(15.6f); close()
+    moveTo(16.6f, 5.6f); horizontalLineTo(18.4f); verticalLineTo(7.4f); horizontalLineTo(16.6f); close()
+    // bottom-left finder
+    moveTo(3f, 14f); horizontalLineTo(10f); verticalLineTo(21f); horizontalLineTo(3f); close()
+    moveTo(4.6f, 15.6f); horizontalLineTo(8.4f); verticalLineTo(19.4f); horizontalLineTo(4.6f); close()
+    moveTo(5.6f, 16.6f); horizontalLineTo(7.4f); verticalLineTo(18.4f); horizontalLineTo(5.6f); close()
+    // data squares
+    moveTo(14f, 14f); horizontalLineTo(17f); verticalLineTo(17f); horizontalLineTo(14f); close()
+    moveTo(19f, 14f); horizontalLineTo(21f); verticalLineTo(16f); horizontalLineTo(19f); close()
+    moveTo(14f, 19f); horizontalLineTo(16f); verticalLineTo(21f); horizontalLineTo(14f); close()
+    moveTo(18.5f, 18.5f); horizontalLineTo(21f); verticalLineTo(21f); horizontalLineTo(18.5f); close()
+}

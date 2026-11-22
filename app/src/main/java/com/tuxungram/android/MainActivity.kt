@@ -140,6 +140,8 @@ import com.tuxungram.android.ui.JoinRequestsScreen
 import com.tuxungram.android.ui.NetworkStatsScreen
 import com.tuxungram.android.ui.StatsScreen
 import com.tuxungram.android.ui.AboutScreen
+import com.tuxungram.android.ui.MyQrScreen
+import com.tuxungram.android.ui.QrLoginScreen
 import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.OfficialTheme
 import com.tuxungram.android.ui.GuideScreen
@@ -421,11 +423,18 @@ private fun AuthHost() {
         ) { state ->
             when (state) {
                 is AuthState.WaitTdlibParameters -> SplashScreen()
-                is AuthState.WaitPhone -> PhoneScreen { fullNumber ->
-                    enteredPhone = fullNumber
-                    forcePhone = false
-                    TdRepository.setPhone(fullNumber)
-                }
+                is AuthState.WaitPhone -> PhoneScreen(
+                    onSubmit = { fullNumber ->
+                        enteredPhone = fullNumber
+                        forcePhone = false
+                        TdRepository.setPhone(fullNumber)
+                    },
+                    onQrLogin = { TdRepository.requestQrCodeLogin() }
+                )
+                is AuthState.WaitOtherDevice -> QrLoginScreen(
+                    link = state.link,
+                    onBackToPhone = { TdRepository.logOut() }
+                )
                 is AuthState.WaitCode -> {
                     if (forcePhone) {
                         PhoneScreen { fullNumber ->
@@ -472,6 +481,10 @@ private sealed interface Route {
     }
 
     data object About : Route {
+        override val depth = 1
+    }
+
+    data object MyQr : Route {
         override val depth = 1
     }
 
@@ -601,6 +614,7 @@ private fun ReadyHost() {
     }
     var showChangelog by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var showMyQr by remember { mutableStateOf(false) }
     var showGuideReplay by remember { mutableStateOf(false) }
     var showEditProfile by remember { mutableStateOf(false) }
     var showBlocked by remember { mutableStateOf(false) }
@@ -727,6 +741,7 @@ private fun ReadyHost() {
     val route: Route = when {
         showChangelog -> Route.Changelog
         showAbout -> Route.About
+        showMyQr -> Route.MyQr
         showGuideReplay -> Route.GuideReplay
         thread != null -> Route.Thread(thread.first, thread.second)
         showEditProfile -> Route.EditProfile
@@ -791,6 +806,13 @@ private fun ReadyHost() {
                 )
                 is Route.About -> AboutScreen(
                     onBack = { showAbout = false }
+                )
+                is Route.MyQr -> MyQrScreen(
+                    onBack = { showMyQr = false },
+                    onEditProfile = {
+                        showMyQr = false
+                        showEditProfile = true
+                    }
                 )
                 is Route.GuideReplay -> GuideScreen(
                     onDone = { showGuideReplay = false }
@@ -985,7 +1007,8 @@ private fun ReadyHost() {
                             onOpenSavedChat = { openChatId = it },
                             onOpenSettingsTab = { homeTab = 2 },
                             onOpenChangelog = { showChangelog = true },
-                            onOpenAbout = { showAbout = true }
+                            onOpenAbout = { showAbout = true },
+                            onOpenMyQr = { showMyQr = true }
                         )
                         else -> ChatListScreen(
                             onOpenChat = { openChatId = it },

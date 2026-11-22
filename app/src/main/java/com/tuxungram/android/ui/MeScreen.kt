@@ -57,6 +57,9 @@ fun MeScreen(
     onOpenSettingsTab: () -> Unit,
     onOpenChangelog: () -> Unit,
     onOpenAbout: () -> Unit,
+    // My QR code page (v0.9.24, Q2): the code encodes the
+    // account's own t.me link, generated on-device.
+    onOpenMyQr: () -> Unit,
     // Back target (v0.9.19, Z5): the host always passes
     // the chats tab, so the system Back key behaves here
     // exactly like on the contacts and settings tabs
@@ -202,6 +205,12 @@ fun MeScreen(
                 Icons.Filled.Edit, "编辑资料",
                 "名字、简介、头像、用户名",
                 onClick = onEditProfile
+            )
+            SettingsDivider()
+            IconRow(
+                QrIcon, "我的二维码",
+                "扫码打开我的主页",
+                onClick = onOpenMyQr
             )
             SettingsDivider()
             IconRow(

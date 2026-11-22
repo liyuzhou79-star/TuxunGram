@@ -22,6 +22,10 @@ sealed interface AuthState {
     data object WaitCode : AuthState
     data class WaitPassword(val hint: String) : AuthState
     data object WaitRegistration : AuthState
+    /** QR-code login (v0.9.24, Q6): this device shows [link]
+     *  as a QR code and waits for another logged-in device to
+     *  confirm it (authorizationStateWaitOtherDeviceConfirmation). */
+    data class WaitOtherDevice(val link: String) : AuthState
     data object Ready : AuthState
     data object LoggingOut : AuthState
     data object Closed : AuthState
@@ -175,6 +179,9 @@ object TdRepository {
             "authorizationStateWaitPassword" -> _authState.value =
                 AuthState.WaitPassword(state.optString("password_hint"))
             "authorizationStateWaitRegistration" -> _authState.value = AuthState.WaitRegistration
+            "authorizationStateWaitOtherDeviceConfirmation" ->
+                _authState.value =
+                    AuthState.WaitOtherDevice(state.optString("link"))
             "authorizationStateReady" -> {
                 _authState.value = AuthState.Ready
                 // The saved proxy must be (re-)applied before chats
@@ -203,6 +210,10 @@ object TdRepository {
                 ChatStore.onReady()
                 ContactsStore.loadContacts()
                 StoryStore.onReady()
+                // Message-effect catalog (v0.9.24, Q8): the
+                // listener only needs registering once; the
+                // available-effect ids arrive as an update.
+                EffectsStore.attach()
                 // My own profile for the settings card / edit
                 // page / blocked-list self check (v0.9.3, M1).
                 MeStore.refresh()
@@ -285,6 +296,21 @@ object TdRepository {
     fun setPhone(phoneNumber: String) {
         send(TdClient.request("setAuthenticationPhoneNumber").apply {
             put("phone_number", phoneNumber)
+        })
+    }
+
+    /** Ask TDLib for QR-code authentication (v0.9.24, Q6):
+     *  requestQrCodeAuthentication moves the state machine to
+     *  authorizationStateWaitOtherDeviceConfirmation, whose
+     *  link the login screen renders as a QR code for another
+     *  logged-in device to scan. Leaving that state back to
+     *  phone login goes through [logOut] — before authorization
+     *  it simply resets the flow (verified in TDLib's
+     *  AuthManager: setAuthenticationPhoneNumber is rejected
+     *  in the QR state, logOut is not). */
+    fun requestQrCodeLogin() {
+        send(TdClient.request("requestQrCodeAuthentication").apply {
+            put("other_user_ids", org.json.JSONArray())
         })
     }
 
