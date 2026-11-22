@@ -2813,13 +2813,10 @@ object MessageStore {
      *  progress and completion arrive through updateFile. */
     fun downloadFileFor(item: MsgItem) {
         if (item.fileId == 0 || item.filePath != null) return
-        TdRepository.sendRaw(TdClient.request("downloadFile").apply {
-            put("file_id", item.fileId)
-            put("priority", 16)
-            put("offset", 0L)
-            put("limit", 0L)
-            put("synchronous", false)
-        }) {}
+        // User-started file downloads go through the download
+        // center's queue (v0.9.23, P2): the tap counts as a
+        // boost — this file jumps the queue.
+        DownloadStore.enqueue(item.fileId, boost = true)
         val existing = byId[item.id] ?: return
         byId[item.id] = existing.copy(fileDownloading = true)
         publish()

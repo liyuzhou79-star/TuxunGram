@@ -813,7 +813,15 @@ private fun ReadyHost() {
                     onBack = { showStickerSets = false }
                 )
                 is Route.Downloads -> DownloadsScreen(
-                    onBack = { showDownloads = false }
+                    onBack = { showDownloads = false },
+                    // Auto-download settings live on the
+                    // settings tab (存储空间 section); jump
+                    // there instead of duplicating them here
+                    // (v0.9.23, P2).
+                    onOpenAutoDownloadSettings = {
+                        showDownloads = false
+                        homeTab = 2
+                    }
                 )
                 is Route.NetworkStats -> NetworkStatsScreen(
                     onBack = { showNetworkStats = false }

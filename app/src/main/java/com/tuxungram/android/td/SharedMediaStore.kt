@@ -153,17 +153,24 @@ object SharedMediaStore {
     }
 
     /** Start (or resume) downloading one item's file; the
-     *  updateFile listener patches the path in when it lands. */
+     *  updateFile listener patches the path in when it lands.
+     *  Non-photo files are user downloads and go through the
+     *  download center's queue, boosted (v0.9.23, P2); photos
+     *  are media cache and keep the direct low-priority call. */
     fun download(item: MsgItem) {
         val fileId = if (item.kind == MsgKind.PHOTO) item.photoFileId else item.fileId
         if (fileId == 0) return
-        TdRepository.sendRaw(TdClient.request("downloadFile").apply {
-            put("file_id", fileId)
-            put("priority", 1)
-            put("offset", 0L)
-            put("limit", 0L)
-            put("synchronous", false)
-        }) {}
+        if (item.kind == MsgKind.PHOTO) {
+            TdRepository.sendRaw(TdClient.request("downloadFile").apply {
+                put("file_id", fileId)
+                put("priority", 1)
+                put("offset", 0L)
+                put("limit", 0L)
+                put("synchronous", false)
+            }) {}
+        } else {
+            DownloadStore.enqueue(fileId, boost = true)
+        }
         for ((_, list) in lists) {
             for (i in list.indices) {
                 if (list[i].id == item.id) {

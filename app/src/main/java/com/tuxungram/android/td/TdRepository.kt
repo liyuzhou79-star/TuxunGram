@@ -97,6 +97,7 @@ object TdRepository {
         ProxyStore.init(context)
         UiSettings.init(context)
         LocalPins.init(context)
+        DownloadStore.init(context)
         AutoDownloadStore.init(context)
         val gen = clientGeneration.get()
         // H2-1 (performance): constructing the client loads the

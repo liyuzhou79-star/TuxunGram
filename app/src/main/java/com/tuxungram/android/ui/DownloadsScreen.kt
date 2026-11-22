@@ -1,7 +1,10 @@
 package com.tuxungram.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,9 +16,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -26,6 +33,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,18 +46,28 @@ import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.DownloadEntryUi
 import com.tuxungram.android.td.DownloadStore
 
-/** Download manager (v0.9.12, S5): the files this app knows
- *  about — documents / videos / voice notes / GIFs from chats
- *  you have opened, with live progress for the ones still
- *  downloading and a cancel action; completed files open
- *  with the same viewer path as the storage page. The list
- *  is an aggregation (TDLib has no global download list), so
- *  the empty state says plainly where entries come from. */
+/** Download center (v0.9.12, S5; queue upgrade v0.9.23, P2):
+ *  the files this app knows about — documents / videos /
+ *  voice notes / GIFs from chats you have opened, with live
+ *  progress and speed, a concurrency queue the user controls
+ *  (how many files TDLib is asked to fetch at once), a
+ *  boost action per file, and automatic retries for downloads
+ *  that die on their own. The list is an aggregation (TDLib
+ *  has no global download list), so the intro says plainly
+ *  where entries come from and what the queue does not cover
+ *  (media TDLib fetches by itself — those follow the
+ *  auto-download settings, one tap away at the top). */
 @Composable
-fun DownloadsScreen(onBack: () -> Unit) {
+fun DownloadsScreen(
+    onBack: () -> Unit,
+    onOpenAutoDownloadSettings: () -> Unit = {}
+) {
     BackHandler { onBack() }
     val context = LocalContext.current
     val entries by DownloadStore.entries.collectAsState()
+    val maxConcurrent by DownloadStore.maxConcurrent.collectAsState()
+    val retryLimit by DownloadStore.retryLimit.collectAsState()
+    val totalSpeed by DownloadStore.totalSpeedBps.collectAsState()
     LaunchedEffect(Unit) { DownloadStore.refresh(context) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -82,7 +102,81 @@ fun DownloadsScreen(onBack: () -> Unit) {
             color = Color.Gray, fontSize = 13.sp,
             modifier = Modifier.padding(horizontal = 20.dp)
         )
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(12.dp))
+        // Queue controls (v0.9.23, P2): how many of the files
+        // you start are fetched at the same time, and whether
+        // a download that dies on its own is retried. Both are
+        // enforced by this page's own queue — see the note
+        // under the controls.
+        Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "同时下载", fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.width(92.dp)
+                )
+                for (n in DownloadStore.MAX_CONCURRENT_CHOICES) {
+                    ChoiceChip(
+                        label = "$n 个",
+                        selected = maxConcurrent == n,
+                        onClick = { DownloadStore.setMaxConcurrent(n) }
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "失败重试", fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.width(92.dp)
+                )
+                for (n in DownloadStore.RETRY_CHOICES) {
+                    ChoiceChip(
+                        label = if (n == 0) "关" else "$n 次",
+                        selected = retryLimit == n,
+                        onClick = { DownloadStore.setRetryLimit(n) }
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+            }
+            if (totalSpeed > 0) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "总速度 ${formatBytes(totalSpeed)}/s",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "排队只管你亲手点下的文件下载；图片、头像这类自动加载的走下面的自动下载设置。",
+                color = Color.Gray, fontSize = 12.5.sp
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenAutoDownloadSettings() }
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("自动下载设置", fontSize = 14.5.sp)
+                Text(
+                    "什么网络下、多大的图片视频文件自动下载（在设置里调）",
+                    color = Color.Gray, fontSize = 12.5.sp
+                )
+            }
+            Icon(
+                Icons.Filled.KeyboardArrowRight,
+                contentDescription = null, tint = Color.Gray,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(Modifier.height(6.dp))
         if (entries.isEmpty()) {
             EmptyState(
                 icon = DownloadIcon,
@@ -100,73 +194,186 @@ fun DownloadsScreen(onBack: () -> Unit) {
 }
 
 @Composable
+private fun ChoiceChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                RoundedCornerShape(50)
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label, fontSize = 13.sp,
+            color = if (selected) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            fontWeight = if (selected) {
+                FontWeight.SemiBold
+            } else {
+                FontWeight.Normal
+            }
+        )
+    }
+}
+
+@OptIn(
+    androidx.compose.foundation.ExperimentalFoundationApi::class
+)
+@Composable
 private fun DownloadRow(entry: DownloadEntryUi) {
     val context = LocalContext.current
     val path = entry.path
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (entry.completed && path != null) {
-                    Modifier.clickable {
-                        openDownloadedFile(context, path)
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = {
+                        if (entry.completed && path != null) {
+                            openDownloadedFile(context, path)
+                        }
+                    },
+                    onLongClick = {
+                        if (entry.fileId != 0) menuOpen = true
                     }
-                } else {
-                    Modifier
+                )
+                .padding(horizontal = 20.dp, vertical = 10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    DownloadIcon, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(21.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        entry.name,
+                        fontSize = 14.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                    Text(
+                        downloadStatusText(entry),
+                        fontSize = 12.5.sp, color = Color.Gray
+                    )
                 }
-            )
-            .padding(horizontal = 20.dp, vertical = 10.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                DownloadIcon, contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(21.dp)
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    entry.name,
-                    fontSize = 14.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
-                )
-                Text(
-                    downloadStatusText(entry),
-                    fontSize = 12.5.sp, color = Color.Gray
-                )
+                if (entry.failed) {
+                    TextButton(onClick = {
+                        DownloadStore.retry(entry.fileId)
+                    }) {
+                        Text("重试")
+                    }
+                } else if (entry.active || entry.queued) {
+                    TextButton(onClick = {
+                        DownloadStore.cancel(entry.fileId)
+                    }) {
+                        Text("取消")
+                    }
+                }
             }
-            if (entry.active) {
-                TextButton(onClick = {
-                    DownloadStore.cancel(entry.fileId)
-                }) {
-                    Text("取消")
-                }
+            if (!entry.completed && entry.totalSize > 0) {
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = {
+                        (entry.downloadedSize.toFloat() /
+                            entry.totalSize.toFloat())
+                            .coerceIn(0f, 1f)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
-        if (!entry.completed && entry.totalSize > 0) {
-            Spacer(Modifier.height(6.dp))
-            LinearProgressIndicator(
-                progress = {
-                    (entry.downloadedSize.toFloat() /
-                        entry.totalSize.toFloat())
-                        .coerceIn(0f, 1f)
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
+        // Long-press actions (v0.9.23, P2): boost this file to
+        // the front of the queue, start it if it never began,
+        // retry it if it failed, or cancel it.
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false }
+        ) {
+            if (!entry.completed && !entry.failed) {
+                DropdownMenuItem(
+                    text = { Text("优先下载") },
+                    onClick = {
+                        menuOpen = false
+                        DownloadStore.enqueue(
+                            entry.fileId, boost = true
+                        )
+                    }
+                )
+            }
+            if (entry.failed) {
+                DropdownMenuItem(
+                    text = { Text("重新下载") },
+                    onClick = {
+                        menuOpen = false
+                        DownloadStore.retry(entry.fileId)
+                    }
+                )
+            }
+            if (entry.active || entry.queued) {
+                DropdownMenuItem(
+                    text = { Text("取消下载") },
+                    onClick = {
+                        menuOpen = false
+                        DownloadStore.cancel(entry.fileId)
+                    }
+                )
+            }
         }
     }
 }
 
 private fun downloadStatusText(entry: DownloadEntryUi): String =
     when {
+        entry.failed ->
+            "下载失败" +
+                if (entry.downloadedSize > 0) {
+                    " · 已下 ${formatBytes(entry.downloadedSize)}" +
+                        if (entry.totalSize > 0) {
+                            " / ${formatBytes(entry.totalSize)}"
+                        } else {
+                            ""
+                        }
+                } else {
+                    ""
+                }
         entry.active && entry.totalSize > 0 -> {
             val pct = (entry.downloadedSize * 100 /
                 entry.totalSize).toInt()
-            "下载中 $pct% · ${formatBytes(entry.downloadedSize)} / " +
+            "下载中 $pct%" +
+                if (entry.speedBps > 0) {
+                    " · ${formatBytes(entry.speedBps)}/s"
+                } else {
+                    ""
+                } +
+                " · ${formatBytes(entry.downloadedSize)} / " +
                 formatBytes(entry.totalSize)
         }
-        entry.active -> "下载中 · 已下 ${formatBytes(entry.downloadedSize)}"
+        entry.active -> {
+            "下载中" +
+                if (entry.speedBps > 0) {
+                    " · ${formatBytes(entry.speedBps)}/s"
+                } else {
+                    ""
+                } +
+                " · 已下 ${formatBytes(entry.downloadedSize)}"
+        }
+        entry.queued -> "排队中，轮到它会自动开始"
         entry.completed ->
             "已完成 · ${formatBytes(entry.totalSize)}，点开打开"
         entry.downloadedSize > 0 ->
@@ -177,6 +384,6 @@ private fun downloadStatusText(entry: DownloadEntryUi): String =
                     ""
                 }
         entry.totalSize > 0 ->
-            "未开始 · ${formatBytes(entry.totalSize)}"
-        else -> "未开始"
+            "未开始 · ${formatBytes(entry.totalSize)}（长按可开始下载）"
+        else -> "未开始（长按可开始下载）"
     }

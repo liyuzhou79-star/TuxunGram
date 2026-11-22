@@ -632,13 +632,8 @@ object ForumStore {
 
     fun downloadFileFor(item: MsgItem) {
         if (item.fileId == 0 || item.filePath != null) return
-        TdRepository.sendRaw(TdClient.request("downloadFile").apply {
-            put("file_id", item.fileId)
-            put("priority", 16)
-            put("offset", 0L)
-            put("limit", 0L)
-            put("synchronous", false)
-        }) {}
+        // Via the download center's queue, boosted (v0.9.23, P2).
+        DownloadStore.enqueue(item.fileId, boost = true)
         val existing = byId[item.id] ?: return
         byId[item.id] = existing.copy(fileDownloading = true)
         publish()
