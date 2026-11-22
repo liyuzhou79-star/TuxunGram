@@ -56,7 +56,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocationOn
@@ -4731,7 +4730,7 @@ fun MessageBubble(
                         // only when TDLib says the page has
                         // one.
                         add(MessageMenuEntry(
-                            Icons.Filled.FlashOn, "即时预览"
+                            BoltIcon, "即时预览"
                         ) {
                             menuOpen = false
                             DeepLink.pendingInstantView.value =
@@ -6894,7 +6893,7 @@ fun LinkPreviewCard(msg: MsgItem) {
                     .padding(vertical = 6.dp)
             ) {
                 Icon(
-                    Icons.Filled.FlashOn,
+                    BoltIcon,
                     contentDescription = null,
                     tint = if (outgoing) {
                         palette.outText

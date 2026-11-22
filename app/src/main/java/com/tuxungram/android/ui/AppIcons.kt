@@ -61,6 +61,17 @@ val PinIcon: ImageVector = icon("Pin") {
     close()
 }
 
+/** Lightning bolt (Instant View entry, v0.9.26 S1). */
+val BoltIcon: ImageVector = icon("Bolt") {
+    moveTo(13.2f, 2f)
+    lineTo(4.5f, 13.5f)
+    lineTo(10.5f, 13.5f)
+    lineTo(9.8f, 22f)
+    lineTo(19.5f, 9.5f)
+    lineTo(13.5f, 9.5f)
+    close()
+}
+
 /** Quotation marks (quote reply, v0.9.15 V2). */
 val QuoteIcon: ImageVector = icon("Quote") {
     moveTo(6f, 17f)

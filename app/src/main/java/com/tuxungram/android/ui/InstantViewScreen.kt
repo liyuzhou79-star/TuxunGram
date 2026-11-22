@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -99,7 +98,7 @@ fun InstantViewScreen(url: String, onClose: () -> Unit) {
             )
             IconButton(onClick = { LinkRouter.open(context, url) }) {
                 Icon(
-                    Icons.Filled.OpenInBrowser,
+                    GlobeIcon,
                     contentDescription = "用浏览器打开"
                 )
             }
