@@ -23,6 +23,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.tuxungram.android.td.UiSettings
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -149,21 +152,47 @@ fun SectionTitle(
             )
         }
         Spacer(Modifier.width(10.dp))
-        Text(text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        // Section label (v0.9.17, X7): under the official
+        // preset it takes the official blue-header color
+        // (windowBackgroundWhiteBlueText family) at the
+        // official section size.
+        val accentMode by UiSettings.accentMode.collectAsState()
+        Text(
+            text,
+            fontSize = if (accentMode == UiSettings.ACCENT_OFFICIAL) {
+                15.sp
+            } else {
+                17.sp
+            },
+            fontWeight = FontWeight.SemiBold,
+            color = if (accentMode == UiSettings.ACCENT_OFFICIAL) {
+                OfficialTheme.current().accentText
+            } else {
+                Color.Unspecified
+            }
+        )
     }
 }
 
 /** A grouped card: one settings/profile section lives on a
- *  rounded surface instead of floating on the background. */
+ *  rounded surface instead of floating on the background.
+ *  Under the official preset (v0.9.17, X7) the card takes
+ *  the official window background so sections read as the
+ *  official white blocks on the graySection page band. */
 @Composable
 fun GroupCard(content: @Composable () -> Unit) {
+    val accentMode by UiSettings.accentMode.collectAsState()
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = if (accentMode == UiSettings.ACCENT_OFFICIAL) {
+            OfficialTheme.current().windowBg
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
             content()
         }
@@ -200,7 +229,7 @@ fun IconRow(
                     Modifier
                 }
             )
-            .padding(vertical = 9.dp)
+            .padding(vertical = 10.dp)
     ) {
         Box(
             modifier = Modifier
@@ -380,7 +409,9 @@ fun PlaneBadge(sizeDp: Int = 76) {
 @Composable
 fun TicksIcon(read: Boolean, color: Color, sizeDp: Int = 16) {
     Canvas(modifier = Modifier.size(sizeDp.dp)) {
-        val stroke = size.minDimension * 0.11f
+        // Thinner stroke since v0.9.17 (X6): the official
+        // ticks are light line checks, not bold marks.
+        val stroke = size.minDimension * 0.09f
         val h = size.height
         val w = size.width
         fun check(xOff: Float) {

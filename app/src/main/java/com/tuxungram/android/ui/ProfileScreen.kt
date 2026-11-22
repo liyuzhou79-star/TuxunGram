@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -308,13 +309,25 @@ fun ProfileScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         if (chatItem?.photoPath != null) {
-                            AvatarImage(path = chatItem.photoPath, sizeDp = 84)
+                            // Official profile density
+                            // (v0.9.17, X7): 92 dp avatar,
+                            // 20 sp name.
+                            AvatarImage(path = chatItem.photoPath, sizeDp = 92)
                         } else {
+                            val pair = if (chatItem != null) {
+                                OfficialTheme.avatarColors(
+                                    chatItem.id, OfficialTheme.dark
+                                )
+                            } else {
+                                OfficialTheme.current().savedColors
+                            }
                             Box(
                                 modifier = Modifier
-                                    .size(84.dp)
+                                    .size(92.dp)
                                     .background(
-                                        Color.White.copy(alpha = 0.25f),
+                                        Brush.verticalGradient(
+                                            listOf(pair.first, pair.second)
+                                        ),
                                         CircleShape
                                     ),
                                 contentAlignment = Alignment.Center
@@ -323,7 +336,7 @@ fun ProfileScreen(
                                     p.title.trim().firstOrNull()?.toString() ?: "?",
                                     color = Color.White,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 30.sp
+                                    fontSize = 32.sp
                                 )
                             }
                         }
@@ -331,7 +344,7 @@ fun ProfileScreen(
                         Text(
                             p.title,
                             color = Color.White,
-                            fontSize = 21.sp,
+                            fontSize = 20.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Text(

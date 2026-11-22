@@ -139,6 +139,8 @@ object OfficialTheme {
                 onPrimaryContainer = Color.White,
                 secondary = Color(0xFF459CE3),
                 onSecondary = Color.White,
+                tertiary = p.outBubbleGradient, // chat_outBubbleGradient (night)
+                onTertiary = Color.White,
                 background = p.windowBg,
                 onBackground = Color.White,
                 surface = Color(0xFF1E1E1E), // dialogBackground (night)
@@ -156,6 +158,8 @@ object OfficialTheme {
                 onPrimaryContainer = p.textPrimary,
                 secondary = p.accent,
                 onSecondary = Color.White,
+                tertiary = p.outBubbleGradient, // chat_outBubbleGradient (day)
+                onTertiary = Color.White,
                 background = p.windowBg,
                 onBackground = p.textPrimary,
                 surface = p.windowBg,

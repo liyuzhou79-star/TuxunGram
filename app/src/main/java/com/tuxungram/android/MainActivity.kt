@@ -63,6 +63,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -939,14 +940,33 @@ private fun ReadyHost() {
                     }
                 }
             }
-            NavigationBar {
+            // Bottom Duck bar (user's own navigation, kept):
+            // restyled in the official language (v0.9.17,
+            // X6) — panel background, accent selected state
+            // with a faint accent pill, secondary unselected,
+            // unread badge in chats_unreadCounter.
+            val navPalette = OfficialTheme.current()
+            val navItemColors = NavigationBarItemDefaults.colors(
+                selectedIconColor = navPalette.accent,
+                selectedTextColor = navPalette.accent,
+                indicatorColor = navPalette.accent.copy(alpha = 0.12f),
+                unselectedIconColor = navPalette.textSecondary,
+                unselectedTextColor = navPalette.textSecondary
+            )
+            NavigationBar(
+                containerColor = navPalette.panelBg,
+                tonalElevation = 0.dp
+            ) {
                 NavigationBarItem(
                     selected = homeTab == 0,
                     onClick = { homeTab = 0 },
+                    colors = navItemColors,
                     icon = {
                         BadgedBox(badge = {
                             if (homeUnread > 0) {
-                                Badge {
+                                Badge(
+                                    containerColor = navPalette.unreadBadge
+                                ) {
                                     Text(
                                         if (homeUnread > unreadCap) {
                                             "$unreadCap+"
@@ -965,12 +985,14 @@ private fun ReadyHost() {
                 NavigationBarItem(
                     selected = homeTab == 1,
                     onClick = { homeTab = 1 },
+                    colors = navItemColors,
                     icon = { Icon(PeopleIcon, contentDescription = "联系人") },
                     label = { Text("联系人") }
                 )
                 NavigationBarItem(
                     selected = homeTab == 2,
                     onClick = { homeTab = 2 },
+                    colors = navItemColors,
                     icon = {
                         Icon(Icons.Filled.Settings, contentDescription = "设置")
                     },
@@ -979,6 +1001,7 @@ private fun ReadyHost() {
                 NavigationBarItem(
                     selected = homeTab == 3,
                     onClick = { homeTab = 3 },
+                    colors = navItemColors,
                     icon = {
                         Icon(
                             Icons.Filled.AccountCircle,

@@ -384,9 +384,22 @@ fun SettingsScreen(
     }
 
     val settingsScroll = rememberScrollState()
+    // Page band (v0.9.17, X7): under the official preset the
+    // settings page sits on the official graySection band
+    // and the GroupCards carry the window background.
+    val settingsAccentMode by UiSettings.accentMode.collectAsState()
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .then(
+                if (settingsAccentMode == UiSettings.ACCENT_OFFICIAL) {
+                    Modifier.background(
+                        OfficialTheme.current().graySection
+                    )
+                } else {
+                    Modifier
+                }
+            )
             .columnScrollbar(settingsScroll)
             .verticalScroll(settingsScroll)
             .padding(16.dp)
