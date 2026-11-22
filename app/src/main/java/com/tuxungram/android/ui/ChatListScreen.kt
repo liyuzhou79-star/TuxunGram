@@ -608,6 +608,13 @@ fun ChatListScreen(
         // come back as one-line notices, shown as toasts.
         val storyContext = LocalContext.current
         var pendingStoryPhoto by remember { mutableStateOf<String?>(null) }
+        // Video stories (v0.9.26, S3): the picked file's path
+        // plus its duration in seconds (inputStoryContentVideo
+        // needs it; read from the file's own metadata).
+        var pendingStoryVideo by remember {
+            mutableStateOf<Pair<String, Double>?>(null)
+        }
+        var storyKindChooser by remember { mutableStateOf(false) }
         val storyPicker = rememberLauncherForActivityResult(
             ActivityResultContracts.GetContent()
         ) { uri ->
@@ -629,6 +636,66 @@ fun ChatListScreen(
                 }
             }
         }
+        val storyVideoPicker = rememberLauncherForActivityResult(
+            ActivityResultContracts.GetContent()
+        ) { uri ->
+            if (uri != null) {
+                try {
+                    val file = File(
+                        storyContext.cacheDir,
+                        "story_${System.currentTimeMillis()}.mp4"
+                    )
+                    storyContext.contentResolver.openInputStream(uri)
+                        ?.use { inputStream ->
+                            file.outputStream().use { output ->
+                                inputStream.copyTo(output)
+                            }
+                        }
+                    val retriever =
+                        android.media.MediaMetadataRetriever()
+                    val durationSec = try {
+                        retriever.setDataSource(file.absolutePath)
+                        (retriever.extractMetadata(
+                            android.media.MediaMetadataRetriever
+                                .METADATA_KEY_DURATION
+                        )?.toLongOrNull() ?: 0L) / 1000.0
+                    } catch (t: Throwable) {
+                        0.0
+                    } finally {
+                        try {
+                            retriever.release()
+                        } catch (t: Throwable) {
+                            // Nothing to release cleanly; the
+                            // duration just stays 0.
+                        }
+                    }
+                    pendingStoryVideo = file.absolutePath to durationSec
+                } catch (t: Throwable) {
+                    // Picker copy failed: stay silent, nothing posted.
+                }
+            }
+        }
+        if (storyKindChooser) {
+            AlertDialog(
+                onDismissRequest = { storyKindChooser = false },
+                title = { Text("发布动态") },
+                text = { Text("选照片还是视频？视频直接从相册选，不做剪辑。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        storyKindChooser = false
+                        AppLock.noteExternalLaunch()
+                        storyPicker.launch("image/*")
+                    }) { Text("照片") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        storyKindChooser = false
+                        AppLock.noteExternalLaunch()
+                        storyVideoPicker.launch("video/*")
+                    }) { Text("视频") }
+                }
+            )
+        }
         val postNotice by StoryStore.postNotice.collectAsState()
         LaunchedEffect(postNotice) {
             val notice = postNotice
@@ -638,11 +705,13 @@ fun ChatListScreen(
                 StoryStore.clearPostNotice()
             }
         }
-        if (pendingStoryPhoto != null) {
+        if (pendingStoryPhoto != null || pendingStoryVideo != null) {
             // Publish privacy (v0.9.25, R3): who can see the
             // story is chosen here and passed to postStory's
             // privacy_settings; the default stays everyone.
-            var storyPrivacy by remember(pendingStoryPhoto) {
+            var storyPrivacy by remember(
+                pendingStoryPhoto, pendingStoryVideo
+            ) {
                 mutableStateOf("everyone")
             }
             val privacyOptions = listOf(
@@ -651,12 +720,19 @@ fun ChatListScreen(
                 "close_friends" to "亲密朋友"
             )
             AlertDialog(
-                onDismissRequest = { pendingStoryPhoto = null },
+                onDismissRequest = {
+                    pendingStoryPhoto = null
+                    pendingStoryVideo = null
+                },
                 title = { Text("发布动态？") },
                 text = {
                     Column {
                         Text(
-                            "这张照片会发到你的动态，" +
+                            (if (pendingStoryVideo != null) {
+                                "这段视频会发到你的动态，"
+                            } else {
+                                "这张照片会发到你的动态，"
+                            }) +
                                 "24 小时后自动归档。谁能看："
                         )
                         Spacer(Modifier.height(6.dp))
@@ -682,17 +758,26 @@ fun ChatListScreen(
                 },
                 confirmButton = {
                     Button(onClick = {
-                        val path = pendingStoryPhoto
+                        val photoPath = pendingStoryPhoto
+                        val video = pendingStoryVideo
                         pendingStoryPhoto = null
-                        if (path != null) {
+                        pendingStoryVideo = null
+                        if (video != null) {
+                            StoryStore.postVideoStory(
+                                video.first, video.second, storyPrivacy
+                            )
+                        } else if (photoPath != null) {
                             StoryStore.postPhotoStory(
-                                path, storyPrivacy
+                                photoPath, storyPrivacy
                             )
                         }
                     }) { Text("发布") }
                 },
                 dismissButton = {
-                    TextButton(onClick = { pendingStoryPhoto = null }) {
+                    TextButton(onClick = {
+                        pendingStoryPhoto = null
+                        pendingStoryVideo = null
+                    }) {
                         Text("取消")
                     }
                 }
@@ -718,8 +803,7 @@ fun ChatListScreen(
                     modifier = Modifier
                         .padding(end = 14.dp)
                         .clickable {
-                            AppLock.noteExternalLaunch()
-                            storyPicker.launch("image/*")
+                            storyKindChooser = true
                         }
                 ) {
                     Box(

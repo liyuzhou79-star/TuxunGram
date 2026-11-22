@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocationOn
@@ -80,6 +81,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -4095,6 +4097,8 @@ fun MessageBubble(
     var deleteOpen by remember { mutableStateOf(false) }
     var reactionOpen by remember { mutableStateOf(false) }
     var viewersOpen by remember { mutableStateOf(false) }
+    // Checklist post-send editing dialog (v0.9.26, S2).
+    var checklistEditOpen by remember { mutableStateOf(false) }
     // Swipe-to-reply (v0.7.0, F1): drag a bubble left; past the
     // threshold a haptic tick fires and the message becomes the
     // reply target, then the bubble springs back. The mature
@@ -4718,6 +4722,38 @@ fun MessageBubble(
                             )
                         })
                     }
+                    if (msg.lpInstantView > 0 &&
+                        msg.lpUrl.isNotEmpty() &&
+                        msg.sendingState.isEmpty()
+                    ) {
+                        // Instant View (v0.9.26, S1): same
+                        // gate as the preview card's entry —
+                        // only when TDLib says the page has
+                        // one.
+                        add(MessageMenuEntry(
+                            Icons.Filled.FlashOn, "即时预览"
+                        ) {
+                            menuOpen = false
+                            DeepLink.pendingInstantView.value =
+                                msg.lpUrl
+                        })
+                    }
+                    if (msg.kind == MsgKind.CHECKLIST &&
+                        msg.sendingState.isEmpty() &&
+                        (outgoing || msg.checklistCanAdd)
+                    ) {
+                        // Checklist editing (v0.9.26, S2):
+                        // the sender edits title/settings;
+                        // anyone the server flags can_add_tasks
+                        // may append tasks. The dialog itself
+                        // shows which halves are available.
+                        add(MessageMenuEntry(
+                            Icons.Filled.Edit, "编辑清单"
+                        ) {
+                            menuOpen = false
+                            checklistEditOpen = true
+                        })
+                    }
                     if (msg.text.isNotEmpty() &&
                         msg.sendingState.isEmpty()
                     ) {
@@ -4834,6 +4870,164 @@ fun MessageBubble(
             },
             dismissButton = {
                 TextButton(onClick = { editOpen = false }) { Text("取消") }
+            }
+        )
+    }
+    if (checklistEditOpen) {
+        // Checklist post-send editing (v0.9.26, S2). Two
+        // independent halves, gated by what the server says
+        // this account may do: the sender edits title and
+        // sharing settings (editMessageChecklist); appending
+        // tasks rides addChecklistTasks and needs the
+        // can_add_tasks flag (Premium-gated server-side).
+        // Refusals surface through the chat's sendError toast
+        // in plain language.
+        var clTitle by remember(msg.id) {
+            mutableStateOf(msg.checklistTitle)
+        }
+        var clOthersAdd by remember(msg.id) {
+            mutableStateOf(msg.checklistOthersCanAdd)
+        }
+        var clOthersMark by remember(msg.id) {
+            mutableStateOf(msg.checklistOthersCanMark)
+        }
+        val clNewTasks = remember(msg.id) {
+            mutableStateListOf("")
+        }
+        AlertDialog(
+            onDismissRequest = { checklistEditOpen = false },
+            title = { Text("编辑清单") },
+            text = {
+                LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
+                    if (outgoing) {
+                        item {
+                            OutlinedTextField(
+                                value = clTitle,
+                                onValueChange = { clTitle = it },
+                                label = { Text("清单标题") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    "其他人可以添加任务",
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Switch(
+                                    checked = clOthersAdd,
+                                    onCheckedChange = {
+                                        clOthersAdd = it
+                                    }
+                                )
+                            }
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    "其他人可以勾选任务",
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Switch(
+                                    checked = clOthersMark,
+                                    onCheckedChange = {
+                                        clOthersMark = it
+                                    }
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
+                    }
+                    item {
+                        Text(
+                            "已有任务（在气泡里勾选）",
+                            fontSize = 13.sp,
+                            color = Color.Gray
+                        )
+                    }
+                    items(msg.checklistTasks, key = { it.id }) { task ->
+                        Text(
+                            (if (task.completed) "☑ " else "☐ ") +
+                                task.text,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                    }
+                    if (msg.checklistCanAdd) {
+                        item {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "添加新任务",
+                                fontSize = 13.sp,
+                                color = Color.Gray
+                            )
+                        }
+                        items(clNewTasks.size) { index ->
+                            OutlinedTextField(
+                                value = clNewTasks[index],
+                                onValueChange = {
+                                    clNewTasks[index] = it
+                                },
+                                placeholder = { Text("新任务") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 3.dp)
+                            )
+                        }
+                        item {
+                            TextButton(onClick = { clNewTasks.add("") }) {
+                                Text("再加一条")
+                            }
+                        }
+                    } else {
+                        item {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "当前账号不能往这张清单里加任务" +
+                                    "（加任务需要 Premium，" +
+                                    "或这张清单没有开放添加）。",
+                                fontSize = 13.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    MessageStore.clearSendError()
+                    if (outgoing &&
+                        (clTitle.trim() != msg.checklistTitle ||
+                            clOthersAdd != msg.checklistOthersCanAdd ||
+                            clOthersMark != msg.checklistOthersCanMark) &&
+                        clTitle.isNotBlank()
+                    ) {
+                        MessageStore.editChecklistMeta(
+                            msg, clTitle, clOthersAdd, clOthersMark
+                        )
+                    }
+                    val additions = clNewTasks
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                    if (msg.checklistCanAdd && additions.isNotEmpty()) {
+                        MessageStore.addChecklistTasks(msg, additions)
+                    }
+                    checklistEditOpen = false
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { checklistEditOpen = false }) {
+                    Text("取消")
+                }
             }
         )
     }
@@ -6670,6 +6864,57 @@ fun LinkPreviewCard(msg: MsgItem) {
                     .height(120.dp)
                     .clip(RoundedCornerShape(6.dp))
             )
+        }
+        // Instant View entry (v0.9.26, S1): shown only when
+        // TDLib says this page has an Instant View
+        // (instant_view_version > 0 on the link preview), so
+        // the entry never leads to an empty page. The row has
+        // its own click target inside the card's browser one.
+        if (msg.lpInstantView > 0 && msg.lpUrl.isNotEmpty()) {
+            Spacer(Modifier.height(7.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(
+                        if (outgoing) {
+                            Color.White.copy(alpha = 0.25f)
+                        } else {
+                            Color.Black.copy(alpha = 0.08f)
+                        }
+                    )
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        DeepLink.pendingInstantView.value = msg.lpUrl
+                    }
+                    .padding(vertical = 6.dp)
+            ) {
+                Icon(
+                    Icons.Filled.FlashOn,
+                    contentDescription = null,
+                    tint = if (outgoing) {
+                        palette.outText
+                    } else {
+                        palette.accentText
+                    },
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    "即时预览",
+                    color = if (outgoing) {
+                        palette.outText
+                    } else {
+                        palette.accentText
+                    },
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 }

@@ -233,4 +233,109 @@ object StickerSetStore {
     fun clearNotice() {
         _notice.value = null
     }
+
+    // ---- Creating a sticker set (v0.9.26, S4, basic) ----
+
+    /** One image chosen for the new set, already validated by
+     *  the caller (PNG/WebP, one side exactly 512 px, the
+     *  other at most 512 — the server rejects anything else
+     *  and this basic flow does not resize). */
+    data class NewStickerItem(
+        val path: String,
+        val isWebp: Boolean,
+        val emoji: String
+    )
+
+    private val _createResult = MutableStateFlow<String?>(null)
+
+    /** Outcome of the last create attempt: "ok:<name>" on
+     *  success, "err:<plain reason>" on failure. */
+    val createResult: StateFlow<String?> = _createResult
+
+    fun clearCreateResult() {
+        _createResult.value = null
+    }
+
+    /** Create a regular static sticker set
+     *  (createNewStickerSet, verified in td_api.tl: user_id
+     *  is my own id, stickers are newSticker{inputFileLocal,
+     *  format, emojis}). PNG files ride format
+     *  stickerFormatWebp — StickerFormat has no PNG variant
+     *  and the server re-encodes uploads. On success the set
+     *  is installed server-side right away; the management
+     *  list reloads and the share link is
+     *  t.me/addstickers/<name>. */
+    fun createSet(
+        title: String,
+        name: String,
+        items: List<NewStickerItem>
+    ) {
+        val myId = MeStore.me.value.id
+        if (myId == 0L) {
+            _createResult.value = "err:账号状态还没就绪，稍后再试。"
+            return
+        }
+        if (items.isEmpty()) {
+            _createResult.value = "err:先选至少一张图片。"
+            return
+        }
+        _createResult.value = null
+        val stickers = org.json.JSONArray()
+        for (item in items) {
+            stickers.put(JSONObject().apply {
+                put("@type", "newSticker")
+                put("sticker", JSONObject().apply {
+                    put("@type", "inputFileLocal")
+                    put("path", item.path)
+                })
+                put(
+                    "format",
+                    JSONObject().put("@type", "stickerFormatWebp")
+                )
+                put(
+                    "emojis",
+                    item.emoji.ifBlank { "😀" }
+                )
+                put("mask_position", JSONObject.NULL)
+                put("keywords", org.json.JSONArray())
+            })
+        }
+        val query = TdClient.request("createNewStickerSet").apply {
+            put("user_id", myId)
+            put("title", title)
+            put("name", name)
+            put(
+                "sticker_type",
+                JSONObject().put("@type", "stickerTypeRegular")
+            )
+            put("needs_repainting", false)
+            put("stickers", stickers)
+            put("source", "")
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                val message = response.optString("message")
+                _createResult.value = "err:" + when {
+                    message.contains("NAME_OCCUPIED", true) ||
+                        message.contains("already", true) ->
+                        "这个短名已经被占用了，换一个短名再试。"
+                    message.contains("USERNAME", true) ->
+                        "需要先给账号设置一个用户名，才能创建贴纸包。"
+                    message.contains("STICKER", true) &&
+                        message.contains("INVALID", true) ->
+                        "有一张图片不符合贴纸要求" +
+                            "（PNG/WebP，一边 512 像素、另一边不超过 512），" +
+                            "换一张再试。"
+                    else ->
+                        "创建失败，再试一次。（错误码 " +
+                            "${response.optInt("code")}）" +
+                            if (message.isNotEmpty()) " $message" else ""
+                }
+                return@sendRaw
+            }
+            _createResult.value = "ok:" + response.optString("name", name)
+            load()
+            MediaStore.refreshInstalledSets()
+        }
+    }
 }

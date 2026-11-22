@@ -343,6 +343,47 @@ fun RichMessageText(
     )
 }
 
+/**
+ * Render already-flattened text + entities without a
+ * MsgItem (v0.9.26, S1): Instant View converts its richText
+ * trees into exactly this shape, then rides the same
+ * builder so links, mentions and styling behave like in
+ * chat. The throwaway MsgItem is keyed by the text hash so
+ * spoiler state stays scoped to the block.
+ */
+@Composable
+fun RichEntityText(
+    text: String,
+    entities: List<TextEntityUi>,
+    fontSize: TextUnit = 15.sp,
+    color: Color = Color.Unspecified,
+    linkColor: Color = Color.Unspecified
+) {
+    val carrier = remember(text, entities) {
+        MsgItem(
+            id = text.hashCode().toLong(),
+            outgoing = false,
+            dateSeconds = 0,
+            kind = com.tuxungram.android.td.MsgKind.TEXT,
+            text = text,
+            entities = entities,
+            senderName = "",
+            senderUserId = 0L,
+            photoFileId = 0,
+            photoPath = null,
+            photoWidth = 0,
+            photoHeight = 0,
+            sendingState = ""
+        )
+    }
+    RichMessageText(
+        carrier,
+        fontSize = fontSize,
+        color = color,
+        linkColor = linkColor
+    )
+}
+
 /** One inline custom emoji: the sticker image once its file
  *  is downloaded, the alt emoji character until then (L2 —
  *  "取不到或还没下载完时先显示其 alt emoji 字符占位"). */

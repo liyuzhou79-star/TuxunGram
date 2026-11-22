@@ -43,6 +43,12 @@ object DeepLink {
      *  host should show the Settings tab, where the proxy
      *  editor opens prefilled from ProxyStore.pendingPrefill. */
     val pendingOpenSettings = MutableStateFlow(false)
+
+    /** An Instant View open request (v0.9.26, S1): the URL
+     *  whose article page ReadyHost should overlay. Set by
+     *  link preview cards and the message menu; cleared when
+     *  the page closes. */
+    val pendingInstantView = MutableStateFlow<String?>(null)
 }
 
 /**

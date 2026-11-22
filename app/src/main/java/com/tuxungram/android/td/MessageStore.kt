@@ -174,6 +174,13 @@ data class MsgItem(
     val lpUrl: String = "",
     val lpPhotoFileId: Int = 0,
     val lpPhotoPath: String? = null,
+    // Instant View availability (v0.9.26, S1): the
+    // link_preview's instant_view_version — 0 when the page
+    // has no Instant View, 1/2 when getWebPageInstantView can
+    // serve it. The entry points (preview card + long-press
+    // menu) only appear when this is positive, so there is
+    // never a fake entry.
+    val lpInstantView: Int = 0,
     // Inline keyboard from the message's reply_markup (v0.8.0,
     // G4); rows of buttons rendered under the bubble.
     val buttons: List<List<InlineBtn>> = emptyList(),
@@ -245,7 +252,15 @@ data class MsgItem(
     val checklistTasks: List<ChecklistTaskUi> = emptyList(),
     // Whether THIS account may tick tasks on this checklist
     // (sender, or others_can_mark_tasks_as_done).
-    val checklistCanMark: Boolean = false
+    val checklistCanMark: Boolean = false,
+    // Post-send editing (v0.9.26, S2): can_add_tasks is the
+    // server's own flag for whether THIS account may append
+    // tasks via addChecklistTasks (Premium-gated); the two
+    // others_* flags ride into editMessageChecklist when the
+    // sender edits the title/settings.
+    val checklistCanAdd: Boolean = false,
+    val checklistOthersCanAdd: Boolean = false,
+    val checklistOthersCanMark: Boolean = false
 )
 
 /** A click effect for one animated-emoji message
@@ -2553,7 +2568,9 @@ object MessageStore {
                         ?.optString("text") ?: "",
                     lpUrl = lp?.optString("url") ?: "",
                     lpPhotoFileId = lpFileId,
-                    lpPhotoPath = downloadedPath(lpPhoto)
+                    lpPhotoPath = downloadedPath(lpPhoto),
+                    lpInstantView = lp?.optInt("instant_view_version", 0)
+                        ?: 0
                 )
             }
             "messageSticker" -> {
@@ -2637,6 +2654,14 @@ object MessageStore {
                     checklistTasks = tasks,
                     checklistCanMark =
                         list?.optBoolean("can_mark_tasks_as_done")
+                            ?: false,
+                    checklistCanAdd =
+                        list?.optBoolean("can_add_tasks") ?: false,
+                    checklistOthersCanAdd =
+                        list?.optBoolean("others_can_add_tasks")
+                            ?: false,
+                    checklistOthersCanMark =
+                        list?.optBoolean("others_can_mark_tasks_as_done")
                             ?: false
                 )
             }
@@ -2972,9 +2997,9 @@ object MessageStore {
      *  with an inputChecklist (title + tasks, ids assigned
      *  here as 1..n). Sending checklists is Premium-gated by
      *  the server; a refusal is mapped by sendErrorText to a
-     *  plain "needs Premium" sentence. Editing the task list
-     *  after sending is deliberately not offered (noted in
-     *  FEATURE_GAP); toggling is [markChecklistTask]. */
+     *  plain "needs Premium" sentence. Post-send editing
+     *  arrived in v0.9.26 (S2): [addChecklistTasks] and
+     *  [editChecklistMeta]; toggling is [markChecklistTask]. */
     fun sendChecklist(
         title: String,
         tasks: List<String>,
@@ -3016,6 +3041,82 @@ object MessageStore {
             put("message_id", item.id)
             put("marked_as_done_task_ids", done)
             put("marked_as_not_done_task_ids", notDone)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            }
+        }
+    }
+
+    /** Append tasks to a sent checklist (v0.9.26, S2):
+     *  addChecklistTasks with fresh ids continuing after the
+     *  current maximum. The server only allows this when the
+     *  checklist's can_add_tasks flag is set for this account
+     *  (Premium-gated); a refusal lands in sendError as plain
+     *  language. The appended tasks arrive with
+     *  updateMessageContent and re-render the bubble. */
+    fun addChecklistTasks(item: MsgItem, newTasks: List<String>) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val cleaned = newTasks.map { it.trim() }.filter { it.isNotEmpty() }
+        if (cleaned.isEmpty()) return
+        var nextId = (item.checklistTasks.maxOfOrNull { it.id } ?: 0) + 1
+        val taskArray = JSONArray()
+        for (text in cleaned) {
+            taskArray.put(JSONObject().apply {
+                put("@type", "inputChecklistTask")
+                put("id", nextId)
+                put("text", formattedText(text))
+            })
+            nextId++
+        }
+        val query = TdClient.request("addChecklistTasks").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+            put("tasks", taskArray)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            }
+        }
+    }
+
+    /** Edit a sent checklist's title and sharing settings
+     *  (v0.9.26, S2): editMessageChecklist replaces the whole
+     *  inputChecklist, so the existing tasks are sent back
+     *  with their ORIGINAL ids and plain texts — task ids are
+     *  what completion state hangs on, so ticks survive the
+     *  edit. Only the sender can do this; a server refusal
+     *  lands in sendError as plain language. */
+    fun editChecklistMeta(
+        item: MsgItem,
+        title: String,
+        othersCanAdd: Boolean,
+        othersCanMark: Boolean
+    ) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val taskArray = JSONArray()
+        for (task in item.checklistTasks) {
+            taskArray.put(JSONObject().apply {
+                put("@type", "inputChecklistTask")
+                put("id", task.id)
+                put("text", formattedText(task.text))
+            })
+        }
+        val query = TdClient.request("editMessageChecklist").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+            put("reply_markup", JSONObject.NULL)
+            put("checklist", JSONObject().apply {
+                put("@type", "inputChecklist")
+                put("title", formattedText(title.trim()))
+                put("tasks", taskArray)
+                put("others_can_add_tasks", othersCanAdd)
+                put("others_can_mark_tasks_as_done", othersCanMark)
+            })
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {

@@ -245,6 +245,44 @@ object StoryStore {
      *  everyone / contacts / close_friends. Selected-users
      *  needs a user picker and is not offered. */
     fun postPhotoStory(path: String, privacy: String = "everyone") {
+        val content = JSONObject().apply {
+            put("@type", "inputStoryContentPhoto")
+            put("photo", JSONObject().apply {
+                put("@type", "inputFileLocal")
+                put("path", path)
+            })
+            put("added_sticker_file_ids", JSONArray())
+        }
+        startPost(content, privacy)
+    }
+
+    /** Post one video as my own story (v0.9.26, S3):
+     *  inputStoryContentVideo verified in td_api.tl — the
+     *  video file plus its duration in seconds (the caller
+     *  reads it from the picked file's metadata); no cover
+     *  frame offset, not an animation. Length/format limits
+     *  are the server's call and its refusal surfaces through
+     *  the same notice path as photos. */
+    fun postVideoStory(
+        path: String,
+        durationSec: Double,
+        privacy: String = "everyone"
+    ) {
+        val content = JSONObject().apply {
+            put("@type", "inputStoryContentVideo")
+            put("video", JSONObject().apply {
+                put("@type", "inputFileLocal")
+                put("path", path)
+            })
+            put("added_sticker_file_ids", JSONArray())
+            put("duration", durationSec)
+            put("cover_frame_timestamp", 0.0)
+            put("is_animation", false)
+        }
+        startPost(content, privacy)
+    }
+
+    private fun startPost(content: JSONObject, privacy: String) {
         _postNotice.value = "正在发布动态…"
         TdRepository.sendRaw(TdClient.request("getMe")) { me ->
             if (TdClient.isError(me)) {
@@ -262,7 +300,7 @@ object StoryStore {
                 }
                 when (result.optString("@type")) {
                     "canPostStoryResultOk" ->
-                        doPostStory(myId, path, privacy)
+                        doPostStory(myId, content, privacy)
                     "canPostStoryResultPremiumNeeded" ->
                         _postNotice.value =
                             "发动态需要 Premium，当前账号暂时发不了。"
@@ -285,17 +323,14 @@ object StoryStore {
         }
     }
 
-    private fun doPostStory(myId: Long, path: String, privacy: String) {
+    private fun doPostStory(
+        myId: Long,
+        content: JSONObject,
+        privacy: String
+    ) {
         val query = TdClient.request("postStory").apply {
             put("chat_id", myId)
-            put("content", JSONObject().apply {
-                put("@type", "inputStoryContentPhoto")
-                put("photo", JSONObject().apply {
-                    put("@type", "inputFileLocal")
-                    put("path", path)
-                })
-                put("added_sticker_file_ids", JSONArray())
-            })
+            put("content", content)
             put("areas", JSONObject().apply {
                 put("@type", "inputStoryAreas")
                 put("areas", JSONArray())
@@ -323,7 +358,13 @@ object StoryStore {
         }
         TdRepository.sendRaw(query) { response ->
             _postNotice.value = if (TdClient.isError(response)) {
-                "发布失败，再试一次。（错误码 ${response.optInt("code")}）"
+                // Server refusals (video too long, unsupported
+                // format, limits) surface with their code and
+                // message instead of a fake success.
+                val detail = response.optString("message")
+                "发布失败，再试一次。（错误码 " +
+                    "${response.optInt("code")}）" +
+                    if (detail.isNotEmpty()) " $detail" else ""
             } else {
                 val who = when (privacy) {
                     "contacts" -> "联系人可见"

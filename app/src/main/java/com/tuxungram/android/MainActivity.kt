@@ -173,6 +173,7 @@ import com.tuxungram.android.ui.SessionsScreen
 import com.tuxungram.android.ui.SettingsScreen
 import com.tuxungram.android.ui.SharedMediaScreen
 import com.tuxungram.android.ui.SplashScreen
+import com.tuxungram.android.ui.InstantViewScreen
 import com.tuxungram.android.ui.StickerSetsScreen
 import com.tuxungram.android.ui.StoryViewerScreen
 import com.tuxungram.android.ui.ThreadScreen
@@ -1169,6 +1170,17 @@ private fun ReadyHost() {
                         LinkRouter.pendingInvite.value = null
                     }) { Text("取消") }
                 }
+            )
+        }
+        // Instant View overlay (v0.9.26, S1): opened from a
+        // link preview card or the message menu through
+        // DeepLink, rendered above whichever route is up.
+        val pendingIv by DeepLink.pendingInstantView.collectAsState()
+        val ivUrl = pendingIv
+        if (ivUrl != null) {
+            InstantViewScreen(
+                url = ivUrl,
+                onClose = { DeepLink.pendingInstantView.value = null }
             )
         }
     }

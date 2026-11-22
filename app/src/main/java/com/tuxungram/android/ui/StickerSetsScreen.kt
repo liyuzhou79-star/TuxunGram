@@ -63,6 +63,15 @@ fun StickerSetsScreen(onBack: () -> Unit) {
     }
     BackHandler { onBack() }
 
+    // Create-my-own-set sub-view (v0.9.26, S4): replaces the
+    // management list while open; its own BackHandler steps
+    // back here.
+    var creating by remember { mutableStateOf(false) }
+    if (creating) {
+        CreateStickerSetView(onBack = { creating = false })
+        return
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -124,6 +133,10 @@ fun StickerSetsScreen(onBack: () -> Unit) {
                     fontSize = 13.sp,
                     modifier = Modifier.padding(top = 8.dp)
                 )
+            }
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = { creating = true }) {
+                Text("创建自己的贴纸包")
             }
         }
         if (sets.isEmpty()) {
