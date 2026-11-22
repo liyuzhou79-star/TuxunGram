@@ -13,7 +13,11 @@ data class AdminCaps(
     val canManage: Boolean = false,
     val canChangeInfo: Boolean = false,
     val canDeleteAny: Boolean = false,
-    val canRestrict: Boolean = false
+    val canRestrict: Boolean = false,
+    /** Promote/demote administrators (v0.9.2, L4): the
+     *  creator always can; an administrator needs the
+     *  can_promote_members right. */
+    val canPromote: Boolean = false
 )
 
 /**
@@ -62,7 +66,7 @@ object AdminStore {
                     ?: return@sendRaw
                 _caps.value = when (status.optString("@type")) {
                     "chatMemberStatusCreator" ->
-                        AdminCaps(true, true, true, true)
+                        AdminCaps(true, true, true, true, true)
                     "chatMemberStatusAdministrator" -> {
                         val rights = status.optJSONObject("rights")
                         AdminCaps(
@@ -72,7 +76,9 @@ object AdminStore {
                             canDeleteAny =
                                 rights?.optBoolean("can_delete_messages") == true,
                             canRestrict =
-                                rights?.optBoolean("can_restrict_members") == true
+                                rights?.optBoolean("can_restrict_members") == true,
+                            canPromote =
+                                rights?.optBoolean("can_promote_members") == true
                         )
                     }
                     else -> AdminCaps()
@@ -129,7 +135,40 @@ object AdminStore {
             put("banned_until_date", 0)
             put("revoke_messages", false)
         }
-        act(query, "已封禁。") { ProfileStore.load(chatId) }
+        act(query, "已封禁。") {
+            ProfileStore.load(chatId)
+            MemberListStore.refreshIf(chatId)
+        }
+    }
+
+    /** Promote a member to administrator (v0.9.2, L4). This
+     *  tl has no promoteChatMember function — promotion is
+     *  setChatMemberStatus with a chatMemberStatusAdministrator
+     *  status (verified in td_api.tl). The granted set is the
+     *  usual working set for a group admin; the server remains
+     *  the final judge and errors surface as the plain notice. */
+    fun promoteMember(chatId: Long, userId: Long) {
+        val rights = JSONObject().put("@type", "chatAdministratorRights")
+        for (field in ADMIN_RIGHT_FIELDS) rights.put(field, false)
+        rights.put("can_manage_chat", true)
+        rights.put("can_delete_messages", true)
+        rights.put("can_invite_users", true)
+        rights.put("can_restrict_members", true)
+        rights.put("can_pin_messages", true)
+        rights.put("can_manage_topics", true)
+        val status = JSONObject()
+            .put("@type", "chatMemberStatusAdministrator")
+            .put("can_be_edited", false)
+            .put("rights", rights)
+        setMemberStatus(chatId, userId, status, "已设为管理员。")
+    }
+
+    /** Demote an administrator back to a plain member. */
+    fun demoteMember(chatId: Long, userId: Long) {
+        val status = JSONObject()
+            .put("@type", "chatMemberStatusMember")
+            .put("member_until_date", 0)
+        setMemberStatus(chatId, userId, status, "已取消管理员。")
     }
 
     /** Unban = move a banned user back to "left": clears the ban
@@ -172,7 +211,10 @@ object AdminStore {
             )
             put("status", status)
         }
-        act(query, okText) { ProfileStore.load(chatId) }
+        act(query, okText) {
+            ProfileStore.load(chatId)
+            MemberListStore.refreshIf(chatId)
+        }
     }
 
     private fun act(query: JSONObject, okText: String, onOk: () -> Unit) {
@@ -186,6 +228,21 @@ object AdminStore {
             }
         }
     }
+
+    /** All chatAdministratorRights fields (td_api.tl line
+     *  1124), so a promote request names every field
+     *  explicitly instead of relying on server defaults. */
+    private val ADMIN_RIGHT_FIELDS = listOf(
+        "can_manage_chat", "can_change_info", "can_post_messages",
+        "can_edit_messages", "can_delete_messages",
+        "can_invite_users", "can_restrict_members",
+        "can_pin_messages", "can_manage_topics",
+        "can_promote_members", "can_manage_video_chats",
+        "can_post_stories", "can_edit_stories",
+        "can_delete_stories", "can_manage_direct_messages",
+        "can_manage_tags", "can_send_welcome_messages",
+        "is_anonymous"
+    )
 
     private val PERMISSION_FIELDS = listOf(
         "can_send_basic_messages", "can_send_audios",

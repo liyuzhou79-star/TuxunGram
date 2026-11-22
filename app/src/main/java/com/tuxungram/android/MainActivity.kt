@@ -112,6 +112,7 @@ import com.tuxungram.android.ui.ArchiveScreen
 import com.tuxungram.android.ui.ChatListScreen
 import com.tuxungram.android.ui.ContactsScreen
 import com.tuxungram.android.ui.LockScreen
+import com.tuxungram.android.ui.MembersScreen
 import com.tuxungram.android.ui.ChatScreen
 import com.tuxungram.android.ui.ClosedScreen
 import com.tuxungram.android.ui.CodeScreen
@@ -305,6 +306,9 @@ private fun ReadyHost() {
     var showArchive by remember { mutableStateOf(false) }
     var showContacts by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }
+    // Members page (v0.9.2, L4): opened from a group/channel
+    // profile; Back returns to that profile.
+    var membersChatId by remember { mutableStateOf<Long?>(null) }
     // Rich-text mention taps (v0.9.2, L1): a mentionName carries
     // the user id (resolve via createPrivateChat), a plain
     // @mention carries the username (resolve via
@@ -393,13 +397,18 @@ private fun ReadyHost() {
                 openChatId = it
             }
         )
+        membersChatId != null -> MembersScreen(
+            chatId = membersChatId!!,
+            onBack = { membersChatId = null }
+        )
         profileChatId != null -> ProfileScreen(
             chatId = profileChatId!!,
             onBack = { profileChatId = null },
             onOpenSecretChat = { newChatId ->
                 profileChatId = null
                 openChatId = newChatId
-            }
+            },
+            onOpenMembers = { membersChatId = profileChatId }
         )
         showCreate -> CreateChatScreen(
             onBack = { showCreate = false },

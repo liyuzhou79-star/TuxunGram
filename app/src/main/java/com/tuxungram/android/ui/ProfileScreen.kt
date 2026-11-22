@@ -53,7 +53,8 @@ import com.tuxungram.android.td.SecretChatStore
 fun ProfileScreen(
     chatId: Long,
     onBack: () -> Unit,
-    onOpenSecretChat: (Long) -> Unit = {}
+    onOpenSecretChat: (Long) -> Unit = {},
+    onOpenMembers: () -> Unit = {}
 ) {
     BackHandler { onBack() }
     val profile by ProfileStore.profile.collectAsState()
@@ -306,6 +307,31 @@ fun ProfileScreen(
                             )
                         }
                         Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
+            if (p.canGetMembers) {
+                // Dedicated members page (v0.9.2, L4): paged,
+                // searchable, administrators pinned — the
+                // embedded preview below stays as a shortcut.
+                item(key = "members_entry") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenMembers() }
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "成员",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "查看全部 ›",
+                            color = Color.Gray, fontSize = 13.sp
+                        )
                     }
                 }
             }

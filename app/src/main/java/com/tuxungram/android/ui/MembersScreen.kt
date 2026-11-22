@@ -1,0 +1,359 @@
+package com.tuxungram.android.ui
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.AdminStore
+import com.tuxungram.android.td.DeepLink
+import com.tuxungram.android.td.MemberEntry
+import com.tuxungram.android.td.MemberListStore
+import kotlinx.coroutines.delay
+
+/**
+ * The dedicated members page (v0.9.2, L4), reached from the
+ * profile page's 成员 entry: administrators pinned in their
+ * own section on top, the rest paged below, a search field
+ * over searchChatMembers, and — only for viewers holding the
+ * matching right — long-press management actions (mute /
+ * unmute / ban / unban / promote / demote) through AdminStore.
+ * No right, no entry: the dialog simply never offers the
+ * action, same rule as the profile page.
+ */
+@Composable
+fun MembersScreen(chatId: Long, onBack: () -> Unit) {
+    BackHandler { onBack() }
+    val state by MemberListStore.state.collectAsState()
+    val caps by AdminStore.caps.collectAsState()
+    val notice by AdminStore.notice.collectAsState()
+    var query by remember { mutableStateOf("") }
+    var actionTarget by remember { mutableStateOf<MemberEntry?>(null) }
+    LaunchedEffect(chatId) {
+        MemberListStore.load(chatId)
+        AdminStore.loadCaps(chatId)
+    }
+    LaunchedEffect(query) {
+        if (query.isNotBlank()) {
+            delay(400)
+            MemberListStore.search(chatId, query)
+        } else if (state.searching) {
+            MemberListStore.search(chatId, "")
+        }
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        }.collect { lastVisible ->
+            val st = MemberListStore.state.value
+            if (!st.exhausted && !st.searching &&
+                lastVisible >= st.members.size - 8
+            ) {
+                MemberListStore.loadMore()
+            }
+        }
+    }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
+            Text(
+                "成员",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (state.totalCount > 0) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${state.totalCount} 人",
+                    color = Color.Gray, fontSize = 13.sp
+                )
+            }
+        }
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = { Text("搜索成员") },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+        if (notice != null) {
+            Text(
+                notice!!,
+                fontSize = 13.sp, color = Color.Gray,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+        val st = state
+        if (st.chatId != chatId || (st.loading && st.members.isEmpty() &&
+                st.admins.isEmpty())
+        ) {
+            CenterColumn {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(12.dp))
+                Text("正在加载成员…", color = Color.Gray)
+            }
+            return@Column
+        }
+        if (!st.canList && st.admins.isEmpty()) {
+            CenterColumn {
+                Text(
+                    "这个对话的成员名单不可见（管理员隐藏了成员，或这是一个成员不可读的频道）。",
+                    color = Color.Gray
+                )
+            }
+            return@Column
+        }
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .lazyListScrollbar(listState)
+        ) {
+            if (st.admins.isNotEmpty()) {
+                item(key = "admins_header") {
+                    Text(
+                        "管理员",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(
+                            horizontal = 16.dp, vertical = 8.dp
+                        )
+                    )
+                }
+                items(items = st.admins, key = { "admin_${it.userId}" }) { m ->
+                    MemberRow(
+                        member = m,
+                        actionable = caps.canPromote &&
+                            m.statusKind == "administrator",
+                        onClick = {
+                            DeepLink.pendingProfileUser.value = m.userId
+                        },
+                        onLongClick = { actionTarget = m }
+                    )
+                }
+            }
+            if (st.members.isNotEmpty()) {
+                item(key = "members_header") {
+                    Text(
+                        if (st.searching) "搜索结果" else "成员",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(
+                            horizontal = 16.dp, vertical = 8.dp
+                        )
+                    )
+                }
+                items(items = st.members, key = { it.userId }) { m ->
+                    val actionable =
+                        (caps.canRestrict && m.statusKind in
+                            listOf("member", "restricted", "banned")) ||
+                            (caps.canPromote && m.statusKind == "member")
+                    MemberRow(
+                        member = m,
+                        actionable = actionable,
+                        onClick = {
+                            DeepLink.pendingProfileUser.value = m.userId
+                        },
+                        onLongClick = { actionTarget = m }
+                    )
+                }
+            } else if (!st.searching) {
+                item(key = "members_more") {
+                    Text(
+                        if (st.exhausted) "" else "正在加载更多成员…",
+                        color = Color.Gray, fontSize = 13.sp,
+                        modifier = Modifier.padding(
+                            horizontal = 16.dp, vertical = 8.dp
+                        )
+                    )
+                }
+            } else {
+                item(key = "search_empty") {
+                    Text(
+                        "没有搜到这个成员",
+                        color = Color.Gray, fontSize = 13.sp,
+                        modifier = Modifier.padding(
+                            horizontal = 16.dp, vertical = 8.dp
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    val target = actionTarget
+    if (target != null) {
+        AlertDialog(
+            onDismissRequest = { actionTarget = null },
+            title = {
+                Text(target.name.ifEmpty { "用户 ${target.userId}" })
+            },
+            text = {
+                Column {
+                    when (target.statusKind) {
+                        "member" -> {
+                            if (caps.canRestrict) {
+                                TextButton(onClick = {
+                                    AdminStore.restrictMember(
+                                        chatId, target.userId
+                                    )
+                                    actionTarget = null
+                                }) { Text("禁言（不能发言）") }
+                            }
+                            if (caps.canPromote) {
+                                TextButton(onClick = {
+                                    AdminStore.promoteMember(
+                                        chatId, target.userId
+                                    )
+                                    actionTarget = null
+                                }) { Text("设为管理员") }
+                            }
+                            if (caps.canRestrict) {
+                                TextButton(onClick = {
+                                    AdminStore.banMember(
+                                        chatId, target.userId
+                                    )
+                                    actionTarget = null
+                                }) {
+                                    Text(
+                                        "封禁（移出并禁止再进）",
+                                        color = Color(0xFFC62828)
+                                    )
+                                }
+                            }
+                        }
+                        "restricted" -> {
+                            TextButton(onClick = {
+                                AdminStore.unrestrictMember(
+                                    chatId, target.userId
+                                )
+                                actionTarget = null
+                            }) { Text("解除禁言") }
+                            TextButton(onClick = {
+                                AdminStore.banMember(chatId, target.userId)
+                                actionTarget = null
+                            }) {
+                                Text(
+                                    "封禁（移出并禁止再进）",
+                                    color = Color(0xFFC62828)
+                                )
+                            }
+                        }
+                        "banned" -> {
+                            TextButton(onClick = {
+                                AdminStore.unbanMember(chatId, target.userId)
+                                actionTarget = null
+                            }) { Text("解除封禁") }
+                        }
+                        "administrator" -> {
+                            if (caps.canPromote) {
+                                TextButton(onClick = {
+                                    AdminStore.demoteMember(
+                                        chatId, target.userId
+                                    )
+                                    actionTarget = null
+                                }) { Text("取消管理员") }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { actionTarget = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MemberRow(
+    member: MemberEntry,
+    actionable: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { if (actionable) onLongClick() }
+            )
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .background(Color(0xFFB0BEC5), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                member.name.trim().firstOrNull()?.toString() ?: "?",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp
+            )
+        }
+        Spacer(Modifier.width(11.dp))
+        Text(
+            member.name.ifEmpty { "用户 ${member.userId}" },
+            fontSize = 15.sp,
+            modifier = Modifier.weight(1f),
+            maxLines = 1
+        )
+        if (member.statusText.isNotEmpty() && member.statusText != "成员") {
+            Text(member.statusText, color = Color.Gray, fontSize = 12.sp)
+        }
+    }
+}
