@@ -848,6 +848,16 @@ fun ThreadScreen(
         }
     }
     var attachMenuOpen by remember { mutableStateOf(false) }
+    // Photo editor / video trim overlays (v0.9.35, B4):
+    // the same pre-send editing the main chat has had
+    // since v0.9.27/v0.9.33, wired into this page's own
+    // pending-photo / pending-file chain.
+    var editingPhotoPath by remember {
+        mutableStateOf<String?>(null)
+    }
+    var trimmingVideo by remember {
+        mutableStateOf<Triple<String, String, String>?>(null)
+    }
     // In-app video player target (v0.9.1, J3).
     var videoItem by remember { mutableStateOf<MsgItem?>(null) }
     // Cross-message media viewer anchor (v0.9.32, Y6).
@@ -904,7 +914,23 @@ fun ThreadScreen(
                     ThreadStore.sendPhoto(photoPath, photoCaption.trim())
                     pendingPhoto = null
                 },
-                onCancel = { pendingPhoto = null }
+                onCancel = { pendingPhoto = null },
+                // Photo editor (v0.9.35, B4): the edited
+                // file replaces the pending photo and the
+                // preview reopens on it.
+                onEdit = { editingPhotoPath = photoPath }
+            )
+            return@Column
+        }
+        val editPath = editingPhotoPath
+        if (editPath != null) {
+            PhotoEditorScreen(
+                path = editPath,
+                onDone = { edited ->
+                    editingPhotoPath = null
+                    pendingPhoto = edited
+                },
+                onCancel = { editingPhotoPath = null }
             )
             return@Column
         }
@@ -913,7 +939,29 @@ fun ThreadScreen(
             AlertDialog(
                 onDismissRequest = { pendingFile = null },
                 title = { Text("发送文件") },
-                text = { Text("要发送「${fileToSend.third}」吗？") },
+                text = {
+                    Column {
+                        Text("要发送「${fileToSend.third}」吗？")
+                        // Video trim (v0.9.35, B4): same
+                        // entry and limits as the main chat —
+                        // MP4 only, cut without re-encoding.
+                        if (fileToSend.second == "video/mp4") {
+                            TextButton(onClick = {
+                                trimmingVideo = fileToSend
+                                pendingFile = null
+                            }) { Text("剪辑视频（选一段发）") }
+                        } else if (
+                            fileToSend.second.startsWith("video/")
+                        ) {
+                            Text(
+                                "这个格式暂时不能剪辑（剪辑只支持 MP4），" +
+                                    "可以照原样发送。",
+                                fontSize = 12.5.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+                },
                 confirmButton = {
                     Button(onClick = {
                         ThreadStore.clearError()
@@ -930,6 +978,25 @@ fun ThreadScreen(
                     }
                 }
             )
+        }
+        val trimTarget = trimmingVideo
+        if (trimTarget != null) {
+            VideoTrimScreen(
+                path = trimTarget.first,
+                onDone = { trimmedPath ->
+                    trimmingVideo = null
+                    val base = trimTarget.third
+                        .substringBeforeLast('.')
+                    pendingFile = Triple(
+                        trimmedPath, "video/mp4", base + "_trim.mp4"
+                    )
+                },
+                onCancel = {
+                    trimmingVideo = null
+                    pendingFile = trimTarget
+                }
+            )
+            return@Column
         }
         // Media viewer (v0.9.32, Y6): the context is this
         // thread's loaded window only; paging to the

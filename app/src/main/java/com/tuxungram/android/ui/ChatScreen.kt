@@ -3925,9 +3925,10 @@ fun PhotoPreview(
     onCancel: () -> Unit,
     onSendOptions: (SendModifiers) -> Unit = {},
     allowWhenOnline: Boolean = false,
-    // Pre-send editor entry (v0.9.27, T1): only the main
-    // chat wires it; thread / topic previews keep the plain
-    // preview (no button) until their flows grow one too.
+    // Pre-send editor entry (v0.9.27, T1): the main chat
+    // wires it, and since v0.9.35 (B4) the thread and
+    // topic previews wire it too, each back-filling its
+    // own pending-photo chain.
     onEdit: (() -> Unit)? = null
 ) {
     val previewContext = LocalContext.current
