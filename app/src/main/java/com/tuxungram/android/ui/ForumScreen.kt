@@ -209,6 +209,7 @@ fun ForumTopicView(
     topic: ForumTopicUi
 ) {
     val messages by ForumStore.messages.collectAsState()
+    TranslateErrorDialog()
     val error by ForumStore.error.collectAsState()
     val replyTarget by ForumStore.replyTarget.collectAsState()
     var input by remember { mutableStateOf("") }

@@ -206,6 +206,7 @@ fun ChatScreen(
     }
     val messages by MessageStore.messages.collectAsState()
     val sendError by MessageStore.sendError.collectAsState()
+    TranslateErrorDialog()
     val clipboard = LocalClipboardManager.current
     // Multi-select mode (v0.7.0, F1): long-press a message and
     // choose 多选, then tap messages to add/remove them; the top
@@ -2158,6 +2159,7 @@ fun MessageBubble(
                         fontSize = 11.sp
                     )
                 }
+                TranslationArea(chatId, msg)
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
@@ -2182,6 +2184,18 @@ fun MessageBubble(
                         onClick = {
                             menuOpen = false
                             clipboard.setText(AnnotatedString(msg.text))
+                        }
+                    )
+                }
+                if (msg.text.isNotEmpty() && msg.sendingState.isEmpty()) {
+                    // Translate (v0.9.5, O4): the result lands
+                    // under the bubble via TranslationArea.
+                    DropdownMenuItem(
+                        text = { Text("翻译") },
+                        onClick = {
+                            menuOpen = false
+                            MessageStore.clearTranslateError()
+                            MessageStore.translateMessage(chatId, msg)
                         }
                     )
                 }
@@ -2355,6 +2369,72 @@ fun MessageBubble(
             },
             dismissButton = {
                 TextButton(onClick = { deleteOpen = false }) { Text("取消") }
+            }
+        )
+    }
+}
+
+/** Translation block under a bubble (v0.9.5, O4): a
+ *  "正在翻译…" placeholder while MessageStore waits on
+ *  translateMessageText, then the translated text under a
+ *  hairline with a 译文 marker and a collapse button. Shared
+ *  by the main chat bubble and the thread/forum bubble. */
+@Composable
+fun TranslationArea(chatId: Long, msg: MsgItem) {
+    val translations by MessageStore.translations.collectAsState()
+    val translating by MessageStore.translating.collectAsState()
+    val key = chatId to msg.id
+    val t = translations[key]
+    if (key in translating) {
+        Text(
+            "正在翻译…",
+            color = Color.Gray,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    } else if (t != null) {
+        Column(modifier = Modifier.padding(top = 5.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Color(0x22000000))
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "译文 · ${t.langLabel}",
+                    color = Color(0xFF5B7C99),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = { MessageStore.hideTranslation(chatId, msg.id) }
+                ) {
+                    Text("收起", fontSize = 11.sp)
+                }
+            }
+            Text(t.text, fontSize = 14.sp)
+        }
+    }
+}
+
+/** One-shot dialog for a translation refusal (v0.9.5, O4):
+ *  the store already turned the server error into plain
+ *  language (Premium requirement, secret chat, ...). Placed
+ *  once at each screen root that offers 翻译. */
+@Composable
+fun TranslateErrorDialog() {
+    val error by MessageStore.translateError.collectAsState()
+    if (error != null) {
+        AlertDialog(
+            onDismissRequest = { MessageStore.clearTranslateError() },
+            title = { Text("翻译") },
+            text = { Text(error!!) },
+            confirmButton = {
+                TextButton(
+                    onClick = { MessageStore.clearTranslateError() }
+                ) { Text("知道了") }
             }
         )
     }

@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.PollUi
+import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.ThreadStore
 import java.io.File
 
@@ -274,6 +275,7 @@ fun SimpleMessageBubble(
                         )
                     }
                 }
+                TranslationArea(chatId, msg)
             }
             DropdownMenu(
                 expanded = menuOpen,
@@ -292,6 +294,18 @@ fun SimpleMessageBubble(
                         onClick = {
                             menuOpen = false
                             clipboard.setText(AnnotatedString(msg.text))
+                        }
+                    )
+                }
+                if (msg.text.isNotEmpty() && msg.sendingState.isEmpty()) {
+                    // Translate (v0.9.5, O4): same shared
+                    // MessageStore path as the main chat.
+                    DropdownMenuItem(
+                        text = { Text("翻译") },
+                        onClick = {
+                            menuOpen = false
+                            MessageStore.clearTranslateError()
+                            MessageStore.translateMessage(chatId, msg)
                         }
                     )
                 }
@@ -483,6 +497,7 @@ fun ThreadScreen(
     onBack: () -> Unit
 ) {
     val messages by ThreadStore.messages.collectAsState()
+    TranslateErrorDialog()
     val error by ThreadStore.error.collectAsState()
     val ready by ThreadStore.ready.collectAsState()
     val replyTarget by ThreadStore.replyTarget.collectAsState()

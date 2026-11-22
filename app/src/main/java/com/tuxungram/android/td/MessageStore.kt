@@ -32,6 +32,14 @@ data class PollUi(
     val explanation: String = ""
 )
 
+/** One finished message translation (v0.9.5, O4): the
+ *  translated text plus the target language's display name,
+ *  shown under the bubble until the user collapses it. */
+data class TranslationUi(
+    val text: String,
+    val langLabel: String
+)
+
 /** One reaction shown under a bubble: the emoji, how many people
  *  used it, and whether I am one of them. */
 data class ReactionChip(
@@ -308,6 +316,77 @@ object MessageStore {
                 publish()
                 loadPinned(chatId)
             }
+        }
+    }
+
+    // ---- Message translation (v0.9.5, O4) ----
+    // translateMessageText (verified in td_api.tl) works for
+    // any chat the message belongs to, so the main chat, the
+    // comment threads and the forum topics all share this one
+    // implementation, keyed by (chatId, messageId). The tl
+    // forbids it in secret chats; the server refuses there
+    // and the refusal is translated below like any other.
+
+    private val _translations =
+        MutableStateFlow<Map<Pair<Long, Long>, TranslationUi>>(emptyMap())
+    val translations: StateFlow<Map<Pair<Long, Long>, TranslationUi>> =
+        _translations
+
+    private val _translating =
+        MutableStateFlow<Set<Pair<Long, Long>>>(emptySet())
+    val translating: StateFlow<Set<Pair<Long, Long>>> = _translating
+
+    private val _translateError = MutableStateFlow<String?>(null)
+    val translateError: StateFlow<String?> = _translateError
+
+    fun clearTranslateError() {
+        _translateError.value = null
+    }
+
+    fun translateMessage(chatId: Long, msg: MsgItem) {
+        val key = chatId to msg.id
+        if (key in _translating.value) return
+        _translating.value = _translating.value + key
+        val locale = java.util.Locale.getDefault()
+        val lang = locale.language.ifEmpty { "zh" }
+        val query = TdClient.request("translateMessageText").apply {
+            put("chat_id", chatId)
+            put("message_id", msg.id)
+            put("to_language_code", lang)
+            put("tone", "")
+        }
+        TdRepository.sendRaw(query) { response ->
+            _translating.value = _translating.value - key
+            if (TdClient.isError(response)) {
+                _translateError.value = translateErrorText(response)
+            } else {
+                val text = response.optString("text")
+                if (text.isEmpty()) {
+                    _translateError.value = "这条消息没有能翻译的文字。"
+                } else {
+                    _translations.value = _translations.value +
+                        (key to TranslationUi(
+                            text,
+                            locale.getDisplayLanguage(locale)
+                        ))
+                }
+            }
+        }
+    }
+
+    fun hideTranslation(chatId: Long, messageId: Long) {
+        _translations.value = _translations.value - (chatId to messageId)
+    }
+
+    private fun translateErrorText(error: JSONObject): String {
+        val message = error.optString("message")
+        return when {
+            message.contains("PREMIUM", ignoreCase = true) ->
+                "翻译是 Telegram Premium 的功能，当前账号用不了，消息本身没有被改动。"
+            message.contains("secret", ignoreCase = true) ->
+                "秘密聊天里的消息不能翻译。"
+            else ->
+                "翻译失败，再试一次。（错误码 ${error.optInt("code")}）"
         }
     }
 
