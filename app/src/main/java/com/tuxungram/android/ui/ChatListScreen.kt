@@ -313,6 +313,20 @@ fun ChatListScreen(
     // panel at a time.
     var swipeOpenId by remember { mutableStateOf<Long?>(null) }
 
+    // Pin notices (v0.9.23, P1): a pin that landed locally or
+    // hit the total cap explains itself once, as a Toast —
+    // the StoryStore.postNotice pattern.
+    val pinNoticeContext = LocalContext.current
+    val pinNotice by ChatStore.pinNotice.collectAsState()
+    LaunchedEffect(pinNotice) {
+        val notice = pinNotice
+        if (notice != null) {
+            Toast.makeText(pinNoticeContext, notice, Toast.LENGTH_LONG)
+                .show()
+            ChatStore.clearPinNotice()
+        }
+    }
+
     // Search lives on its own full-screen page since v0.9.19
     // (Z4); this screen only ever shows the plain list now.
     val baseList = if (selectedFolder == null) chats else folderChats
@@ -893,8 +907,9 @@ data class SwipeAction(
  * disagree. The panel stays open until an action is tapped,
  * the row itself is tapped, or another row opens. In the
  * archive list the archive action becomes unarchive and the
- * pin action is trimmed (pinning is a main-list concept
- * there), per the context-trimming rule.
+ * pin action is trimmed in THIS row widget, per the
+ * context-trimming rule — the archive screen builds its own
+ * swipe panel and carries the pin action there (v0.9.23, P1).
  */
 @Composable
 fun SwipeableChatRow(
@@ -935,7 +950,11 @@ fun SwipeableChatRow(
     } else {
         listOf(
             SwipeAction(
-                if (chat.isPinned) "取消置顶" else "置顶",
+                if (chat.isPinned || chat.isLocalPinned) {
+                    "取消置顶"
+                } else {
+                    "置顶"
+                },
                 PinIcon, Color(0xFF8D6E63)
             ) { ChatStore.togglePin(chat) },
             SwipeAction(
@@ -1221,12 +1240,29 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                         modifier = Modifier.weight(1f)
                     )
                 }
-                if (chat.isPinned) {
+                if (chat.isPinned || chat.isLocalPinned) {
                     Icon(
-                        PinIcon, contentDescription = "置顶",
+                        PinIcon,
+                        contentDescription = if (chat.isLocalPinned) {
+                            "本地置顶"
+                        } else {
+                            "置顶"
+                        },
                         tint = palette.textSecondary,
                         modifier = Modifier.size(14.dp)
                     )
+                    if (chat.isLocalPinned) {
+                        // Local-pin marker (v0.9.23, P1): a
+                        // small quiet label next to the pin so
+                        // a pin that lives only on this phone
+                        // is never mistaken for a server pin.
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            "本地",
+                            color = palette.textSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
                 }
                 if (chat.unreadCount > 0 || chat.isMarkedAsUnread) {
                     Spacer(Modifier.width(6.dp))
@@ -1281,7 +1317,15 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 leadingIcon = {
                     Icon(PinIcon, contentDescription = null, modifier = Modifier.size(20.dp))
                 },
-                text = { Text(if (chat.isPinned) "取消置顶" else "置顶") },
+                text = {
+                    Text(
+                        if (chat.isPinned || chat.isLocalPinned) {
+                            "取消置顶"
+                        } else {
+                            "置顶"
+                        }
+                    )
+                },
                 onClick = {
                     menuOpen = false
                     ChatStore.togglePin(chat)
@@ -1335,6 +1379,19 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
     val archiveLoaded by ChatStore.archiveLoaded.collectAsState()
     var swipeOpenId by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(Unit) { ChatStore.loadArchived() }
+    // Pin notices, same Toast pattern as the main list
+    // (v0.9.23, P1): archive pins explain themselves too.
+    val archivePinNoticeContext = LocalContext.current
+    val archivePinNotice by ChatStore.pinNotice.collectAsState()
+    LaunchedEffect(archivePinNotice) {
+        val notice = archivePinNotice
+        if (notice != null) {
+            Toast.makeText(
+                archivePinNoticeContext, notice, Toast.LENGTH_LONG
+            ).show()
+            ChatStore.clearPinNotice()
+        }
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1394,6 +1451,26 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                             }
                         ),
                         rightActions = listOf(
+                            // Pinning in the archive (v0.9.23,
+                            // P1): the archive list has its own
+                            // server allowance and takes local
+                            // pins the same way the main list
+                            // does, so the action joins the
+                            // swipe panel here.
+                            SwipeAction(
+                                if (chat.isPinned ||
+                                    chat.isLocalPinned
+                                ) {
+                                    "取消置顶"
+                                } else {
+                                    "置顶"
+                                },
+                                PinIcon, Color(0xFF8D6E63)
+                            ) {
+                                ChatStore.togglePin(
+                                    chat, archive = true
+                                )
+                            },
                             SwipeAction(
                                 if (chat.isMuted) "取消静音" else "静音",
                                 MuteBellIcon, Color(0xFF7E57C2)
@@ -1525,6 +1602,27 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                                     )
                                 }
                             }
+                        }
+                        if (chat.isPinned || chat.isLocalPinned) {
+                            Icon(
+                                PinIcon,
+                                contentDescription = if (chat.isLocalPinned) {
+                                    "本地置顶"
+                                } else {
+                                    "置顶"
+                                },
+                                tint = Color.Gray,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            if (chat.isLocalPinned) {
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    "本地",
+                                    color = Color.Gray,
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Spacer(Modifier.width(6.dp))
                         }
                         if (chat.unreadCount > 0) {
                             val cap by UiSettings.unreadCap.collectAsState()

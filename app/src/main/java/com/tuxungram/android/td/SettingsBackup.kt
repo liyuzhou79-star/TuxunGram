@@ -57,6 +57,12 @@ object SettingsBackup {
         for ((chatId, path) in UiSettings.chatWallpapers.value) {
             chatWallpapers.put(chatId.toString(), path)
         }
+        // Local pins (v0.9.23, P1): the ordered chat ids.
+        // Like the wallpaper map these are chat ids of THIS
+        // account — on another account they simply match
+        // nothing and are pruned away by the chat list.
+        val localPins = JSONArray()
+        for (chatId in LocalPins.ids.value) localPins.put(chatId)
         val proxies = JSONArray()
         val list = ProxyStore.proxies.value
         var activeIndex = -1
@@ -81,6 +87,7 @@ object SettingsBackup {
             put("from_version", fromVersion)
             put("ui", ui)
             put("chat_wallpapers", chatWallpapers)
+            put("local_pins", localPins)
             put("proxies", proxies)
             put("active_proxy", activeIndex)
             // Proxy auto-failover switch (v0.9.16, W6 audit:
@@ -127,6 +134,7 @@ object SettingsBackup {
         var chatWallpapers: Map<Long, String>? = null
         var keepAlive: Boolean? = null
         var duckBar: Boolean? = null
+        var localPins: List<Long>? = null
         var proxyAutoFailover: Boolean? = null
         val uiObj = root.optJSONObject("ui")
         if (uiObj != null) {
@@ -221,6 +229,23 @@ object SettingsBackup {
             }
             chatWallpapers = staged
         }
+        if (root.has("local_pins")) {
+            val arr = root.optJSONArray("local_pins")
+                ?: return "备份里的本地置顶部分格式不对，设置没有改动。"
+            val staged = ArrayList<Long>()
+            try {
+                for (i in 0 until arr.length()) {
+                    val id = arr.getLong(i)
+                    if (id == 0L) {
+                        return "备份里的本地置顶部分格式不对，设置没有改动。"
+                    }
+                    if (id !in staged) staged.add(id)
+                }
+            } catch (t: Throwable) {
+                return "备份里的本地置顶部分格式不对，设置没有改动。"
+            }
+            localPins = staged
+        }
         if (root.has("proxy_auto_failover")) {
             proxyAutoFailover = try {
                 root.getBoolean("proxy_auto_failover")
@@ -298,6 +323,10 @@ object SettingsBackup {
             }
         }
         chatWallpapers?.let { UiSettings.replaceChatWallpapers(it) }
+        localPins?.let {
+            LocalPins.replaceAll(it)
+            ChatStore.onLocalPinsChanged()
+        }
         keepAlive?.let { UiSettings.setKeepAlive(it) }
         duckBar?.let { UiSettings.setDuckBar(it) }
         proxyAutoFailover?.let { ProxyStore.setAutoFailover(it) }

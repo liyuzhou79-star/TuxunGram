@@ -26,6 +26,12 @@ data class ChatItem(
     val dateSeconds: Int,
     val unreadCount: Int,
     val isPinned: Boolean,
+    // Locally pinned (v0.9.23, P1): pinned on this phone only
+    // via LocalPins after the server pins in the list filled
+    // up. Renders in the pinned area after the server pins,
+    // badged 本地. Only ever set for the main and archive
+    // lists — folder lists keep pure TDLib order.
+    val isLocalPinned: Boolean = false,
     val isMuted: Boolean,
     val canSendBasic: Boolean,
     val canSendPhotos: Boolean,
@@ -172,9 +178,159 @@ object ChatStore {
         if (!recomputeDirty) return
         recomputeDirty = false
         lastRecomputeAt = System.currentTimeMillis()
+        pruneLocalPins()
         recompute()
         recomputeArchive()
         recomputeFolder()
+    }
+
+    // ---- Local pins (v0.9.23, P1) ----
+
+    /** Hard ceiling for server + local pins shown in one
+     *  list, per the product decision: the server allowance
+     *  (5 free) plus local pins filling up to 10 in total. */
+    private const val MAX_TOTAL_PINS = 10
+
+    // Server pin allowances per list, from getOption
+    // ("pinned_chat_count_max" /
+    // "pinned_archived_chat_count_max", td_api.tl
+    // toggleChatIsPinned). 5 is the free-account value the
+    // tl documents as the default; the fetched value wins
+    // as soon as it lands (Premium raises it server-side).
+    @Volatile
+    private var mainPinCap = 5
+
+    @Volatile
+    private var archivePinCap = 5
+
+    private fun fetchPinCaps() {
+        for ((name, archive) in listOf(
+            "pinned_chat_count_max" to false,
+            "pinned_archived_chat_count_max" to true
+        )) {
+            val query = TdClient.request("getOption").apply {
+                put("name", name)
+            }
+            TdRepository.sendRaw(query) { response ->
+                if (TdClient.isError(response)) return@sendRaw
+                val value = response.optLong("value", 0L)
+                if (value > 0) {
+                    if (archive) {
+                        archivePinCap = value.toInt()
+                    } else {
+                        mainPinCap = value.toInt()
+                    }
+                }
+            }
+        }
+    }
+
+    /** One-shot plain-language pin notice (cap reached, or a
+     *  pin landed as a local pin), consumed by the list
+     *  screens as a Toast — the StoryStore.postNotice
+     *  pattern. */
+    private val _pinNotice = MutableStateFlow<String?>(null)
+    val pinNotice: StateFlow<String?> = _pinNotice
+
+    fun clearPinNotice() {
+        _pinNotice.value = null
+    }
+
+    /** Settings import replaced the local pin list: republish
+     *  so the pinned areas reflect it. */
+    fun onLocalPinsChanged() {
+        requestRecompute()
+    }
+
+    /** Remove local pins whose chat is provably gone: the
+     *  chat is in the cache but holds no position in either
+     *  the main or the archive list (deleted chats and chats
+     *  removed from every list end up like that). Ids whose
+     *  chat is not cached yet are kept — "not loaded" is not
+     *  "gone". */
+    private fun pruneLocalPins() {
+        val localIds = LocalPins.ids.value
+        if (localIds.isEmpty()) return
+        val gone = HashSet<Long>()
+        for (id in localIds) {
+            val chat = cache[id] ?: continue
+            val inMain = mainPosition(chat)?.optLong("order") ?: 0L
+            val inArchive =
+                archivePosition(chat)?.optLong("order") ?: 0L
+            if (inMain == 0L && inArchive == 0L) gone.add(id)
+        }
+        LocalPins.prune(gone)
+    }
+
+    /** Flag and re-order one published list for local pins:
+     *  server pins first (their TDLib order already puts
+     *  them on top), then the locally pinned chats in the
+     *  order the user pinned them, then everything else in
+     *  its existing order. A chat that is server-pinned is
+     *  never also flagged local. */
+    private fun applyLocalPins(
+        items: List<ChatItem>
+    ): List<ChatItem> {
+        val localIds = LocalPins.ids.value
+        if (localIds.isEmpty()) return items
+        val localSet = localIds.toSet()
+        val flagged = items.map { item ->
+            if (item.id in localSet && !item.isPinned) {
+                item.copy(isLocalPinned = true)
+            } else {
+                item
+            }
+        }
+        val serverPinned = flagged.filter { it.isPinned }
+        val localPinned = localIds.mapNotNull { id ->
+            flagged.firstOrNull { it.id == id && it.isLocalPinned }
+        }
+        val rest = flagged.filter { !it.isPinned && !it.isLocalPinned }
+        return serverPinned + localPinned + rest
+    }
+
+    /** Server-pinned chats in one list; [secret] = null
+     *  counts all of them, otherwise only the ones sharing
+     *  the target's secret-ness (the tl grants secret chats
+     *  their own allowance of the same size). */
+    private fun serverPinCount(
+        archive: Boolean,
+        secret: Boolean?
+    ): Int {
+        var n = 0
+        for (chat in cache.values) {
+            val position = (
+                if (archive) archivePosition(chat)
+                else mainPosition(chat)
+                ) ?: continue
+            if (position.optLong("order") == 0L) continue
+            if (!position.optBoolean("is_pinned")) continue
+            if (secret != null) {
+                val isSecret = chat.optJSONObject("type")
+                    ?.optString("@type") == "chatTypeSecret"
+                if (isSecret != secret) continue
+            }
+            n++
+        }
+        return n
+    }
+
+    /** Locally pinned chats currently shown in one list. */
+    private fun localPinCountIn(archive: Boolean): Int {
+        val localIds = LocalPins.ids.value
+        if (localIds.isEmpty()) return 0
+        var n = 0
+        for (id in localIds) {
+            val chat = cache[id] ?: continue
+            val position = (
+                if (archive) archivePosition(chat)
+                else mainPosition(chat)
+                ) ?: continue
+            if (position.optLong("order") == 0L) continue
+            if (position.optBoolean("is_pinned")) continue
+            n++
+        }
+        return n
     }
 
     fun attach() {
@@ -193,6 +349,7 @@ object ChatStore {
 
     fun onReady() {
         attach()
+        fetchPinCaps()
         loadMore()
     }
 
@@ -329,7 +486,7 @@ object ChatStore {
             items.add(toItem(chat, position, order))
         }
         items.sortWith(compareByDescending<ChatItem> { it.order }.thenByDescending { it.id })
-        _archivedChats.value = items
+        _archivedChats.value = applyLocalPins(items)
     }
 
     // ---- Chat folders (Batch 2, B7): tabs only, no editor ----
@@ -660,7 +817,7 @@ object ChatStore {
             items.add(toItem(chat, position, order))
         }
         items.sortWith(compareByDescending<ChatItem> { it.order }.thenByDescending { it.id })
-        _chats.value = items
+        _chats.value = applyLocalPins(items)
     }
 
     private fun toItem(chat: JSONObject, position: JSONObject, order: Long): ChatItem {
@@ -850,13 +1007,85 @@ object ChatStore {
         }
     }
 
-    fun togglePin(chat: ChatItem) {
-        val query = TdClient.request("toggleChatIsPinned").apply {
-            put("chat_list", JSONObject().put("@type", "chatListMain"))
-            put("chat_id", chat.id)
-            put("is_pinned", !chat.isPinned)
+    /** The one pin action behind every 置顶 entry (long-press
+     *  menu and swipe, main list and archive alike; v0.9.23,
+     *  P1). Unpinning undoes whichever kind the chat has.
+     *  Pinning goes to the server while the list's server
+     *  allowance has room; once it is full the pin is kept
+     *  locally instead (see LocalPins) — the server cap is
+     *  never argued with. Server + local pins in one list
+     *  are capped at MAX_TOTAL_PINS in total. */
+    fun togglePin(chat: ChatItem) = togglePin(chat, archive = false)
+
+    fun togglePin(chat: ChatItem, archive: Boolean) {
+        if (chat.isPinned) {
+            sendTogglePinned(chat.id, archive, pinned = false)
+            return
         }
-        TdRepository.sendRaw(query) { reportIfError(it) }
+        if (LocalPins.contains(chat.id)) {
+            LocalPins.remove(chat.id)
+            requestRecompute()
+            return
+        }
+        val total = serverPinCount(archive, secret = null) +
+            localPinCountIn(archive)
+        if (total >= MAX_TOTAL_PINS) {
+            _pinNotice.value =
+                "置顶最多 $MAX_TOTAL_PINS 个（服务器同步的和本地的加起来），" +
+                    "先取消一个再置顶吧。"
+            return
+        }
+        val cap = if (archive) archivePinCap else mainPinCap
+        if (serverPinCount(archive, secret = chat.isSecret) < cap) {
+            sendTogglePinned(chat.id, archive, pinned = true) {
+                // The server refused although our count said
+                // there was room (a stale cap, e.g. pins made
+                // on another device a moment ago): land the
+                // pin locally so the tap still does what the
+                // user asked, and say so.
+                LocalPins.add(chat.id)
+                _pinNotice.value =
+                    "服务器置顶满了，已改成本地置顶：" +
+                        "只在这台手机上排前面。"
+                requestRecompute()
+            }
+        } else {
+            LocalPins.add(chat.id)
+            _pinNotice.value =
+                "服务器置顶满了，这个是本地置顶：" +
+                    "只在这台手机上排前面，换设备不会跟过去。"
+            requestRecompute()
+        }
+    }
+
+    private fun sendTogglePinned(
+        chatId: Long,
+        archive: Boolean,
+        pinned: Boolean,
+        onLimitError: (() -> Unit)? = null
+    ) {
+        val query = TdClient.request("toggleChatIsPinned").apply {
+            put(
+                "chat_list",
+                JSONObject().put(
+                    "@type",
+                    if (archive) "chatListArchive" else "chatListMain"
+                )
+            )
+            put("chat_id", chatId)
+            put("is_pinned", pinned)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                if (pinned && onLimitError != null &&
+                    response.optInt("code") == 400
+                ) {
+                    onLimitError()
+                } else {
+                    reportIfError(response)
+                }
+            }
+        }
     }
 
     /** Mute "forever" is a far-future mute_for; unmuting sets it to
