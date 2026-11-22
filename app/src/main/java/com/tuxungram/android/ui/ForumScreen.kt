@@ -59,6 +59,7 @@ import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.ForumStore
 import com.tuxungram.android.td.ForumTopicUi
 import com.tuxungram.android.td.MsgItem
+import com.tuxungram.android.td.MsgKind
 import java.io.File
 
 /**
