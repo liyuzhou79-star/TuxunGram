@@ -23,10 +23,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
@@ -284,7 +283,7 @@ fun HomeDrawerContent(
         }
         DrawerDivider()
         // ---- Menu, official order, real entries only ----
-        DrawerItem(Icons.Filled.Group, "新建群组") {
+        DrawerItem(PeopleIcon, "新建群组") {
             onClose()
             onOpenCreate("group")
         }
@@ -292,7 +291,7 @@ fun HomeDrawerContent(
             onClose()
             onOpenCreate("channel")
         }
-        DrawerItem(PeopleIcon, "联系人") {
+        DrawerItem(Icons.Filled.Person, "联系人") {
             onClose()
             onOpenContactsTab()
         }
@@ -315,7 +314,7 @@ fun HomeDrawerContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                Icons.Filled.DarkMode,
+                MoonIcon,
                 contentDescription = null,
                 tint = palette.textSecondary,
                 modifier = Modifier.size(24.dp)

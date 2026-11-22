@@ -726,3 +726,13 @@ val KeyboardIcon: ImageVector = icon("Keyboard", evenOdd = true) {
     horizontalLineTo(5f)
     close()
 }
+
+/** Crescent moon (the drawer's night-mode row, v0.9.19):
+ *  material-icons-core has no moon glyph, so the classic
+ *  two-arc crescent is drawn here like the other glyphs. */
+val MoonIcon: ImageVector = icon("Moon") {
+    moveTo(21f, 12.79f)
+    arcTo(9f, 9f, 0f, true, true, 11.21f, 3f)
+    arcTo(7f, 7f, 0f, false, false, 21f, 12.79f)
+    close()
+}
