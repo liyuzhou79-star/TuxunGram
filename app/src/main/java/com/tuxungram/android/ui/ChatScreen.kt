@@ -292,10 +292,20 @@ fun ChatScreen(
         Notifier.dismissForChat(context, chatId)
         onDispose {
             // Flush a draft typed just before leaving, before
-            // close() zeroes the current chat (F5).
-            MessageStore.saveDraft(latestInput)
-            MessageStore.close()
-            Notifier.foregroundChatId = 0L
+            // close() zeroes the current chat (F5). Guarded by
+            // the still-current chat (v0.9.11, A1): during an
+            // animated chat-to-chat transition the incoming
+            // screen has already opened the store for its own
+            // chat — this screen must not save its draft into
+            // that chat, close the store under it, or clear
+            // its foreground marker.
+            if (MessageStore.currentChatId == chatId) {
+                MessageStore.saveDraft(latestInput)
+                MessageStore.close()
+            }
+            if (Notifier.foregroundChatId == chatId) {
+                Notifier.foregroundChatId = 0L
+            }
         }
     }
     // In selection mode Back first leaves the mode, like in

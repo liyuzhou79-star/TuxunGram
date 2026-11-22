@@ -13,6 +13,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
@@ -389,6 +390,93 @@ private fun AuthHost() {
     }
 }
 
+/** Route snapshot for ReadyHost's animated navigation
+ *  (v0.9.11, A1): the host's display branches collapse into
+ *  one value so AnimatedContent can transition between them
+ *  instead of hard-cutting. [depth] ranks how deep a route
+ *  sits — home 0, pages opened from home 1, pages opened
+ *  from those 2 — and picks the slide direction: deeper
+ *  slides in from the right, back slides the page out to
+ *  the right, same-depth crossfades. */
+private sealed interface Route {
+    val depth: Int
+
+    data object Home : Route {
+        override val depth = 0
+    }
+
+    data object Changelog : Route {
+        override val depth = 1
+    }
+
+    data object GuideReplay : Route {
+        override val depth = 1
+    }
+
+    data object EditProfile : Route {
+        override val depth = 1
+    }
+
+    data object Blocked : Route {
+        override val depth = 1
+    }
+
+    data object Sessions : Route {
+        override val depth = 1
+    }
+
+    data object StickerSets : Route {
+        override val depth = 1
+    }
+
+    data object SettingsOverlay : Route {
+        override val depth = 1
+    }
+
+    data object Archive : Route {
+        override val depth = 1
+    }
+
+    data object ContactsOverlay : Route {
+        override val depth = 1
+    }
+
+    data object Create : Route {
+        override val depth = 1
+    }
+
+    data class Profile(val chatId: Long) : Route {
+        override val depth = 1
+    }
+
+    data class Chat(val chatId: Long) : Route {
+        override val depth = 1
+    }
+
+    data class Members(val chatId: Long) : Route {
+        override val depth = 2
+    }
+
+    data class SharedMedia(val chatId: Long) : Route {
+        override val depth = 2
+    }
+
+    data class GroupSettings(val chatId: Long) : Route {
+        override val depth = 2
+    }
+
+    data class Thread(val chatId: Long, val postId: Long) : Route {
+        override val depth = 2
+    }
+
+    data class Forward(
+        val fromChatId: Long,
+        val messageIds: List<Long>
+    ) : Route {
+        override val depth = 2
+    }
+}
+
 @Composable
 private fun ReadyHost() {
     // Saveable (v0.9.9, W5): a rotation recreates the
@@ -532,32 +620,87 @@ private fun ReadyHost() {
         )
         return
     }
+    // The route snapshot: the same priority order the old
+    // `when` chain used, resolved once into a value the
+    // transition can animate between.
+    val route: Route = when {
+        showChangelog -> Route.Changelog
+        showGuideReplay -> Route.GuideReplay
+        thread != null -> Route.Thread(thread.first, thread.second)
+        showEditProfile -> Route.EditProfile
+        showBlocked -> Route.Blocked
+        showSessions -> Route.Sessions
+        showStickerSets -> Route.StickerSets
+        showSettings -> Route.SettingsOverlay
+        showArchive -> Route.Archive
+        showContacts -> Route.ContactsOverlay
+        groupSettingsChatId != null ->
+            Route.GroupSettings(groupSettingsChatId!!)
+        sharedMediaChatId != null ->
+            Route.SharedMedia(sharedMediaChatId!!)
+        membersChatId != null -> Route.Members(membersChatId!!)
+        profileChatId != null -> Route.Profile(profileChatId!!)
+        showCreate -> Route.Create
+        req != null -> Route.Forward(req.first, req.second)
+        chatId != null -> Route.Chat(chatId)
+        else -> Route.Home
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
-    when {
-        showChangelog -> ChangelogScreen(
-            onBack = { showChangelog = false }
-        )
-        showGuideReplay -> GuideScreen(
-            onDone = { showGuideReplay = false }
-        )
-        thread != null -> ThreadScreen(
-            sourceChatId = thread.first,
-            postId = thread.second,
-            onBack = { threadReq = null }
-        )
-        showEditProfile -> EditProfileScreen(
-            onBack = { showEditProfile = false }
-        )
-        showBlocked -> BlockedScreen(onBack = { showBlocked = false })
-        showSessions -> SessionsScreen(onBack = { showSessions = false })
-        showStickerSets -> StickerSetsScreen(
-            onBack = { showStickerSets = false }
-        )
-        showSettings -> SettingsScreen(
+        AnimatedContent(
+            targetState = route,
+            transitionSpec = {
+                when {
+                    targetState.depth > initialState.depth ->
+                        (slideInHorizontally(Motion.tween(280)) {
+                            it
+                        } + fadeIn(Motion.tween(280))) togetherWith
+                            (slideOutHorizontally(Motion.tween(280)) {
+                                -it / 3
+                            } + fadeOut(Motion.tween(200)))
+                    targetState.depth < initialState.depth ->
+                        (slideInHorizontally(Motion.tween(280)) {
+                            -it / 3
+                        } + fadeIn(Motion.tween(280))) togetherWith
+                            (slideOutHorizontally(Motion.tween(280)) {
+                                it
+                            } + fadeOut(Motion.tween(200)))
+                    else ->
+                        fadeIn(Motion.tween(220)) togetherWith
+                            fadeOut(Motion.tween(180))
+                }
+            },
+            label = "route",
+            modifier = Modifier.fillMaxSize()
+        ) { r ->
+            when (r) {
+                is Route.Changelog -> ChangelogScreen(
+                    onBack = { showChangelog = false }
+                )
+                is Route.GuideReplay -> GuideScreen(
+                    onDone = { showGuideReplay = false }
+                )
+                is Route.Thread -> ThreadScreen(
+                    sourceChatId = r.chatId,
+                    postId = r.postId,
+                    onBack = { threadReq = null }
+                )
+                is Route.EditProfile -> EditProfileScreen(
+                    onBack = { showEditProfile = false }
+                )
+                is Route.Blocked -> BlockedScreen(
+                    onBack = { showBlocked = false }
+                )
+                is Route.Sessions -> SessionsScreen(
+                    onBack = { showSessions = false }
+                )
+                is Route.StickerSets -> StickerSetsScreen(
+                    onBack = { showStickerSets = false }
+                )
+                is Route.SettingsOverlay -> SettingsScreen(
             onBack = { showSettings = false },
             onOpenSessions = {
                 showSettings = false
@@ -584,59 +727,61 @@ private fun ReadyHost() {
                 showGuideReplay = true
             }
         )
-        showArchive -> ArchiveScreen(
-            onBack = { showArchive = false },
-            onOpenChat = {
-                showArchive = false
-                openChatId = it
-            }
-        )
-        showContacts -> ContactsScreen(
-            onBack = { showContacts = false },
-            onOpenChat = {
-                showContacts = false
-                openChatId = it
-            }
-        )
-        groupSettingsChatId != null -> GroupPermissionsScreen(
-            chatId = groupSettingsChatId!!,
-            onBack = { groupSettingsChatId = null }
-        )
-        sharedMediaChatId != null -> SharedMediaScreen(
-            chatId = sharedMediaChatId!!,
-            onBack = { sharedMediaChatId = null }
-        )
-        membersChatId != null -> MembersScreen(
-            chatId = membersChatId!!,
-            onBack = { membersChatId = null }
-        )
-        profileChatId != null -> ProfileScreen(
-            chatId = profileChatId!!,
-            onBack = { profileChatId = null },
-            onOpenSecretChat = { newChatId ->
-                profileChatId = null
-                openChatId = newChatId
-            },
-            onOpenMembers = { membersChatId = profileChatId },
-            onOpenSharedMedia = { sharedMediaChatId = profileChatId },
-            onOpenGroupSettings = { groupSettingsChatId = profileChatId }
-        )
-        showCreate -> CreateChatScreen(
-            onBack = { showCreate = false },
-            onCreated = {
-                showCreate = false
-                openChatId = it
-            }
-        )
-        req != null -> ForwardPickerScreen(
-            fromChatId = req.first,
-            messageIds = req.second,
-            onDone = {
-                forwardReq = null
-                openChatId = forwardReturnTo
-            }
-        )
-        chatId == null -> Column(modifier = Modifier.fillMaxSize()) {
+                is Route.Archive -> ArchiveScreen(
+                    onBack = { showArchive = false },
+                    onOpenChat = {
+                        showArchive = false
+                        openChatId = it
+                    }
+                )
+                is Route.ContactsOverlay -> ContactsScreen(
+                    onBack = { showContacts = false },
+                    onOpenChat = {
+                        showContacts = false
+                        openChatId = it
+                    }
+                )
+                is Route.GroupSettings -> GroupPermissionsScreen(
+                    chatId = r.chatId,
+                    onBack = { groupSettingsChatId = null }
+                )
+                is Route.SharedMedia -> SharedMediaScreen(
+                    chatId = r.chatId,
+                    onBack = { sharedMediaChatId = null }
+                )
+                is Route.Members -> MembersScreen(
+                    chatId = r.chatId,
+                    onBack = { membersChatId = null }
+                )
+                is Route.Profile -> ProfileScreen(
+                    chatId = r.chatId,
+                    onBack = { profileChatId = null },
+                    onOpenSecretChat = { newChatId ->
+                        profileChatId = null
+                        openChatId = newChatId
+                    },
+                    onOpenMembers = { membersChatId = r.chatId },
+                    onOpenSharedMedia = { sharedMediaChatId = r.chatId },
+                    onOpenGroupSettings = {
+                        groupSettingsChatId = r.chatId
+                    }
+                )
+                is Route.Create -> CreateChatScreen(
+                    onBack = { showCreate = false },
+                    onCreated = {
+                        showCreate = false
+                        openChatId = it
+                    }
+                )
+                is Route.Forward -> ForwardPickerScreen(
+                    fromChatId = r.fromChatId,
+                    messageIds = r.messageIds,
+                    onDone = {
+                        forwardReq = null
+                        openChatId = forwardReturnTo
+                    }
+                )
+                is Route.Home -> Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
                 // Tab transitions (v0.9.11, A1): switching the
                 // bottom-nav tabs used to hard-cut; now a short
@@ -737,18 +882,21 @@ private fun ReadyHost() {
                 )
             }
         }
-        else -> ChatScreen(
-            chatId = chatId,
-            onBack = { openChatId = null },
-            onForward = { msgs ->
-                forwardReturnTo = chatId
-                forwardReq = chatId to msgs.map { it.id }
-                openChatId = null
-            },
-            onOpenProfile = { profileChatId = chatId },
-            onOpenThread = { postId -> threadReq = chatId to postId }
-        )
-    }
+                is Route.Chat -> ChatScreen(
+                    chatId = r.chatId,
+                    onBack = { openChatId = null },
+                    onForward = { msgs ->
+                        forwardReturnTo = r.chatId
+                        forwardReq = r.chatId to msgs.map { it.id }
+                        openChatId = null
+                    },
+                    onOpenProfile = { profileChatId = r.chatId },
+                    onOpenThread = { postId ->
+                        threadReq = r.chatId to postId
+                    }
+                )
+            }
+        }
         val invite = invitePreview
         if (invite != null) {
             AlertDialog(
