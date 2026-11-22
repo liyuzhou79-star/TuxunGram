@@ -55,12 +55,16 @@ fun MeScreen(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
     ) {
-        Spacer(Modifier.height(10.dp))
-        GroupCard {
+        // Graphical header banner (v0.9.11, A2): the Me tab
+        // opens with a seed-colour gradient banner (deco
+        // circles + plane watermark, all program-drawn)
+        // instead of a plain card — avatar and identity sit
+        // on the banner in white.
+        HeaderBanner {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 20.dp),
+                    .padding(vertical = 26.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 val path = me.photoPath
@@ -71,7 +75,7 @@ fun MeScreen(
                         modifier = Modifier
                             .size(84.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
+                            .background(Color.White.copy(alpha = 0.25f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -84,30 +88,35 @@ fun MeScreen(
                 Spacer(Modifier.height(12.dp))
                 Text(
                     me.displayName.ifEmpty { "我" },
+                    color = Color.White,
                     fontSize = 20.sp, fontWeight = FontWeight.SemiBold
                 )
                 if (me.username.isNotEmpty()) {
                     Text(
                         "@${me.username}",
-                        color = Color.Gray, fontSize = 14.sp
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 14.sp
                     )
                 }
                 if (me.phone.isNotEmpty()) {
                     Text(
                         "+${me.phone}",
-                        color = Color.Gray, fontSize = 14.sp
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 14.sp
                     )
                 }
                 if (me.bio.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
                     Text(
                         me.bio,
-                        color = Color.Gray, fontSize = 13.sp,
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 13.sp,
                         modifier = Modifier.padding(horizontal = 24.dp)
                     )
                 }
             }
         }
+        Spacer(Modifier.height(12.dp))
         GroupCard {
             IconRow(
                 Icons.Filled.Edit, "编辑资料",

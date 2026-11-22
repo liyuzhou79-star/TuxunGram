@@ -168,38 +168,55 @@ fun ProfileScreen(
                 .lazyListScrollbar(profileListState)
         ) {
             item(key = "head") {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    if (chatItem?.photoPath != null) {
-                        AvatarImage(path = chatItem.photoPath, sizeDp = 84)
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(84.dp)
-                                .background(Color(0xFF90CAF9), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
+                // Graphical header banner (v0.9.11, A2): same
+                // seed-gradient banner as the Me tab, identity
+                // in white over the gradient.
+                HeaderBanner {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (chatItem?.photoPath != null) {
+                            AvatarImage(path = chatItem.photoPath, sizeDp = 84)
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(84.dp)
+                                    .background(
+                                        Color.White.copy(alpha = 0.25f),
+                                        CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    p.title.trim().firstOrNull()?.toString() ?: "?",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 30.sp
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            p.title,
+                            color = Color.White,
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            p.kindLabel,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontSize = 13.sp
+                        )
+                        for (line in p.infoLines) {
                             Text(
-                                p.title.trim().firstOrNull()?.toString() ?: "?",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 30.sp
+                                line,
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 14.sp
                             )
                         }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        p.title,
-                        fontSize = 21.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(p.kindLabel, color = Color.Gray, fontSize = 13.sp)
-                    for (line in p.infoLines) {
-                        Text(line, color = Color.Gray, fontSize = 14.sp)
                     }
                 }
             }

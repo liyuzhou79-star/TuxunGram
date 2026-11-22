@@ -101,22 +101,50 @@ fun TabDotText(selected: Boolean, text: String) {
     }
 }
 
-/** A section title: the section's icon in a tinted rounded
- *  square, then the title. Used at the head of every settings
- *  group and profile section. */
+/** The settings-tile palette (v0.9.11, A2): Nekogram-style
+ *  coloured icon tiles — every settings/profile row and
+ *  section head carries its icon on a saturated rounded
+ *  square instead of a bare glyph. The colours are design
+ *  constants in the same family the reference clients use
+ *  for their preference tiles; a row without an explicit
+ *  colour gets a stable one picked by its title, so the
+ *  page reads colourful but never random between visits. */
+val TILE_PALETTE: List<Color> = listOf(
+    Color(0xFF5B8DEF), // blue
+    Color(0xFF61C167), // green
+    Color(0xFFF2994A), // orange
+    Color(0xFF9B6DD6), // purple
+    Color(0xFFE95E8B), // pink
+    Color(0xFF3DB6C6), // teal
+    Color(0xFFE0B34C), // amber
+    Color(0xFF7A8CA3)  // slate
+)
+
+fun tileColorFor(key: String): Color =
+    TILE_PALETTE[(key.hashCode() and Int.MAX_VALUE) %
+        TILE_PALETTE.size]
+
+/** A section title: the section's icon in a coloured tile,
+ *  then the title. Used at the head of every settings group
+ *  and profile section. */
 @Composable
-fun SectionTitle(icon: ImageVector, text: String) {
+fun SectionTitle(
+    icon: ImageVector,
+    text: String,
+    tileColor: Color? = null
+) {
+    val tile = tileColor ?: tileColorFor(text)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
                 .size(30.dp)
                 .clip(RoundedCornerShape(9.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .background(tile.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 icon, contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                tint = tile,
                 modifier = Modifier.size(18.dp)
             )
         }
@@ -142,18 +170,25 @@ fun GroupCard(content: @Composable () -> Unit) {
     }
 }
 
-/** One icon-led row: leading icon, title, optional gray
- *  subtitle, optional trailing content (current value, switch,
- *  chevron). The whole row is tappable when [onClick] is set. */
+/** One icon-led row: the icon sits in a coloured rounded
+ *  tile (v0.9.11, A2 — the Nekogram preference-row look),
+ *  then title, optional gray subtitle, optional trailing
+ *  content (current value, switch, chevron). The whole row
+ *  is tappable when [onClick] is set. [tileColor] pins the
+ *  tile colour; an explicit [iconTint] from older call sites
+ *  is honoured as the tile colour; otherwise the colour is
+ *  picked stably from the title. */
 @Composable
 fun IconRow(
     icon: ImageVector,
     title: String,
     subtitle: String? = null,
     iconTint: Color? = null,
+    tileColor: Color? = null,
     onClick: (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null
 ) {
+    val tile = tileColor ?: iconTint ?: tileColorFor(title)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -167,11 +202,19 @@ fun IconRow(
             )
             .padding(vertical = 9.dp)
     ) {
-        Icon(
-            icon, contentDescription = null,
-            tint = iconTint ?: MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(23.dp)
-        )
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(tile.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon, contentDescription = null,
+                tint = tile,
+                modifier = Modifier.size(20.dp)
+            )
+        }
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontSize = 15.sp)
@@ -185,9 +228,12 @@ fun IconRow(
     }
 }
 
-/** Illustrated empty state: a large soft icon in a circle, a
- *  title line and one plain sentence. For empty chat lists,
- *  search results, member lists, file lists and the like. */
+/** Illustrated empty state (v0.9.11, A2): a composed
+ *  illustration instead of one flat glyph — a soft halo, the
+ *  main disc with the large icon, and a small brand badge
+ *  overlapping the disc's corner — then a title line and one
+ *  plain sentence. For empty chat lists, search results,
+ *  member lists, file lists and the like. */
 @Composable
 fun EmptyState(
     icon: ImageVector,
@@ -200,18 +246,44 @@ fun EmptyState(
             .fillMaxWidth()
             .padding(horizontal = 32.dp, vertical = 40.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(84.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                icon, contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.size(42.dp)
+        Box(contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .size(112.dp)
+                    .clip(CircleShape)
+                    .background(
+                        MaterialTheme.colorScheme.primary
+                            .copy(alpha = 0.07f)
+                    )
             )
+            Box(
+                modifier = Modifier
+                    .size(84.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(42.dp)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Send,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
         }
         Spacer(Modifier.height(14.dp))
         Text(
@@ -224,6 +296,53 @@ fun EmptyState(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
+    }
+}
+
+/** A graphical header banner (v0.9.11, A2): a seed-colour
+ *  gradient wash with program-drawn deco circles and a faint
+ *  oversized plane watermark — no image assets. Heads the Me
+ *  tab and the profile page; [content] is laid out over the
+ *  banner and owns its padding and text colours. */
+@Composable
+fun HeaderBanner(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val tertiary = MaterialTheme.colorScheme.tertiary
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Brush.linearGradient(listOf(primary, tertiary)))
+    ) {
+        Canvas(modifier = Modifier.matchParentSize()) {
+            drawCircle(
+                Color.White.copy(alpha = 0.10f),
+                radius = size.minDimension * 0.55f,
+                center = Offset(size.width * 0.92f, size.height * 0.05f)
+            )
+            drawCircle(
+                Color.White.copy(alpha = 0.07f),
+                radius = size.minDimension * 0.38f,
+                center = Offset(size.width * 0.06f, size.height * 1.05f)
+            )
+            drawCircle(
+                Color.White.copy(alpha = 0.05f),
+                radius = size.minDimension * 0.22f,
+                center = Offset(size.width * 0.68f, size.height * 0.95f)
+            )
+        }
+        Icon(
+            Icons.AutoMirrored.Filled.Send,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.13f),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 2.dp)
+                .size(110.dp)
+        )
+        content()
     }
 }
 
