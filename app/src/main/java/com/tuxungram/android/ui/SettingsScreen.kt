@@ -185,6 +185,9 @@ fun SettingsScreen(
     // editor dialog below creates or edits one entry.
     val proxyEntries by ProxyStore.proxies.collectAsState()
     val activeProxyId by ProxyStore.activeId.collectAsState()
+    // Auto-failover (v0.9.14, U6).
+    val autoFailover by ProxyStore.autoFailover.collectAsState()
+    val switchLog by ProxyStore.switchLog.collectAsState()
     var proxyEditor by remember { mutableStateOf<ProxyConfig?>(null) }
     var proxyEditorOpen by remember { mutableStateOf(false) }
     // Proxy-link prefill (v0.9.9, W3): a t.me/proxy or
@@ -514,6 +517,13 @@ fun SettingsScreen(
                             } else {
                                 "延迟 ${(seconds * 1000).toInt()} ms"
                             })
+                        // Auto-failover trigger (v0.9.14, U6):
+                        // a failed manual test of the ACTIVE
+                        // entry starts the one-pass walk (the
+                        // store no-ops when the switch is off).
+                        if (seconds == null && isActive) {
+                            ProxyStore.checkActiveAndFailover("手动测速")
+                        }
                     }
                 }) { Text("测速", fontSize = 13.sp) }
                 TextButton(onClick = {
@@ -537,6 +547,49 @@ fun SettingsScreen(
                 TextButton(onClick = { ProxyStore.disableActive() }) {
                     Text("停用代理（直连）")
                 }
+            }
+        }
+        // Auto-failover (v0.9.14, U6): off by default. The
+        // probe runs once when the app starts and when a
+        // manual speed test of the active entry fails; a
+        // switch is announced by notification and recorded
+        // below.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("自动故障切换", fontSize = 15.sp)
+                Text(
+                    "当前代理连不上时，自动换到列表里的下一个能用的。" +
+                        "只在打开 App 时和手动测速失败时检查一次，" +
+                        "全部连不上就停下并在这里留记录。",
+                    fontSize = 12.sp, color = Color.Gray
+                )
+            }
+            Switch(
+                checked = autoFailover,
+                onCheckedChange = { ProxyStore.setAutoFailover(it) }
+            )
+        }
+        if (switchLog.isNotEmpty()) {
+            Text(
+                "切换记录",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+            )
+            for (record in switchLog) {
+                Text(
+                    "${formatSwitchTime(record.timeMillis)} ${record.text}",
+                    fontSize = 12.sp, color = Color.Gray,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            }
+            TextButton(onClick = { ProxyStore.clearSwitchLog() }) {
+                Text("清除记录", fontSize = 13.sp)
             }
         }
         ErrorText()
@@ -1928,6 +1981,12 @@ private fun ScopeSwitchRow(
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }
+
+/** Timestamp for a proxy switch-log line (v0.9.14, U6). */
+private fun formatSwitchTime(millis: Long): String =
+    java.text.SimpleDateFormat(
+        "MM-dd HH:mm", java.util.Locale.getDefault()
+    ).format(java.util.Date(millis))
 
 private fun formatMuteRemaining(seconds: Int): String = when {
     seconds >= 86400 -> "${seconds / 86400} 天"
