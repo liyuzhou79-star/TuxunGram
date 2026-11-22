@@ -42,6 +42,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -83,9 +85,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.layout.ContentScale
@@ -874,19 +879,28 @@ fun ChatScreen(
             },
             label = "chatHeader"
         ) { selecting ->
+        // Official top bar (v0.9.17, X4): actionBarDefault
+        // background, actionBarDefaultTitle / Subtitle /
+        // Icon colors, 40 dp avatar always present.
+        val headerPalette = OfficialTheme.current()
         if (selecting) {
             // Selection-mode header (v0.7.0, F1): count + exit.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .background(headerPalette.actionBarBg)
                     .padding(horizontal = 4.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { selectedIds = emptySet() }) {
-                    Icon(Icons.Filled.Close, contentDescription = "退出多选")
+                    Icon(
+                        Icons.Filled.Close, contentDescription = "退出多选",
+                        tint = headerPalette.actionBarIcon
+                    )
                 }
                 Text(
                     "已选 ${selectedIds.size} 条",
+                    color = headerPalette.actionBarTitle,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -895,11 +909,16 @@ fun ChatScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(headerPalette.actionBarBg)
                 .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = headerPalette.actionBarIcon
+                )
             }
             Row(
                 modifier = Modifier
@@ -908,22 +927,48 @@ fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (chat?.photoPath != null) {
-                    AvatarImage(path = chat.photoPath, sizeDp = 36)
-                    Spacer(Modifier.width(10.dp))
+                    AvatarImage(path = chat.photoPath, sizeDp = 40)
+                } else {
+                    val pair = OfficialTheme.avatarColors(
+                        chatId, OfficialTheme.dark
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(pair.first, pair.second)
+                                ),
+                                CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            (chat?.title ?: "对").trim()
+                                .firstOrNull()?.toString() ?: "?",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
                 }
+                Spacer(Modifier.width(10.dp))
                 Column {
                     Text(
                         chat?.title ?: "对话",
-                        fontSize = 18.sp,
+                        color = headerPalette.actionBarTitle,
+                        fontSize = 17.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
-                    // Peer typing / recording subtitle (F5).
+                    // Peer typing / recording subtitle (F5):
+                    // official status line in the accent text
+                    // color (chat_status family).
                     if (peerAction.isNotEmpty()) {
                         Text(
                             peerAction,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 12.sp,
+                            color = headerPalette.accentText,
+                            fontSize = 13.sp,
                             maxLines = 1
                         )
                     }
@@ -946,7 +991,10 @@ fun ChatScreen(
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { chatSearchOpen = !chatSearchOpen }) {
-                Icon(Icons.Filled.Search, contentDescription = "搜索聊天记录")
+                Icon(
+                    SearchIcon, contentDescription = "搜索聊天记录",
+                    tint = headerPalette.actionBarIcon
+                )
             }
             if (!isForum) {
                 // Jump to a date (v0.9.16, W3): the framework
@@ -959,7 +1007,8 @@ fun ChatScreen(
                     IconButton(onClick = { headerMenuOpen = true }) {
                         Icon(
                             Icons.Filled.MoreVert,
-                            contentDescription = "更多"
+                            contentDescription = "更多",
+                            tint = headerPalette.actionBarIcon
                         )
                     }
                     DropdownMenu(
@@ -1009,6 +1058,14 @@ fun ChatScreen(
         }
         }
         }
+        // Hairline under the top bar (v0.9.17, X4): the
+        // official divider color separates bar and messages.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(headerPalette.divider)
+        )
 
         if (isForum) {
             // Forum group (v0.8.0, G2): the topic list (or one
@@ -1539,6 +1596,13 @@ fun ChatScreen(
                         .fillMaxSize()
                         .background(Color(chatBgArgb))
                 )
+            } else {
+                // Official default chat background (v0.9.17,
+                // X5): chat_wallpaper tint + a self-drawn
+                // doodle pattern in the official spirit. Only
+                // the fallback — a user wallpaper or solid
+                // color always wins (rules unchanged).
+                OfficialChatBackground()
             }
         if (messages.isEmpty() && showEmptyHistory) {
             Box(
@@ -1751,12 +1815,13 @@ fun ChatScreen(
         }
         }
 
-        // Hairline above the bottom dock (Phase D, D5).
+        // Hairline above the bottom dock (Phase D, D5;
+        // official divider color since v0.9.17, X4).
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(1.dp)
-                .background(MaterialTheme.colorScheme.outlineVariant)
+                .height(0.5.dp)
+                .background(OfficialTheme.current().divider)
         )
         if (sendError != null) {
             Text(
@@ -2434,9 +2499,71 @@ fun ChatScreen(
             if (!recording) Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Message panel background (v0.9.17, X4):
+                    // chat_messagePanelBackground.
+                    .background(OfficialTheme.current().panelBg)
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Sticker/emoji panel toggle: the input bar's
+                // left-side entry, like in mature clients.
+                IconButton(onClick = {
+                    stickerPanelOpen = !stickerPanelOpen
+                    if (stickerPanelOpen) MediaStore.load()
+                }) {
+                    Icon(
+                        if (stickerPanelOpen) KeyboardIcon else FaceIcon,
+                        contentDescription = "表情与贴纸",
+                        tint = Color.Gray,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                if (botUi?.takeIf { it.chatId == chatId }
+                        ?.let { it.commands.isNotEmpty() || it.groupBots.isNotEmpty() } == true
+                ) {
+                    // Slash entry (W2): one tap puts a "/" in the
+                    // box, which raises the command popup.
+                    IconButton(onClick = { if (!input.startsWith("/")) input = "/$input" }) {
+                        Text(
+                            "/",
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Gray
+                        )
+                    }
+                }
+                TextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    placeholder = {
+                        Text(
+                            when (val kbNow = replyKb) {
+                                is ReplyKb.Shown ->
+                                    kbNow.placeholder.ifEmpty { "消息" }
+                                is ReplyKb.ForceReply ->
+                                    kbNow.placeholder.ifEmpty { "消息" }
+                                else -> "消息"
+                            }
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 4,
+                    // Official capsule field (v0.9.17, X4):
+                    // rounded rect on the panel background,
+                    // no outline, no underline indicator.
+                    shape = RoundedCornerShape(24.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor =
+                            OfficialTheme.current().inBubble,
+                        unfocusedContainerColor =
+                            OfficialTheme.current().inBubble,
+                        disabledContainerColor =
+                            OfficialTheme.current().inBubble,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent
+                    )
+                )
                 if (canPhotos) {
                     Box {
                         IconButton(onClick = { attachMenuOpen = true }) {
@@ -2613,50 +2740,6 @@ fun ChatScreen(
                         }
                     }
                 }
-                // Sticker/emoji panel toggle: the input bar's
-                // left-side entry, like in mature clients.
-                IconButton(onClick = {
-                    stickerPanelOpen = !stickerPanelOpen
-                    if (stickerPanelOpen) MediaStore.load()
-                }) {
-                    Icon(
-                        if (stickerPanelOpen) KeyboardIcon else Icons.Filled.Face,
-                        contentDescription = "表情与贴纸",
-                        tint = Color.Gray,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-                if (botUi?.takeIf { it.chatId == chatId }
-                        ?.let { it.commands.isNotEmpty() || it.groupBots.isNotEmpty() } == true
-                ) {
-                    // Slash entry (W2): one tap puts a "/" in the
-                    // box, which raises the command popup.
-                    IconButton(onClick = { if (!input.startsWith("/")) input = "/$input" }) {
-                        Text(
-                            "/",
-                            fontSize = 21.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Gray
-                        )
-                    }
-                }
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    placeholder = {
-                        Text(
-                            when (val kbNow = replyKb) {
-                                is ReplyKb.Shown ->
-                                    kbNow.placeholder.ifEmpty { "消息" }
-                                is ReplyKb.ForceReply ->
-                                    kbNow.placeholder.ifEmpty { "消息" }
-                                else -> "消息"
-                            }
-                        )
-                    },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 4
-                )
                 Spacer(Modifier.width(8.dp))
                 // Send-button press feedback (v0.9.11, A1):
                 // the round action button dips slightly while
@@ -2677,7 +2760,13 @@ fun ChatScreen(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .background(Color(0xFFBDBDBD), CircleShape),
+                            // Official voice button (v0.9.17,
+                            // X4): accent-blue circle
+                            // (chat_messagePanelSend family).
+                            .background(
+                                OfficialTheme.current().accent,
+                                CircleShape
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         IconButton(onClick = {
@@ -2715,7 +2804,9 @@ fun ChatScreen(
                             }
                             .background(
                                 if (canBasic && input.isNotBlank()) {
-                                    MaterialTheme.colorScheme.primary
+                                    // chat_messagePanelSend
+                                    // (v0.9.17, X4).
+                                    OfficialTheme.current().accent
                                 } else {
                                     Color(0xFFBDBDBD)
                                 },
@@ -2744,9 +2835,10 @@ fun ChatScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.Send,
+                            PlaneIcon,
                             contentDescription = "发送",
-                            tint = Color.White
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
                         )
                         DropdownMenu(
                             expanded = sendMenuOpen,
@@ -2802,6 +2894,17 @@ fun ChatScreen(
                 exit = shrinkVertically(Motion.tween(200)) +
                     fadeOut(Motion.tween(200))
             ) {
+              Box(
+                modifier = Modifier
+                    // Panel surface (v0.9.17, X4): official
+                    // panel background, rounded top corners.
+                    .background(OfficialTheme.current().panelBg)
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 16.dp, topEnd = 16.dp
+                        )
+                    )
+              ) {
                 MediaPanel(
                     onEmoji = { emoji -> input += emoji },
                     onSendEntry = { entry ->
@@ -2818,6 +2921,7 @@ fun ChatScreen(
                         }
                     }
                 )
+              }
             }
         }
         }
@@ -3352,6 +3456,94 @@ fun SenderAvatarBubble(
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp
                 )
+            }
+        }
+    }
+}
+
+/** Official default chat background (v0.9.17, X5): the
+ *  chat_wallpaper tint under a tile of simple self-drawn
+ *  doodles (rings, stars, squiggles, triangles, dots) in a
+ *  faint ink — an approximation of the official classic
+ *  pattern wallpaper's feel. No official image file is
+ *  bundled; every element is drawn here. */
+@Composable
+fun OfficialChatBackground() {
+    val palette = OfficialTheme.current()
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.chatWallpaper)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val ink = if (palette.dark) {
+                Color(0xFF232325)
+            } else {
+                Color(0xFFDFEAF3)
+            }
+            val tile = 190.dp.toPx()
+            val sw = 1.5.dp.toPx()
+            var row = 0
+            var ty = -tile / 2
+            while (ty < size.height + tile) {
+                var tx = if (row % 2 == 0) -tile / 2 else 0f
+                while (tx < size.width + tile) {
+                    // Ring.
+                    drawCircle(
+                        color = ink,
+                        radius = 8.dp.toPx(),
+                        center = Offset(tx + 34.dp.toPx(), ty + 42.dp.toPx()),
+                        style = Stroke(sw)
+                    )
+                    // Four-point star (two crossed strokes).
+                    val sx = tx + 128.dp.toPx()
+                    val sy = ty + 34.dp.toPx()
+                    val r = 9.dp.toPx()
+                    drawLine(ink, Offset(sx - r, sy), Offset(sx + r, sy), sw)
+                    drawLine(ink, Offset(sx, sy - r), Offset(sx, sy + r), sw)
+                    drawLine(
+                        ink, Offset(sx - r * 0.6f, sy - r * 0.6f),
+                        Offset(sx + r * 0.6f, sy + r * 0.6f), sw
+                    )
+                    drawLine(
+                        ink, Offset(sx + r * 0.6f, sy - r * 0.6f),
+                        Offset(sx - r * 0.6f, sy + r * 0.6f), sw
+                    )
+                    // Squiggle.
+                    val qx = tx + 52.dp.toPx()
+                    val qy = ty + 128.dp.toPx()
+                    val seg = 10.dp.toPx()
+                    for (k in 0 until 3) {
+                        drawArc(
+                            color = ink,
+                            startAngle = if (k % 2 == 0) 180f else 0f,
+                            sweepAngle = 180f,
+                            useCenter = false,
+                            topLeft = Offset(qx + seg * k, qy - seg / 2),
+                            size = androidx.compose.ui.geometry.Size(seg, seg),
+                            style = Stroke(sw)
+                        )
+                    }
+                    // Triangle outline.
+                    val ax = tx + 138.dp.toPx()
+                    val ay = ty + 118.dp.toPx()
+                    val ar = 11.dp.toPx()
+                    drawLine(ink, Offset(ax, ay - ar), Offset(ax + ar, ay + ar), sw)
+                    drawLine(ink, Offset(ax + ar, ay + ar), Offset(ax - ar, ay + ar), sw)
+                    drawLine(ink, Offset(ax - ar, ay + ar), Offset(ax, ay - ar), sw)
+                    // Dot pair.
+                    drawCircle(
+                        color = ink, radius = 2.2.dp.toPx(),
+                        center = Offset(tx + 88.dp.toPx(), ty + 84.dp.toPx())
+                    )
+                    drawCircle(
+                        color = ink, radius = 2.2.dp.toPx(),
+                        center = Offset(tx + 102.dp.toPx(), ty + 92.dp.toPx())
+                    )
+                    tx += tile
+                }
+                ty += tile
+                row++
             }
         }
     }
