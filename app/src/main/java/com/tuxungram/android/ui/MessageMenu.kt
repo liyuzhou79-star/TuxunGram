@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -91,7 +92,7 @@ fun OfficialMessageMenu(
     // 0.85 at its anchor by the bubble and fades in on the
     // shared MENU spec (in slower than out, like the
     // official client's message menu).
-    val menuSpec = if (shown) {
+    val menuSpec: TweenSpec<Float> = if (shown) {
         Motion.tween(Motion.MENU_IN)
     } else {
         Motion.tween(Motion.MENU_OUT)
