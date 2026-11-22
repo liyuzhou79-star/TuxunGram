@@ -28,6 +28,21 @@ import org.json.JSONObject
  * and UiSettings treats a missing file as "no override", so
  * the chat falls back to the global wallpaper there. The
  * export dialog says this out loud before writing.
+ *
+ * Completeness audit (v0.9.36, C5): every UiSettings key
+ * added since v0.9.24 was checked against this file —
+ * label_dots (v0.9.28) and the download center's
+ * concurrency / retry settings (DownloadStore's own
+ * prefs, v0.9.23) were missing and are now in. Deliberately
+ * still out, with reasons: the app-lock PIN material
+ * (a credential — never exported, like proxy passwords);
+ * the auto-download tier labels in AutoDownloadStore
+ * (a local mirror of server-side state — the real setting
+ * lives on the account via setAutoDownloadSettings and
+ * follows the account, not the backup); account slots and
+ * background-service state (runtime state, not settings);
+ * UiSettings.seen_version (a what's-new watermark, not a
+ * preference).
  */
 object SettingsBackup {
 
@@ -54,6 +69,9 @@ object SettingsBackup {
             put("sound_fx", UiSettings.soundFx.value)
             // Bottom navigation bar switch (v0.9.19, Z5).
             put("duck_bar", UiSettings.duckBar.value)
+            // Chat-row label dots (v0.9.28, U4; backup
+            // inclusion v0.9.36, C5).
+            put("label_dots", UiSettings.labelDots.value)
         }
         val chatWallpapers = JSONObject()
         for ((chatId, path) in UiSettings.chatWallpapers.value) {
@@ -102,6 +120,18 @@ object SettingsBackup {
                 "proxy_auto_failover",
                 ProxyStore.autoFailover.value
             )
+            // Download center settings (v0.9.23, P2; backup
+            // inclusion v0.9.36, C5): how many files may
+            // download at once and the automatic retry
+            // budget. They live in DownloadStore's own
+            // prefs, not UiSettings.
+            put("download", JSONObject().apply {
+                put(
+                    "max_concurrent",
+                    DownloadStore.maxConcurrent.value
+                )
+                put("retry_limit", DownloadStore.retryLimit.value)
+            })
         }.toString(2)
     }
 
@@ -141,9 +171,12 @@ object SettingsBackup {
         var keepAlive: Boolean? = null
         var soundFx: Boolean? = null
         var duckBar: Boolean? = null
+        var labelDots: Boolean? = null
         var localPins: List<Long>? = null
         var localLabels: JSONObject? = null
         var proxyAutoFailover: Boolean? = null
+        var downloadMaxConcurrent: Int? = null
+        var downloadRetryLimit: Int? = null
         val uiObj = root.optJSONObject("ui")
         if (uiObj != null) {
             try {
@@ -215,8 +248,33 @@ object SettingsBackup {
                 if (uiObj.has("duck_bar")) {
                     duckBar = uiObj.getBoolean("duck_bar")
                 }
+                if (uiObj.has("label_dots")) {
+                    labelDots = uiObj.getBoolean("label_dots")
+                }
             } catch (t: Throwable) {
                 return "备份里的设置部分格式不对，设置没有改动。"
+            }
+        }
+        if (root.has("download")) {
+            val dlObj = root.optJSONObject("download")
+                ?: return "备份里的下载设置部分格式不对，设置没有改动。"
+            try {
+                if (dlObj.has("max_concurrent")) {
+                    val v = dlObj.getInt("max_concurrent")
+                    if (v !in DownloadStore.MAX_CONCURRENT_CHOICES) {
+                        return "备份里的下载并发取值不对，设置没有改动。"
+                    }
+                    downloadMaxConcurrent = v
+                }
+                if (dlObj.has("retry_limit")) {
+                    val v = dlObj.getInt("retry_limit")
+                    if (v !in DownloadStore.RETRY_CHOICES) {
+                        return "备份里的下载重试取值不对，设置没有改动。"
+                    }
+                    downloadRetryLimit = v
+                }
+            } catch (t: Throwable) {
+                return "备份里的下载设置部分格式不对，设置没有改动。"
             }
         }
         if (root.has("chat_wallpapers")) {
@@ -352,7 +410,12 @@ object SettingsBackup {
         keepAlive?.let { UiSettings.setKeepAlive(it) }
         soundFx?.let { UiSettings.setSoundFx(it) }
         duckBar?.let { UiSettings.setDuckBar(it) }
+        labelDots?.let { UiSettings.setLabelDots(it) }
         proxyAutoFailover?.let { ProxyStore.setAutoFailover(it) }
+        downloadMaxConcurrent?.let {
+            DownloadStore.setMaxConcurrent(it)
+        }
+        downloadRetryLimit?.let { DownloadStore.setRetryLimit(it) }
 
         val proxies = stagedProxies
         if (proxies != null) {

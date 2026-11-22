@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -61,6 +62,15 @@ import kotlinx.coroutines.delay
  * searches are NOT shown: the app keeps no search-history
  * data source, and inventing one is out of this step's
  * presentation-only scope (recorded in the checkpoint).
+ *
+ * Category tabs (v0.9.36, C4): 全部 / 聊天 / 联系人 / 消息
+ * over the same grouped data, plus a public section the
+ * page lacked — searchPublicChats results (public groups,
+ * channels and bots not joined yet) under the 聊天 tab
+ * and in 全部. Counts are shown only where a real count
+ * exists: local sections count their rows, the public
+ * section quotes the server's total_count verbatim and
+ * says when the list shows only the first page of ids.
  */
 @Composable
 fun SearchScreen(
@@ -78,6 +88,13 @@ fun SearchScreen(
     val hits by SearchStore.results.collectAsState()
     val searching by SearchStore.searching.collectAsState()
     val exhausted by SearchStore.exhausted.collectAsState()
+    val publicHits by SearchStore.publicResults.collectAsState()
+    val publicSearching by
+        SearchStore.publicSearching.collectAsState()
+    val publicTotal by SearchStore.publicTotal.collectAsState()
+    // Category tabs (v0.9.36, C4): 0 全部 / 1 聊天 /
+    // 2 联系人 / 3 消息.
+    var tab by remember { mutableStateOf(0) }
     // Collected so the contacts section refreshes when the
     // address book finishes loading.
     val allContacts by ContactsStore.contacts.collectAsState()
@@ -162,6 +179,65 @@ fun SearchScreen(
                 .height(0.5.dp)
                 .background(palette.divider)
         )
+        if (q.isNotEmpty()) {
+            // Category tabs (v0.9.36, C4): text tabs with
+            // an accent underline, the same shape as the
+            // home folder tabs.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(palette.actionBarBg)
+                    .padding(horizontal = 8.dp)
+            ) {
+                val labels = listOf("全部", "聊天", "联系人", "消息")
+                labels.forEachIndexed { index, label ->
+                    Column(
+                        horizontalAlignment =
+                            Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { tab = index }
+                            .padding(
+                                horizontal = 14.dp, vertical = 10.dp
+                            )
+                    ) {
+                        Text(
+                            label,
+                            fontSize = 14.5.sp,
+                            fontWeight = if (tab == index) {
+                                FontWeight.SemiBold
+                            } else {
+                                FontWeight.Normal
+                            },
+                            color = if (tab == index) {
+                                palette.accentText
+                            } else {
+                                palette.textSecondary
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 6.dp)
+                                .height(2.5.dp)
+                                .width(28.dp)
+                                .background(
+                                    if (tab == index) {
+                                        palette.accent
+                                    } else {
+                                        Color.Transparent
+                                    },
+                                    RoundedCornerShape(2.dp)
+                                )
+                        )
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(palette.divider)
+            )
+        }
         if (q.isEmpty()) {
             CenterColumn {
                 EmptyState(
@@ -177,7 +253,9 @@ fun SearchScreen(
                     .fillMaxSize()
                     .lazyListScrollbar(searchListState)
             ) {
-                if (chatHits.isNotEmpty()) {
+                if ((tab == 0 || tab == 1) &&
+                    chatHits.isNotEmpty()
+                ) {
                     item(key = "sec_chats") {
                         SearchSectionHeader("聊天")
                     }
@@ -185,7 +263,61 @@ fun SearchScreen(
                         ChatRow(chat, onClick = { onOpenChat(chat.id) })
                     }
                 }
-                if (contactHits.isNotEmpty()) {
+                if (tab == 0 || tab == 1) {
+                    if (publicHits.isNotEmpty()) {
+                        item(key = "sec_public") {
+                            SearchSectionHeader("公开")
+                        }
+                        items(
+                            items = publicHits,
+                            key = { "pub_${it.chatId}" }
+                        ) { hit ->
+                            PublicHitRow(hit) {
+                                onOpenChat(hit.chatId)
+                            }
+                        }
+                        if (publicTotal > publicHits.size) {
+                            item(key = "pub_total") {
+                                Text(
+                                    "服务器共找到 $publicTotal 个，" +
+                                        "这里列出前 ${publicHits.size} 个。",
+                                    color = palette.textSecondary,
+                                    fontSize = 12.5.sp,
+                                    modifier = Modifier.padding(
+                                        horizontal = 16.dp,
+                                        vertical = 8.dp
+                                    )
+                                )
+                            }
+                        }
+                    } else if (publicSearching) {
+                        item(key = "pub_loading") {
+                            Text(
+                                "正在搜公开的群、频道和机器人…",
+                                color = palette.textSecondary,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(
+                                    horizontal = 16.dp, vertical = 10.dp
+                                )
+                            )
+                        }
+                    } else if (tab == 1 && chatHits.isEmpty()) {
+                        item(key = "pub_empty") {
+                            Text(
+                                "没有找到聊天，公开的群、频道和" +
+                                    "机器人也没有匹配的。",
+                                color = palette.textSecondary,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(
+                                    horizontal = 16.dp, vertical = 10.dp
+                                )
+                            )
+                        }
+                    }
+                }
+                if ((tab == 0 || tab == 2) &&
+                    contactHits.isNotEmpty()
+                ) {
                     item(key = "sec_contacts") {
                         SearchSectionHeader("联系人")
                     }
@@ -264,6 +396,19 @@ fun SearchScreen(
                         }
                     }
                 }
+                if (tab == 2 && contactHits.isEmpty()) {
+                    item(key = "contacts_empty") {
+                        Text(
+                            "没有找到联系人",
+                            color = palette.textSecondary,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(
+                                horizontal = 16.dp, vertical = 10.dp
+                            )
+                        )
+                    }
+                }
+                if (tab == 0 || tab == 3) {
                 item(key = "sec_messages") {
                     SearchSectionHeader("消息")
                 }
@@ -315,8 +460,11 @@ fun SearchScreen(
                         )
                     }
                 }
-                if (chatHits.isEmpty() && contactHits.isEmpty() &&
-                    hits.isEmpty() && !searching
+                }
+                if (tab == 0 && chatHits.isEmpty() &&
+                    contactHits.isEmpty() &&
+                    publicHits.isEmpty() && hits.isEmpty() &&
+                    !searching && !publicSearching
                 ) {
                     item(key = "all_empty") {
                         EmptyState(
@@ -326,6 +474,70 @@ fun SearchScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/** One public search result row (v0.9.36, C4): avatar
+ *  initial tile in the chat's official color, the title,
+ *  and an honest kind label — 频道 / 群组 / 机器人或用户
+ *  stays generic ("用户") because the flattened data
+ *  does not separate bots from people. Tapping opens the
+ *  chat (unjoined public chats open as a preview, like
+ *  the official client). */
+@Composable
+private fun PublicHitRow(
+    hit: com.tuxungram.android.td.PublicHit,
+    onClick: () -> Unit
+) {
+    val palette = OfficialTheme.current()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val pair = OfficialTheme.avatarColors(
+            hit.chatId, OfficialTheme.dark
+        )
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(pair.first, pair.second)
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                hit.title.trim().firstOrNull()?.toString() ?: "?",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(
+                hit.title,
+                color = palette.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+                maxLines = 1
+            )
+            Text(
+                when (hit.kind) {
+                    "channel" -> "频道"
+                    "group" -> "群组"
+                    else -> "用户"
+                },
+                color = palette.textSecondary,
+                fontSize = 13.sp,
+                maxLines = 1
+            )
         }
     }
 }

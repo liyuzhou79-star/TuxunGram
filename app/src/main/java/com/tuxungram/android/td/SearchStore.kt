@@ -15,6 +15,19 @@ data class SearchHit(
     val outgoing: Boolean
 )
 
+/** One public-chat search result (searchPublicChats,
+ *  v0.9.36, C4): a chat the user may not have joined
+ *  yet. The function returns a Chats object — a total
+ *  count plus chat ids — so the display fields are read
+ *  back from ChatStore's cache, which the accompanying
+ *  updateNewChat objects feed. [kind] is "user",
+ *  "group" or "channel" from the flattened ChatItem. */
+data class PublicHit(
+    val chatId: Long,
+    val title: String,
+    val kind: String
+)
+
 /**
  * Global message search (searchMessages, verified in
  * td_api.tl): paging uses TDLib's opaque string offset, which is
@@ -31,6 +44,19 @@ object SearchStore {
     private val _exhausted = MutableStateFlow(true)
     val exhausted: StateFlow<Boolean> = _exhausted
 
+    private val _publicResults =
+        MutableStateFlow<List<PublicHit>>(emptyList())
+    val publicResults: StateFlow<List<PublicHit>> = _publicResults
+
+    private val _publicSearching = MutableStateFlow(false)
+    val publicSearching: StateFlow<Boolean> = _publicSearching
+
+    /** Total public matches as the server reported them
+     *  (Chats.total_count); 0 = unknown. The id list can
+     *  be shorter than this — the UI words it that way. */
+    private val _publicTotal = MutableStateFlow(0)
+    val publicTotal: StateFlow<Int> = _publicTotal
+
     private var query = ""
     private var nextOffset = ""
 
@@ -42,12 +68,60 @@ object SearchStore {
         query = newQuery.trim()
         nextOffset = ""
         _results.value = emptyList()
+        _publicResults.value = emptyList()
+        _publicTotal.value = 0
         _exhausted.value = query.isEmpty()
         if (query.isEmpty()) {
             _searching.value = false
+            _publicSearching.value = false
             return
         }
         loadPage(generation)
+        loadPublic(generation)
+    }
+
+    /** Public chats/channels/bots matching the query
+     *  (searchPublicChats, verified in td_api.tl: query +
+     *  a SearchChatTypeFilter; null asks for every type).
+     *  The result is a Chats object (total_count +
+     *  chat_ids); each id's display data is read from
+     *  ChatStore's cache, fed by the updateNewChat
+     *  objects TDLib sends alongside. An id whose object
+     *  has not landed is skipped rather than rendered
+     *  blank. */
+    private fun loadPublic(gen: Int) {
+        _publicSearching.value = true
+        val q = TdClient.request("searchPublicChats").apply {
+            put("query", query)
+            put("type_filter", JSONObject.NULL)
+        }
+        TdRepository.sendRaw(q) { response ->
+            if (gen != generation) return@sendRaw
+            _publicSearching.value = false
+            if (TdClient.isError(response)) {
+                return@sendRaw
+            }
+            _publicTotal.value = response.optInt("total_count")
+            val arr = response.optJSONArray("chat_ids")
+                ?: return@sendRaw
+            val hits = ArrayList<PublicHit>()
+            val seen = HashSet<Long>()
+            for (i in 0 until arr.length()) {
+                val chatId = arr.optLong(i)
+                if (chatId == 0L || !seen.add(chatId)) continue
+                val kind = ChatStore.kindOfChat(chatId) ?: continue
+                val title = ChatStore.titleOf(chatId)
+                if (title.isEmpty()) continue
+                hits.add(
+                    PublicHit(
+                        chatId = chatId,
+                        title = title,
+                        kind = kind
+                    )
+                )
+            }
+            _publicResults.value = hits
+        }
     }
 
     fun loadMore() {
