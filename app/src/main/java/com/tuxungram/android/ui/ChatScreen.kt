@@ -120,6 +120,7 @@ import com.tuxungram.android.td.AvatarStore
 import com.tuxungram.android.td.BotStore
 import com.tuxungram.android.td.InlineResultUi
 import com.tuxungram.android.td.InlineStore
+import com.tuxungram.android.td.ViewersStore
 import com.tuxungram.android.td.ReplyKb
 import com.tuxungram.android.td.TdClient
 import com.tuxungram.android.td.TdRepository
@@ -194,6 +195,15 @@ fun formatDayLabel(dateSeconds: Int): String {
     return java.text.SimpleDateFormat(
         pattern, java.util.Locale.getDefault()
     ).format(cal.time)
+}
+
+/** When a member saw my message (v0.9.13, T1): today shows
+ *  the time, yesterday and older days prefix the day label. */
+fun formatViewDate(dateSeconds: Int): String {
+    if (dateSeconds <= 0) return ""
+    val day = formatDayLabel(dateSeconds)
+    val time = formatMsgTime(dateSeconds)
+    return if (day == "今天") time else "$day $time"
 }
 
 /** Inline-query input shape (v0.9.12, S2): "@botname" at the
@@ -1230,6 +1240,10 @@ fun ChatScreen(
                         canComment = chat?.isChannel == true &&
                             linkedChatId != 0L && msg.isChannelPost,
                         onOpenThread = { m -> onOpenThread(m.id) },
+                        canGetViewers = msg.outgoing &&
+                            msg.sendingState.isEmpty() &&
+                            (chat?.isGroup == true ||
+                                chat?.isChannel == true),
                         showSenderAvatar = msg.id in avatarShowIds,
                         onOpenSenderProfile = { userId ->
                             DeepLink.pendingProfileUser.value = userId
@@ -2536,6 +2550,10 @@ fun MessageBubble(
     onOpenVideo: (MsgItem) -> Unit = {},
     canComment: Boolean = false,
     onOpenThread: (MsgItem) -> Unit = {},
+    // Read-by list (v0.9.13, T1): the caller enables it for
+    // own sent messages in groups/channels — the scenes
+    // getMessageViewers can answer for.
+    canGetViewers: Boolean = false,
     // Group sender avatar (v0.9.9, W0): the caller decides
     // from the whole list whether this message opens a
     // same-sender run; the tap route opens the sender's
@@ -2551,6 +2569,7 @@ fun MessageBubble(
     var editOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var reactionOpen by remember { mutableStateOf(false) }
+    var viewersOpen by remember { mutableStateOf(false) }
     // Swipe-to-reply (v0.7.0, F1): drag a bubble left; past the
     // threshold a haptic tick fires and the message becomes the
     // reply target, then the bubble springs back. The mature
@@ -3025,6 +3044,24 @@ fun MessageBubble(
                         }
                     )
                 }
+                if (canGetViewers) {
+                    // Read-by list (v0.9.13, T1): who in this
+                    // group/channel has seen my message. The
+                    // server refuses where it cannot answer
+                    // (too old, privacy); ViewersStore turns
+                    // that into a plain sentence in the dialog.
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(EyeIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
+                        text = { Text("谁看过") },
+                        onClick = {
+                            menuOpen = false
+                            viewersOpen = true
+                            ViewersStore.load(chatId, msg.id)
+                        }
+                    )
+                }
                 if (msg.sendingState.isEmpty()) {
                     // Pin / unpin (v0.9.4, N3). The server
                     // refuses without rights; the store turns
@@ -3172,6 +3209,94 @@ fun MessageBubble(
             },
             dismissButton = {
                 TextButton(onClick = { deleteOpen = false }) { Text("取消") }
+            }
+        )
+    }
+    if (viewersOpen) {
+        // Read-by list (v0.9.13, T1): members who have seen
+        // this message, newest view first; the store's error
+        // text covers the scenes the server will not answer.
+        val viewersLoading by ViewersStore.loading.collectAsState()
+        val viewers by ViewersStore.viewers.collectAsState()
+        val viewersError by ViewersStore.error.collectAsState()
+        AlertDialog(
+            onDismissRequest = { viewersOpen = false },
+            title = { Text("谁看过这条消息") },
+            text = {
+                when {
+                    viewersLoading -> Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text("正在查…", fontSize = 14.sp)
+                    }
+                    viewersError != null -> Text(
+                        viewersError!!, fontSize = 14.sp
+                    )
+                    viewers.isEmpty() -> Text(
+                        "还没有人看过这条消息。", fontSize = 14.sp
+                    )
+                    else -> LazyColumn(
+                        modifier = Modifier.heightIn(max = 380.dp)
+                    ) {
+                        items(viewers, key = { it.userId }) { viewer ->
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 5.dp)
+                            ) {
+                                if (viewer.photoPath != null) {
+                                    AvatarImage(
+                                        path = viewer.photoPath,
+                                        sizeDp = 36
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .background(
+                                                Color(0xFFB0BEC5),
+                                                CircleShape
+                                            ),
+                                        contentAlignment =
+                                            Alignment.Center
+                                    ) {
+                                        Text(
+                                            viewer.name.trim()
+                                                .firstOrNull()
+                                                ?.toString() ?: "?",
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    viewer.name.ifEmpty { "…" },
+                                    fontSize = 15.sp,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1
+                                )
+                                Text(
+                                    formatViewDate(viewer.viewDate),
+                                    fontSize = 12.sp, color = Color.Gray
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { viewersOpen = false }) {
+                    Text("关闭")
+                }
             }
         )
     }
