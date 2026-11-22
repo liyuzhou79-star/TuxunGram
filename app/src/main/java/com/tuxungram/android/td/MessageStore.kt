@@ -2217,16 +2217,29 @@ object MessageStore {
         messageId: Long,
         toChatId: Long,
         onResult: (String?) -> Unit
-    ) = forwardMessages(fromChatId, listOf(messageId), toChatId, onResult)
+    ) = forwardMessages(
+        fromChatId, listOf(messageId), toChatId, onResult = onResult
+    )
 
     /** Forward several messages in one call — forwardMessages
      *  takes a whole message_ids vector (verified in td_api.tl);
      *  the multi-select bar uses this (v0.7.0, F1). Ids are sent
-     *  oldest-first so the target chat reads in order. */
+     *  oldest-first so the target chat reads in order.
+     *
+     *  [sendCopy] / [removeCaption] (v0.9.31, X4) ride the
+     *  request's own top-level flags (td_api.tl forwardMessages:
+     *  send_copy / remove_caption): send_copy sends the content
+     *  as a copy with no reference to the original sender;
+     *  remove_caption strips media captions of the copies and
+     *  is ignored by the server unless send_copy is set — the
+     *  picker disables its switch in that case rather than
+     *  pretending it works alone. */
     fun forwardMessages(
         fromChatId: Long,
         messageIds: List<Long>,
         toChatId: Long,
+        sendCopy: Boolean = false,
+        removeCaption: Boolean = false,
         onResult: (String?) -> Unit
     ) {
         if (messageIds.isEmpty()) {
@@ -2241,8 +2254,8 @@ object MessageStore {
             put("from_chat_id", fromChatId)
             put("message_ids", ids)
             put("options", JSONObject.NULL)
-            put("send_copy", false)
-            put("remove_caption", false)
+            put("send_copy", sendCopy)
+            put("remove_caption", removeCaption && sendCopy)
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {

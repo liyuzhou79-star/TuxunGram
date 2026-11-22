@@ -51,6 +51,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Switch
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
@@ -185,6 +186,13 @@ fun ForwardPickerScreen(
     val chats by ChatStore.chats.collectAsState()
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Forward options (v0.9.31, X4): forwardMessages' own
+    // send_copy / remove_caption flags (verified in td_api.tl).
+    // remove_caption is ignored by the server unless send_copy
+    // is set, so its switch disables itself while copy mode is
+    // off instead of pretending to work alone.
+    var sendCopy by remember { mutableStateOf(false) }
+    var removeCaption by remember { mutableStateOf(false) }
     val pickerListState = rememberLazyListState()
     // Saved Messages pinned at the top (v0.9.1, J5): forwarding
     // to oneself is the most common forward target.
@@ -196,7 +204,8 @@ fun ForwardPickerScreen(
         busy = true
         error = null
         MessageStore.forwardMessages(
-            fromChatId, messageIds, targetId
+            fromChatId, messageIds, targetId,
+            sendCopy = sendCopy, removeCaption = removeCaption
         ) { failure ->
             if (failure == null) {
                 onDone()
@@ -216,6 +225,57 @@ fun ForwardPickerScreen(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
             Text("转发到…", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        }
+        if (!busy) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("隐藏原发送者", fontSize = 14.5.sp)
+                    Text(
+                        "以复制方式发送，不显示来源",
+                        color = Color.Gray, fontSize = 12.sp
+                    )
+                }
+                Switch(
+                    checked = sendCopy,
+                    onCheckedChange = { sendCopy = it }
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "去掉原说明文字",
+                        fontSize = 14.5.sp,
+                        color = if (sendCopy) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            Color.Gray
+                        }
+                    )
+                    Text(
+                        if (sendCopy) {
+                            "媒体的说明文字不带过去"
+                        } else {
+                            "需先打开「隐藏原发送者」"
+                        },
+                        color = Color.Gray, fontSize = 12.sp
+                    )
+                }
+                Switch(
+                    checked = removeCaption && sendCopy,
+                    onCheckedChange = { removeCaption = it },
+                    enabled = sendCopy
+                )
+            }
         }
         if (error != null) {
             Text(

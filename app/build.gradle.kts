@@ -12,8 +12,8 @@ android {
         applicationId = "com.tuxungram.android"
         minSdk = 29
         targetSdk = 35
-        versionCode = 39
-        versionName = "0.9.30"
+        versionCode = 40
+        versionName = "0.9.31"
 
         ndk {
             abiFilters += "arm64-v8a"
