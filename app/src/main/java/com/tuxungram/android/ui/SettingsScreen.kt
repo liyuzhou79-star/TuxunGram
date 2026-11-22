@@ -90,6 +90,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.core.content.FileProvider
 import com.tuxungram.android.td.AccountStore
 import com.tuxungram.android.td.AppLock
+import com.tuxungram.android.td.MeStore
 import com.tuxungram.android.td.KeepAliveService
 import com.tuxungram.android.td.StorageStore
 import com.tuxungram.android.td.ProxyConfig
@@ -146,7 +147,8 @@ fun openDownloadedFile(context: android.content.Context, path: String) {
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenSessions: () -> Unit = {},
-    onOpenStickerSets: () -> Unit = {}
+    onOpenStickerSets: () -> Unit = {},
+    onOpenEditProfile: () -> Unit = {}
 ) {
     BackHandler { onBack() }
     val settingsContext = LocalContext.current
@@ -172,6 +174,54 @@ fun SettingsScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("返回") }
             Text("设置", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        }
+        // Personal card (v0.9.3, M1): my avatar + name +
+        // @username; tapping opens the edit-profile page.
+        // Everything renders from MeStore, so an edit shows
+        // here the moment it lands.
+        val me by MeStore.me.collectAsState()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenEditProfile() }
+                .padding(vertical = 10.dp)
+        ) {
+            if (me.photoPath != null) {
+                AvatarImage(path = me.photoPath!!, sizeDp = 52)
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .background(Color(0xFF90CAF9), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        me.displayName.trim().firstOrNull()?.toString() ?: "?",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    )
+                }
+            }
+            Column(modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp)) {
+                Text(
+                    me.displayName.ifEmpty { "我的资料" },
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    when {
+                        me.username.isNotEmpty() -> "@${me.username}"
+                        me.phone.isNotEmpty() -> me.phone
+                        else -> "点这里编辑资料"
+                    },
+                    color = Color.Gray, fontSize = 13.sp
+                )
+            }
+            Text("编辑资料 ›", color = Color.Gray, fontSize = 13.sp)
         }
         Spacer(Modifier.height(8.dp))
         Text("代理", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)

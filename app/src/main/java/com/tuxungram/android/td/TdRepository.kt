@@ -188,6 +188,9 @@ object TdRepository {
                 ChatStore.onReady()
                 ContactsStore.loadContacts()
                 StoryStore.onReady()
+                // My own profile for the settings card / edit
+                // page / blocked-list self check (v0.9.3, M1).
+                MeStore.refresh()
                 // Remember who this account is, for the account
                 // switcher in settings (Batch 3, C6).
                 sendRaw(TdClient.request("getMe")) { me ->

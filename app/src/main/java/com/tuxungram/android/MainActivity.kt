@@ -111,6 +111,7 @@ import kotlinx.coroutines.delay
 import com.tuxungram.android.ui.ArchiveScreen
 import com.tuxungram.android.ui.ChatListScreen
 import com.tuxungram.android.ui.ContactsScreen
+import com.tuxungram.android.ui.EditProfileScreen
 import com.tuxungram.android.ui.LockScreen
 import com.tuxungram.android.ui.MembersScreen
 import com.tuxungram.android.ui.ChatScreen
@@ -301,6 +302,7 @@ private fun ReadyHost() {
         }
     }
     var showSettings by remember { mutableStateOf(false) }
+    var showEditProfile by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
     var showStickerSets by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
@@ -368,6 +370,9 @@ private fun ReadyHost() {
             postId = thread.second,
             onBack = { threadReq = null }
         )
+        showEditProfile -> EditProfileScreen(
+            onBack = { showEditProfile = false }
+        )
         showSessions -> SessionsScreen(onBack = { showSessions = false })
         showStickerSets -> StickerSetsScreen(
             onBack = { showStickerSets = false }
@@ -381,6 +386,10 @@ private fun ReadyHost() {
             onOpenStickerSets = {
                 showSettings = false
                 showStickerSets = true
+            },
+            onOpenEditProfile = {
+                showSettings = false
+                showEditProfile = true
             }
         )
         showArchive -> ArchiveScreen(
