@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -136,7 +137,10 @@ fun SavedMessagesRow(onClick: () -> Unit) {
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Text("★", color = Color.White, fontSize = 22.sp)
+            Icon(
+                Icons.Filled.Star, contentDescription = null,
+                tint = Color.White, modifier = Modifier.size(24.dp)
+            )
         }
         Spacer(Modifier.width(12.dp))
         Column {

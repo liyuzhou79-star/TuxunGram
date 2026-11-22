@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
@@ -348,10 +349,26 @@ private fun FileRow(item: MsgItem, onTap: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            if (item.kind == MsgKind.VIDEO) "🎬" else "📄",
-            fontSize = 22.sp
-        )
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .background(
+                    MaterialTheme.colorScheme.primaryContainer,
+                    CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                if (item.kind == MsgKind.VIDEO) {
+                    Icons.Filled.PlayArrow
+                } else {
+                    ClipIcon
+                },
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(21.dp)
+            )
+        }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -380,6 +397,12 @@ private fun FileRow(item: MsgItem, onTap: () -> Unit) {
                     maxLines = 1
                 )
             }
+        }
+        if (item.filePath == null && !item.fileDownloading) {
+            Icon(
+                DownloadIcon, contentDescription = "下载",
+                tint = Color.Gray, modifier = Modifier.size(20.dp)
+            )
         }
     }
 }

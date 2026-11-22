@@ -35,6 +35,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -184,12 +185,21 @@ fun friendlyError(error: Pair<Int, String>): String {
 fun ErrorText() {
     val error by TdRepository.lastError.collectAsState()
     val e = error ?: return
-    Text(
-        text = friendlyError(e),
-        color = Color(0xFFC62828),
-        fontSize = 14.sp,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(top = 12.dp)
-    )
+    ) {
+        Icon(
+            Icons.Filled.Warning, contentDescription = null,
+            tint = Color(0xFFC62828), modifier = Modifier.size(17.dp)
+        )
+        Spacer(Modifier.width(7.dp))
+        Text(
+            text = friendlyError(e),
+            color = Color(0xFFC62828),
+            fontSize = 14.sp
+        )
+    }
 }
 
 @Composable
