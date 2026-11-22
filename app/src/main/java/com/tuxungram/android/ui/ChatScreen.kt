@@ -461,6 +461,11 @@ fun ChatScreen(
     }
     var pendingPhoto by remember { mutableStateOf<String?>(null) }
     var photoCaption by remember { mutableStateOf("") }
+    // Pre-send photo editor (v0.9.27, T1): while set, the
+    // editor owns the screen; finishing swaps the edited
+    // JPEG in as the pending photo (the caption preview and
+    // send chain then run unchanged on the edited file).
+    var editingPhotoPath by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
 
     // Draft restore (v0.7.0, F5): once the saved draft has been
@@ -1328,12 +1333,26 @@ fun ChatScreen(
             }
         }
 
+        val editingPath = editingPhotoPath
+        if (editingPath != null) {
+            PhotoEditorScreen(
+                path = editingPath,
+                onDone = { newPath ->
+                    pendingPhoto = newPath
+                    editingPhotoPath = null
+                },
+                onCancel = { editingPhotoPath = null }
+            )
+            return@Column
+        }
+
         val photoPath = pendingPhoto
         if (photoPath != null) {
             PhotoPreview(
                 path = photoPath,
                 caption = photoCaption,
                 onCaptionChange = { photoCaption = it },
+                onEdit = { editingPhotoPath = photoPath },
                 onSend = {
                     MessageStore.sendPhoto(photoPath, photoCaption.trim())
                     pendingPhoto = null
@@ -3323,7 +3342,11 @@ fun PhotoPreview(
     onSend: () -> Unit,
     onCancel: () -> Unit,
     onSendOptions: (SendModifiers) -> Unit = {},
-    allowWhenOnline: Boolean = false
+    allowWhenOnline: Boolean = false,
+    // Pre-send editor entry (v0.9.27, T1): only the main
+    // chat wires it; thread / topic previews keep the plain
+    // preview (no button) until their flows grow one too.
+    onEdit: (() -> Unit)? = null
 ) {
     val previewContext = LocalContext.current
     var photoMenuOpen by remember { mutableStateOf(false) }
@@ -3374,6 +3397,14 @@ fun PhotoPreview(
         Row(modifier = Modifier.fillMaxWidth()) {
             TextButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
                 Text("取消")
+            }
+            if (onEdit != null) {
+                TextButton(
+                    onClick = onEdit,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("编辑")
+                }
             }
             // Send (v0.9.3, M5): tap sends now; long-press
             // opens the same silent / scheduled menu as the

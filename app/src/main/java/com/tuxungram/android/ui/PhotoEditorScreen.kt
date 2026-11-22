@@ -1,0 +1,1100 @@
+package com.tuxungram.android.ui
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.media.ExifInterface
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+
+/** One freehand stroke, in normalized coordinates of the
+ *  (rotation-applied) image: x is a fraction of the width,
+ *  y of the height; [widthFrac] is the pen width as a
+ *  fraction of the image width. */
+private data class StrokeData(
+    val points: List<Offset>,
+    val color: Color,
+    val widthFrac: Float
+)
+
+/** One placed text label; [x]/[y] are the label CENTER in
+ *  normalized image coordinates, [sizeFrac] the text size
+ *  as a fraction of the image width. */
+private data class TextData(
+    val id: Int,
+    val text: String,
+    val x: Float,
+    val y: Float,
+    val color: Color,
+    val sizeFrac: Float
+)
+
+/** Crop rectangle in normalized image coordinates. */
+private data class CropRect(
+    val l: Float, val t: Float, val r: Float, val b: Float
+) {
+    companion object {
+        val FULL = CropRect(0f, 0f, 1f, 1f)
+    }
+}
+
+private enum class EditMode { CROP, DRAW, TEXT }
+
+private val editorPalette = listOf(
+    Color(0xFF000000), Color(0xFFFFFFFF), Color(0xFFE53935),
+    Color(0xFFFFC107), Color(0xFF1E88E5), Color(0xFF43A047)
+)
+
+private fun rotateBitmap(src: Bitmap, degrees: Float): Bitmap {
+    if (degrees % 360f == 0f) return src
+    val matrix = Matrix().apply { postRotate(degrees) }
+    return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
+}
+
+/** Bake the file's EXIF orientation into the pixels so the
+ *  exported JPEG needs no orientation flag (the plain send
+ *  path never edits, so it keeps sending the untouched
+ *  original; only an edited photo goes through here). */
+private fun applyExifOrientation(path: String, bmp: Bitmap): Bitmap {
+    val orientation = try {
+        ExifInterface(path).getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL
+        )
+    } catch (t: Throwable) {
+        ExifInterface.ORIENTATION_NORMAL
+    }
+    val matrix = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+        ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL ->
+            matrix.postScale(-1f, 1f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL ->
+            matrix.postScale(1f, -1f)
+        ExifInterface.ORIENTATION_TRANSPOSE -> {
+            matrix.postRotate(90f)
+            matrix.postScale(-1f, 1f)
+        }
+        ExifInterface.ORIENTATION_TRANSVERSE -> {
+            matrix.postRotate(270f)
+            matrix.postScale(-1f, 1f)
+        }
+        else -> return bmp
+    }
+    return Bitmap.createBitmap(
+        bmp, 0, 0, bmp.width, bmp.height, matrix, true
+    )
+}
+
+/**
+ * Pre-send photo editor (v0.9.27, T1; basic edition, all
+ * client-side, no editor library): crop with a draggable
+ * frame and aspect presets （自由/1:1/4:3/16:9), rotate in
+ * 90° steps, freehand doodles (color / width / undo) and
+ * movable text labels. Everything is stored in normalized
+ * coordinates of the rotated image, so the preview and the
+ * exported JPEG run the exact same geometry. Export draws
+ * crop -> strokes -> texts onto a fresh bitmap and saves a
+ * JPEG into the cache; the caller then sends that file
+ * through the normal photo path. Videos never come here,
+ * and sticker overlays are deliberately not part of this
+ * basic edition.
+ */
+@Composable
+fun PhotoEditorScreen(
+    path: String,
+    onDone: (String) -> Unit,
+    onCancel: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    var oriented by remember(path) { mutableStateOf<Bitmap?>(null) }
+    var loadFailed by remember(path) { mutableStateOf(false) }
+    LaunchedEffect(path) {
+        val loaded = withContext(Dispatchers.IO) {
+            val decoded = decodeDownsampled(path, 2048)
+            if (decoded == null) {
+                null
+            } else {
+                applyExifOrientation(path, decoded)
+            }
+        }
+        if (loaded == null) loadFailed = true else oriented = loaded
+    }
+    var rotation by remember { mutableStateOf(0) }
+    val base = remember(oriented, rotation) {
+        val src = oriented ?: return@remember null
+        if (rotation == 0) src else rotateBitmap(src, rotation * 90f)
+    }
+
+    var mode by remember { mutableStateOf(EditMode.CROP) }
+    var crop by remember { mutableStateOf(CropRect.FULL) }
+    var aspect by remember { mutableStateOf<Float?>(null) }
+    var strokes by remember { mutableStateOf<List<StrokeData>>(emptyList()) }
+    var currentStroke by remember { mutableStateOf<List<Offset>?>(null) }
+    var drawColor by remember { mutableStateOf(editorPalette[2]) }
+    var drawWidthFrac by remember { mutableStateOf(0.012f) }
+    var texts by remember { mutableStateOf<List<TextData>>(emptyList()) }
+    var selectedTextId by remember { mutableStateOf<Int?>(null) }
+    var nextTextId by remember { mutableStateOf(1) }
+    // Text dialog: -1 = new label, otherwise the label id
+    // being edited; null = closed.
+    var textDialogFor by remember { mutableStateOf<Int?>(null) }
+    var textDialogValue by remember { mutableStateOf("") }
+    var exporting by remember { mutableStateOf(false) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    val labelSizes = remember { mutableStateMapOf<Int, IntSize>() }
+
+    val dirty = rotation != 0 || crop != CropRect.FULL ||
+        strokes.isNotEmpty() || texts.isNotEmpty()
+
+    fun rotateAll() {
+        // 90° clockwise: (x, y) -> (1 - y, x); the crop rect
+        // follows from its corners.
+        crop = CropRect(
+            l = 1f - crop.b, t = crop.l,
+            r = 1f - crop.t, b = crop.r
+        )
+        strokes = strokes.map { stroke ->
+            stroke.copy(
+                points = stroke.points.map {
+                    Offset(1f - it.y, it.x)
+                }
+            )
+        }
+        texts = texts.map {
+            it.copy(x = 1f - it.y, y = it.x)
+        }
+        rotation = (rotation + 1) % 4
+    }
+
+    fun applyAspect(ratio: Float?) {
+        aspect = ratio
+        if (ratio == null) return
+        val bmp = base ?: return
+        val imgW = bmp.width.toFloat()
+        val imgH = bmp.height.toFloat()
+        val cx = (crop.l + crop.r) / 2f * imgW
+        val cy = (crop.t + crop.b) / 2f * imgH
+        var w = (crop.r - crop.l) * imgW
+        var h = w / ratio
+        val curH = (crop.b - crop.t) * imgH
+        if (h > curH) {
+            h = curH
+            w = h * ratio
+        }
+        if (w > imgW) {
+            w = imgW
+            h = w / ratio
+        }
+        if (h > imgH) {
+            h = imgH
+            w = h * ratio
+        }
+        var l = cx - w / 2f
+        var t = cy - h / 2f
+        l = l.coerceIn(0f, imgW - w)
+        t = t.coerceIn(0f, imgH - h)
+        crop = CropRect(
+            l / imgW, t / imgH, (l + w) / imgW, (t + h) / imgH
+        )
+    }
+
+    fun exportAndDone() {
+        val bmp = base ?: return
+        if (!dirty) {
+            onDone(path)
+            return
+        }
+        exporting = true
+        scope.launch {
+            val out = withContext(Dispatchers.Default) {
+                runCatching {
+                    exportEdited(
+                        bmp, crop, strokes, texts,
+                        File(
+                            context.cacheDir,
+                            "edit_${System.currentTimeMillis()}.jpg"
+                        )
+                    )
+                }.getOrNull()
+            }
+            exporting = false
+            if (out != null) {
+                onDone(out)
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onCancel) { Text("取消") }
+            Text(
+                "编辑图片",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            Button(
+                onClick = { exportAndDone() },
+                enabled = base != null && !exporting
+            ) {
+                Text(if (exporting) "处理中…" else "完成")
+            }
+        }
+        val bmp = base
+        if (bmp == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(Color(0xFF111111)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (loadFailed) "这张图片读不出来" else "正在载入…",
+                    color = Color.Gray
+                )
+            }
+        } else {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(Color(0xFF111111)),
+                contentAlignment = Alignment.Center
+            ) {
+                val maxW = constraints.maxWidth
+                val maxH = constraints.maxHeight
+                val scale = min(
+                    maxW / bmp.width.toFloat(),
+                    maxH / bmp.height.toFloat()
+                )
+                val dispW = (bmp.width * scale).toInt().coerceAtLeast(1)
+                val dispH = (bmp.height * scale).toInt().coerceAtLeast(1)
+                Box(
+                    modifier = Modifier
+                        .size(
+                            with(density) { dispW.toDp() },
+                            with(density) { dispH.toDp() }
+                        )
+                        .onSizeChanged { containerSize = it }
+                        // TEXT mode background tap = deselect.
+                        // The labels are children: their own
+                        // handlers get the events first (main
+                        // pass runs leaf-first), so this only
+                        // fires for taps on empty image area.
+                        .pointerInput(mode) {
+                            if (mode == EditMode.TEXT) {
+                                detectTapGestures(
+                                    onTap = { selectedTextId = null }
+                                )
+                            }
+                        }
+                ) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    // Doodles (always visible).
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val all = if (currentStroke != null) {
+                            strokes + StrokeData(
+                                currentStroke!!, drawColor, drawWidthFrac
+                            )
+                        } else {
+                            strokes
+                        }
+                        for (stroke in all) {
+                            val wPx = stroke.widthFrac * size.width
+                            if (stroke.points.size == 1) {
+                                drawCircle(
+                                    color = stroke.color,
+                                    radius = wPx / 2f,
+                                    center = Offset(
+                                        stroke.points[0].x * size.width,
+                                        stroke.points[0].y * size.height
+                                    )
+                                )
+                            } else if (stroke.points.size > 1) {
+                                val p = Path()
+                                p.moveTo(
+                                    stroke.points[0].x * size.width,
+                                    stroke.points[0].y * size.height
+                                )
+                                for (pt in stroke.points.drop(1)) {
+                                    p.lineTo(
+                                        pt.x * size.width,
+                                        pt.y * size.height
+                                    )
+                                }
+                                drawPath(
+                                    path = p,
+                                    color = stroke.color,
+                                    style = Stroke(
+                                        width = wPx,
+                                        cap = androidx.compose.ui.graphics
+                                            .StrokeCap.Round,
+                                        join = androidx.compose.ui.graphics
+                                            .StrokeJoin.Round
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    // Crop dimming + frame (handles only in
+                    // CROP mode, the frame itself always).
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val l = crop.l * size.width
+                        val t = crop.t * size.height
+                        val r = crop.r * size.width
+                        val b = crop.b * size.height
+                        val dim = Color.Black.copy(alpha = 0.55f)
+                        drawRect(dim, Offset(0f, 0f), androidx.compose.ui.geometry.Size(size.width, t))
+                        drawRect(dim, Offset(0f, b), androidx.compose.ui.geometry.Size(size.width, size.height - b))
+                        drawRect(dim, Offset(0f, t), androidx.compose.ui.geometry.Size(l, b - t))
+                        drawRect(dim, Offset(r, t), androidx.compose.ui.geometry.Size(size.width - r, b - t))
+                        drawRect(
+                            color = Color.White,
+                            topLeft = Offset(l, t),
+                            size = androidx.compose.ui.geometry.Size(r - l, b - t),
+                            style = Stroke(width = 2.dp.toPx())
+                        )
+                        if (mode == EditMode.CROP) {
+                            val handle = 5.dp.toPx()
+                            for ((hx, hy) in listOf(
+                                l to t, r to t, l to b, r to b
+                            )) {
+                                drawCircle(
+                                    color = Color.White,
+                                    radius = handle,
+                                    center = Offset(hx, hy)
+                                )
+                            }
+                        }
+                    }
+                    // Text labels.
+                    for (label in texts) {
+                        val labelSize = labelSizes[label.id]
+                        Text(
+                            text = label.text,
+                            color = label.color,
+                            style = TextStyle(
+                                fontSize = with(density) {
+                                    (label.sizeFrac * dispW).toSp()
+                                },
+                                fontWeight = FontWeight.Bold,
+                                shadow = Shadow(
+                                    color = Color.Black.copy(alpha = 0.6f),
+                                    offset = Offset(2f, 2f),
+                                    blurRadius = 4f
+                                )
+                            ),
+                            modifier = Modifier
+                                .offset {
+                                    val cx = label.x * containerSize.width
+                                    val cy = label.y * containerSize.height
+                                    IntOffset(
+                                        (cx - (labelSize?.width ?: 0) / 2f)
+                                            .roundToInt(),
+                                        (cy - (labelSize?.height ?: 0) / 2f)
+                                            .roundToInt()
+                                    )
+                                }
+                                .onSizeChanged {
+                                    labelSizes[label.id] = it
+                                }
+                                .then(
+                                    if (selectedTextId == label.id) {
+                                        Modifier.border(
+                                            1.dp,
+                                            MaterialTheme.colorScheme.primary,
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                .pointerInput(label.id, mode) {
+                                    if (mode != EditMode.TEXT) {
+                                        return@pointerInput
+                                    }
+                                    detectTapGestures(
+                                        onTap = {
+                                            selectedTextId = label.id
+                                        }
+                                    )
+                                }
+                                .pointerInput(label.id, mode, containerSize) {
+                                    if (mode != EditMode.TEXT) {
+                                        return@pointerInput
+                                    }
+                                    detectDragGestures(
+                                        onDragStart = {
+                                            selectedTextId = label.id
+                                        },
+                                        onDrag = { change, drag ->
+                                            change.consume()
+                                            val w = containerSize.width
+                                                .coerceAtLeast(1)
+                                            val h = containerSize.height
+                                                .coerceAtLeast(1)
+                                            texts = texts.map {
+                                                if (it.id == label.id) {
+                                                    it.copy(
+                                                        x = (it.x + drag.x / w)
+                                                            .coerceIn(0f, 1f),
+                                                        y = (it.y + drag.y / h)
+                                                            .coerceIn(0f, 1f)
+                                                    )
+                                                } else {
+                                                    it
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                        )
+                    }
+                    // Mode gesture layer (CROP / DRAW only —
+                    // in TEXT mode it would sit over the labels
+                    // and eat their drags, so it is not composed
+                    // there; the container handles deselect).
+                    if (mode != EditMode.TEXT) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(mode, containerSize, rotation) {
+                                val w = containerSize.width
+                                    .coerceAtLeast(1)
+                                val h = containerSize.height
+                                    .coerceAtLeast(1)
+                                when (mode) {
+                                    EditMode.DRAW -> detectDragGestures(
+                                        onDragStart = { start ->
+                                            currentStroke = listOf(
+                                                Offset(
+                                                    (start.x / w)
+                                                        .coerceIn(0f, 1f),
+                                                    (start.y / h)
+                                                        .coerceIn(0f, 1f)
+                                                )
+                                            )
+                                        },
+                                        onDrag = { change, _ ->
+                                            change.consume()
+                                            val pt = Offset(
+                                                (change.position.x / w)
+                                                    .coerceIn(0f, 1f),
+                                                (change.position.y / h)
+                                                    .coerceIn(0f, 1f)
+                                            )
+                                            currentStroke =
+                                                (currentStroke ?: emptyList()) + pt
+                                        },
+                                        onDragEnd = {
+                                            currentStroke?.let { pts ->
+                                                if (pts.isNotEmpty()) {
+                                                    strokes = strokes +
+                                                        StrokeData(
+                                                            pts, drawColor,
+                                                            drawWidthFrac
+                                                        )
+                                                }
+                                            }
+                                            currentStroke = null
+                                        },
+                                        onDragCancel = {
+                                            currentStroke = null
+                                        }
+                                    )
+                                    // Unreachable (the layer is
+                                    // not composed in TEXT mode);
+                                    // kept for exhaustiveness.
+                                    EditMode.TEXT -> Unit
+                                    EditMode.CROP -> {
+                                        var dragCorner = -1
+                                        var moveStart: Offset? = null
+                                        var cropAtStart = crop
+                                        detectDragGestures(
+                                            onDragStart = { start ->
+                                                cropAtStart = crop
+                                                val corners = listOf(
+                                                    Offset(
+                                                        crop.l * w, crop.t * h
+                                                    ),
+                                                    Offset(
+                                                        crop.r * w, crop.t * h
+                                                    ),
+                                                    Offset(
+                                                        crop.l * w, crop.b * h
+                                                    ),
+                                                    Offset(
+                                                        crop.r * w, crop.b * h
+                                                    )
+                                                )
+                                                val threshold = 48.dp.toPx()
+                                                var best = -1
+                                                var bestDist = Float.MAX_VALUE
+                                                for ((i, c) in corners
+                                                    .withIndex()) {
+                                                    val d = (start - c)
+                                                        .getDistance()
+                                                    if (d < bestDist) {
+                                                        bestDist = d
+                                                        best = i
+                                                    }
+                                                }
+                                                dragCorner =
+                                                    if (bestDist <= threshold) {
+                                                        best
+                                                    } else {
+                                                        -1
+                                                    }
+                                                moveStart =
+                                                    if (dragCorner == -1 &&
+                                                        start.x >= crop.l * w &&
+                                                        start.x <= crop.r * w &&
+                                                        start.y >= crop.t * h &&
+                                                        start.y <= crop.b * h
+                                                    ) {
+                                                        start
+                                                    } else {
+                                                        null
+                                                    }
+                                            },
+                                            onDrag = { change, _ ->
+                                                change.consume()
+                                                val pos = change.position
+                                                val imgW = bmp.width
+                                                    .toFloat()
+                                                val imgH = bmp.height
+                                                    .toFloat()
+                                                if (dragCorner >= 0) {
+                                                    crop = dragCropCorner(
+                                                        cropAtStart,
+                                                        dragCorner,
+                                                        pos.x / w, pos.y / h,
+                                                        aspect, imgW, imgH
+                                                    )
+                                                } else if (moveStart != null) {
+                                                    val start = moveStart!!
+                                                    val dx =
+                                                        (pos.x - start.x) / w
+                                                    val dy =
+                                                        (pos.y - start.y) / h
+                                                    val width0 =
+                                                        cropAtStart.r - cropAtStart.l
+                                                    val height0 =
+                                                        cropAtStart.b - cropAtStart.t
+                                                    val nl = (cropAtStart.l + dx)
+                                                        .coerceIn(
+                                                            0f, 1f - width0
+                                                        )
+                                                    val nt = (cropAtStart.t + dy)
+                                                        .coerceIn(
+                                                            0f, 1f - height0
+                                                        )
+                                                    crop = CropRect(
+                                                        nl, nt,
+                                                        nl + width0,
+                                                        nt + height0
+                                                    )
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                dragCorner = -1
+                                                moveStart = null
+                                            },
+                                            onDragCancel = {
+                                                dragCorner = -1
+                                                moveStart = null
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                    )
+                    }
+                }
+            }
+        }
+        // Mode tabs.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            for ((m, label) in listOf(
+                EditMode.CROP to "裁剪",
+                EditMode.DRAW to "涂鸦",
+                EditMode.TEXT to "文字"
+            )) {
+                Box(
+                    modifier = Modifier
+                        .background(
+                            if (mode == m) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            RoundedCornerShape(50)
+                        )
+                        .clickable { mode = m }
+                        .padding(horizontal = 16.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        label, fontSize = 14.sp,
+                        color = if (mode == m) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        fontWeight = if (mode == m) {
+                            FontWeight.SemiBold
+                        } else {
+                            FontWeight.Normal
+                        }
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = { rotateAll() }) {
+                Text("旋转 90°")
+            }
+        }
+        // Mode-specific controls.
+        when (mode) {
+            EditMode.CROP -> Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("比例", fontSize = 13.5.sp)
+                Spacer(Modifier.width(8.dp))
+                for ((label, ratio) in listOf<Pair<String, Float?>>(
+                    "自由" to null,
+                    "1:1" to 1f,
+                    "4:3" to 4f / 3f,
+                    "16:9" to 16f / 9f
+                )) {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                if (aspect == ratio) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme
+                                        .surfaceVariant
+                                },
+                                RoundedCornerShape(50)
+                            )
+                            .clickable { applyAspect(ratio) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            label, fontSize = 13.sp,
+                            color = if (aspect == ratio) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme
+                                    .onSurfaceVariant
+                            }
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = {
+                    crop = CropRect.FULL
+                    aspect = null
+                }) {
+                    Text("重置")
+                }
+            }
+            EditMode.DRAW -> Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = 10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    for (color in editorPalette) {
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .background(color, CircleShape)
+                                .then(
+                                    if (drawColor == color) {
+                                        Modifier.border(
+                                            2.dp,
+                                            MaterialTheme.colorScheme
+                                                .primary,
+                                            CircleShape
+                                        )
+                                    } else {
+                                        Modifier.border(
+                                            1.dp, Color.Gray, CircleShape
+                                        )
+                                    }
+                                )
+                                .clickable { drawColor = color }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = {
+                            if (strokes.isNotEmpty()) {
+                                strokes = strokes.dropLast(1)
+                            }
+                        },
+                        enabled = strokes.isNotEmpty()
+                    ) { Text("撤销") }
+                    TextButton(
+                        onClick = { strokes = emptyList() },
+                        enabled = strokes.isNotEmpty()
+                    ) { Text("清空") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("粗细", fontSize = 13.5.sp)
+                    Spacer(Modifier.width(8.dp))
+                    for ((label, wf) in listOf(
+                        "细" to 0.006f, "中" to 0.012f, "粗" to 0.024f
+                    )) {
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (drawWidthFrac == wf) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme
+                                            .surfaceVariant
+                                    },
+                                    RoundedCornerShape(50)
+                                )
+                                .clickable { drawWidthFrac = wf }
+                                .padding(
+                                    horizontal = 12.dp, vertical = 6.dp
+                                )
+                        ) {
+                            Text(
+                                label, fontSize = 13.sp,
+                                color = if (drawWidthFrac == wf) {
+                                    MaterialTheme.colorScheme.onPrimary
+                                } else {
+                                    MaterialTheme.colorScheme
+                                        .onSurfaceVariant
+                                }
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+                }
+            }
+            EditMode.TEXT -> Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(onClick = {
+                    textDialogValue = ""
+                    textDialogFor = -1
+                }) {
+                    Text("添加文字")
+                }
+                val selected = texts.firstOrNull {
+                    it.id == selectedTextId
+                }
+                if (selected != null) {
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(onClick = {
+                        textDialogValue = selected.text
+                        textDialogFor = selected.id
+                    }) { Text("改字") }
+                    TextButton(onClick = {
+                        val idx = editorPalette.indexOf(selected.color)
+                        val next = editorPalette[
+                            (idx + 1) % editorPalette.size
+                        ]
+                        texts = texts.map {
+                            if (it.id == selected.id) {
+                                it.copy(color = next)
+                            } else {
+                                it
+                            }
+                        }
+                    }) { Text("换颜色") }
+                    TextButton(onClick = {
+                        texts = texts.filter { it.id != selected.id }
+                        selectedTextId = null
+                    }) { Text("删除") }
+                } else {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "点一个文字可以拖动它、改字或换颜色",
+                        fontSize = 12.5.sp, color = Color.Gray
+                    )
+                }
+            }
+        }
+    }
+
+    val dialogFor = textDialogFor
+    if (dialogFor != null) {
+        AlertDialog(
+            onDismissRequest = { textDialogFor = null },
+            title = {
+                Text(if (dialogFor == -1) "添加文字" else "修改文字")
+            },
+            text = {
+                OutlinedTextField(
+                    value = textDialogValue,
+                    onValueChange = { textDialogValue = it },
+                    label = { Text("写点什么") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    enabled = textDialogValue.isNotBlank(),
+                    onClick = {
+                        val value = textDialogValue.trim()
+                        if (dialogFor == -1) {
+                            val id = nextTextId++
+                            texts = texts + TextData(
+                                id = id,
+                                text = value,
+                                x = 0.5f, y = 0.5f,
+                                color = Color.White,
+                                sizeFrac = 0.07f
+                            )
+                            selectedTextId = id
+                        } else {
+                            texts = texts.map {
+                                if (it.id == dialogFor) {
+                                    it.copy(text = value)
+                                } else {
+                                    it
+                                }
+                            }
+                        }
+                        textDialogFor = null
+                    }
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { textDialogFor = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+/** Corner-drag geometry: the dragged corner follows the
+ *  pointer, the opposite corner anchors. With an aspect
+ *  ratio locked, the size follows the pointer while the
+ *  ratio is preserved; both clamp to the image and to a
+ *  sane minimum. All in normalized coordinates, sizes
+ *  computed in pixels via [imgW]/[imgH]. */
+private fun dragCropCorner(
+    start: CropRect,
+    corner: Int,
+    nx: Float,
+    ny: Float,
+    ratio: Float?,
+    imgW: Float,
+    imgH: Float
+): CropRect {
+    // Anchor = the opposite corner.
+    val (ax, ay) = when (corner) {
+        0 -> start.r to start.b
+        1 -> start.l to start.b
+        2 -> start.r to start.t
+        else -> start.l to start.t
+    }
+    val px = nx.coerceIn(0f, 1f)
+    val py = ny.coerceIn(0f, 1f)
+    var wPx = abs(px - ax) * imgW
+    var hPx = abs(py - ay) * imgH
+    val minPx = 0.08f * min(imgW, imgH)
+    if (ratio != null) {
+        // Grow from the width, then fit the height.
+        hPx = wPx / ratio
+        val maxH = (if (py >= ay) 1f - ay else ay) * imgH
+        if (hPx > maxH) {
+            hPx = maxH
+            wPx = hPx * ratio
+        }
+        if (wPx < minPx) {
+            wPx = minPx
+            hPx = wPx / ratio
+        }
+    } else {
+        wPx = max(wPx, minPx)
+        hPx = max(hPx, minPx)
+    }
+    val dirX = if (px >= ax) 1f else -1f
+    val dirY = if (py >= ay) 1f else -1f
+    var x2 = ax + dirX * (wPx / imgW)
+    var y2 = ay + dirY * (hPx / imgH)
+    x2 = x2.coerceIn(0f, 1f)
+    y2 = y2.coerceIn(0f, 1f)
+    return CropRect(
+        l = min(ax, x2), t = min(ay, y2),
+        r = max(ax, x2), b = max(ay, y2)
+    )
+}
+
+/** Render the edit onto a fresh bitmap: crop the rotated
+ *  base, paint the strokes, paint the texts, save JPEG.
+ *  Returns the output path, or null on any failure (the
+ *  caller then keeps the user in the editor). */
+private fun exportEdited(
+    base: Bitmap,
+    crop: CropRect,
+    strokes: List<StrokeData>,
+    texts: List<TextData>,
+    outFile: File
+): String? {
+    val w = base.width
+    val h = base.height
+    val l = (crop.l * w).toInt().coerceIn(0, w - 1)
+    val t = (crop.t * h).toInt().coerceIn(0, h - 1)
+    val r = (crop.r * w).toInt().coerceIn(l + 1, w)
+    val b = (crop.b * h).toInt().coerceIn(t + 1, h)
+    val cropped = Bitmap.createBitmap(base, l, t, r - l, b - t)
+    val out = cropped.copy(Bitmap.Config.ARGB_8888, true)
+    val canvas = AndroidCanvas(out)
+    for (stroke in strokes) {
+        if (stroke.points.isEmpty()) continue
+        val paint = Paint().apply {
+            color = stroke.color.toArgb()
+            style = Paint.Style.STROKE
+            strokeWidth = stroke.widthFrac * w
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            isAntiAlias = true
+        }
+        if (stroke.points.size == 1) {
+            paint.style = Paint.Style.FILL
+            canvas.drawCircle(
+                stroke.points[0].x * w - l,
+                stroke.points[0].y * h - t,
+                paint.strokeWidth / 2f, paint
+            )
+        } else {
+            val path = android.graphics.Path()
+            path.moveTo(
+                stroke.points[0].x * w - l,
+                stroke.points[0].y * h - t
+            )
+            for (pt in stroke.points.drop(1)) {
+                path.lineTo(pt.x * w - l, pt.y * h - t)
+            }
+            canvas.drawPath(path, paint)
+        }
+    }
+    for (label in texts) {
+        val paint = Paint().apply {
+            color = label.color.toArgb()
+            textSize = label.sizeFrac * w
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+            setShadowLayer(4f, 0f, 2f, android.graphics.Color.BLACK)
+        }
+        val cx = label.x * w - l
+        val cy = label.y * h - t
+        val fm = paint.fontMetrics
+        val baseline = cy - (fm.ascent + fm.descent) / 2f
+        canvas.drawText(label.text, cx, baseline, paint)
+    }
+    FileOutputStream(outFile).use { stream ->
+        out.compress(Bitmap.CompressFormat.JPEG, 92, stream)
+    }
+    return outFile.absolutePath
+}
