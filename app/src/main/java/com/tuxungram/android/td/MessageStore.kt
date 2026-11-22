@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, OTHER }
+enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, ANIMATED_EMOJI, OTHER }
 
 /** One poll option, flattened from pollOption. */
 data class PollOptionUi(
@@ -206,7 +206,28 @@ data class MsgItem(
     // Album membership (message.media_album_id, v0.9.15 V1/V4):
     // non-zero when this message belongs to a media album;
     // consecutive items sharing one id render as one grid.
-    val mediaAlbumId: Long = 0L
+    val mediaAlbumId: Long = 0L,
+    // Animated emoji payload (ANIMATED_EMOJI kind, v0.9.16
+    // W4): the big sticker itself rides the generic
+    // fileId/filePath fields and its size rides
+    // photoWidth/photoHeight; the click sound
+    // (animatedEmoji.sound, an Opus/OGG file, may be absent)
+    // rides these two.
+    val animSoundFileId: Int = 0,
+    val animSoundPath: String? = null
+)
+
+/** A click effect for one animated-emoji message
+ *  (v0.9.16, W4): clickAnimatedEmojiMessage answered with a
+ *  big sticker (fileId != 0 — shown as a static overlay,
+ *  since the app has no Lottie player) or with a 404, which
+ *  per td_api.tl means "play the usual animation" (fileId
+ *  == 0 — the bubble bounces its base rendering instead).
+ *  [nonce] distinguishes two clicks on the same message. */
+data class AnimEffect(
+    val messageId: Long,
+    val fileId: Int,
+    val nonce: Long
 )
 
 /** One picked photo/video for an album send (v0.9.15, V4). */
@@ -891,6 +912,55 @@ object MessageStore {
             }
         }
         step()
+    }
+
+    // ---- Animated emoji clicks (v0.9.16, W4) ----
+
+    private val _animEffect = MutableStateFlow<AnimEffect?>(null)
+    val animEffect: StateFlow<AnimEffect?> = _animEffect
+
+    @Volatile
+    private var animNonce = 0L
+
+    /** A tap on an animated-emoji message: tell TDLib
+     *  (clickAnimatedEmojiMessage) and publish the effect
+     *  to play. A Sticker answer carries the big effect
+     *  sticker (its file is noted with the shared resolver
+     *  and pulled if needed); a 404 is the documented "play
+     *  the usual animation" outcome, published as a
+     *  fileId == 0 effect (the bubble bounces). Any other
+     *  error stays silent — a decorative tap must never
+     *  surface as a send failure. The effect clears itself
+     *  after a few seconds, nonce-guarded so a fast second
+     *  tap is not cut short by the first tap's timer. */
+    fun clickAnimatedEmoji(msg: MsgItem) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val nonce = ++animNonce
+        val query = TdClient.request("clickAnimatedEmojiMessage").apply {
+            put("chat_id", chatId)
+            put("message_id", msg.id)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (currentChatId != chatId) return@sendRaw
+            val effect = if (TdClient.isError(response)) {
+                AnimEffect(msg.id, 0, nonce)
+            } else {
+                val file = response.optJSONObject("sticker")
+                val fileId = file?.optInt("id", 0) ?: 0
+                if (fileId != 0) {
+                    AvatarStore.noteFile(file)
+                    AvatarStore.ensureDownload(fileId)
+                }
+                AnimEffect(msg.id, fileId, nonce)
+            }
+            _animEffect.value = effect
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (_animEffect.value?.nonce == nonce) {
+                    _animEffect.value = null
+                }
+            }, 3000)
+        }
     }
 
     @Volatile
@@ -2020,6 +2090,12 @@ object MessageStore {
                         byId[id] = item.copy(thumbPath = path)
                         changed = true
                     }
+                    if (completed && item.animSoundFileId == fileId &&
+                        item.animSoundFileId != 0 && item.animSoundPath == null
+                    ) {
+                        byId[id] = item.copy(animSoundPath = path)
+                        changed = true
+                    }
                     if (item.fileId == fileId && item.fileId != 0) {
                         if (completed && item.filePath == null) {
                             byId[id] = item.copy(filePath = path, fileDownloading = false)
@@ -2427,6 +2503,40 @@ object MessageStore {
                     thumbPath = downloadedPath(thumbFile),
                     miniThumbData = note?.optJSONObject("minithumbnail")
                         ?.optString("data") ?: ""
+                )
+            }
+            "messageAnimatedEmoji" -> {
+                // Animated emoji (v0.9.16, W4): one big
+                // sticker (animatedEmoji.sticker) shown large
+                // with no bubble chrome; the emoji itself is
+                // the text (summaries and previews show it
+                // directly, like mature clients). The click
+                // sound is a small Opus file — pull it eagerly
+                // so a tap can play it without waiting.
+                val ae = content.optJSONObject("animated_emoji")
+                val sticker = ae?.optJSONObject("sticker")
+                val file = sticker?.optJSONObject("sticker")
+                val fileId = file?.optInt("id", 0) ?: 0
+                if (fileId != 0 && downloadedPath(file) == null) {
+                    requestDownload(fileId, priority = 16)
+                }
+                val sound = ae?.optJSONObject("sound")
+                val soundId = sound?.optInt("id", 0) ?: 0
+                if (soundId != 0 && downloadedPath(sound) == null) {
+                    requestDownload(soundId, priority = 1)
+                }
+                val emoji = content.optString("emoji")
+                base.copy(
+                    kind = MsgKind.ANIMATED_EMOJI,
+                    text = emoji,
+                    stickerEmoji = emoji,
+                    fileId = fileId,
+                    filePath = downloadedPath(file),
+                    fileMime = "image/webp",
+                    photoWidth = sticker?.optInt("width", 0) ?: 0,
+                    photoHeight = sticker?.optInt("height", 0) ?: 0,
+                    animSoundFileId = soundId,
+                    animSoundPath = downloadedPath(sound)
                 )
             }
             "messageDice" -> {

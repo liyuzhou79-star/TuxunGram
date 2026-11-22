@@ -84,6 +84,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -109,6 +110,7 @@ import com.tuxungram.android.td.InlineBtn
 import com.tuxungram.android.td.MediaEntry
 import com.tuxungram.android.td.MediaStore
 import com.tuxungram.android.td.MessageStore
+import com.tuxungram.android.td.AnimEffect
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.Notifier
@@ -470,6 +472,18 @@ fun ChatScreen(
         }
     }
 
+    // Animated emoji click effects (v0.9.16, W4): the store
+    // publishes the effect to render; the sound half plays
+    // here, once per effect, from the target message's
+    // downloaded sound file.
+    val animEffect by MessageStore.animEffect.collectAsState()
+    LaunchedEffect(animEffect) {
+        val effect = animEffect ?: return@LaunchedEffect
+        val target = messages.firstOrNull { it.id == effect.messageId }
+            ?: return@LaunchedEffect
+        val soundPath = target.animSoundPath
+        if (soundPath != null) AnimSoundPlayer.play(soundPath)
+    }
     // Bot adaptation (v0.9.9, W2): the bot surface of this
     // chat (slash commands / group bots) and the live reply
     // keyboard state. kbDismissedSource hides a one-time
@@ -1694,6 +1708,9 @@ fun ChatScreen(
                         showSenderAvatar = msg.id in avatarShowIds,
                         onOpenSenderProfile = { userId ->
                             DeepLink.pendingProfileUser.value = userId
+                        },
+                        animEffect = animEffect?.takeIf {
+                            it.messageId == msg.id
                         }
                     )
                     }
@@ -3323,7 +3340,10 @@ fun MessageBubble(
     // same-sender run; the tap route opens the sender's
     // profile page.
     showSenderAvatar: Boolean = false,
-    onOpenSenderProfile: (Long) -> Unit = {}
+    onOpenSenderProfile: (Long) -> Unit = {},
+    // Animated-emoji click effect for THIS message, when
+    // one is playing (v0.9.16, W4).
+    animEffect: AnimEffect? = null
 ) {
     val outgoing = msg.outgoing
     val context = LocalContext.current
@@ -3450,7 +3470,9 @@ fun MessageBubble(
             Column(
                 modifier = Modifier
                     .background(
-                        if (msg.kind == MsgKind.STICKER) {
+                        if (msg.kind == MsgKind.STICKER ||
+                            msg.kind == MsgKind.ANIMATED_EMOJI
+                        ) {
                             Color.Transparent
                         } else if (outgoing) {
                             Color(0xFFD8EDCB)
@@ -3488,6 +3510,11 @@ fun MessageBubble(
                                 } else {
                                     MessageStore.downloadFileFor(msg)
                                 }
+                            } else if (msg.kind == MsgKind.ANIMATED_EMOJI) {
+                                // Animated emoji (v0.9.16, W4):
+                                // sound + click effect, both
+                                // driven from MessageStore.
+                                MessageStore.clickAnimatedEmoji(msg)
                             } else if (msg.fileId != 0 && msg.kind != MsgKind.STICKER &&
                                 msg.kind != MsgKind.VOICE &&
                                 msg.kind != MsgKind.DICE &&
@@ -3576,6 +3603,8 @@ fun MessageBubble(
                         }
                     }
                     MsgKind.STICKER -> StickerBubbleContent(msg)
+                    MsgKind.ANIMATED_EMOJI ->
+                        AnimatedEmojiBubbleContent(msg, animEffect)
                     MsgKind.ANIMATION -> {
                         AnimationBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
@@ -5113,6 +5142,113 @@ fun StickerBubbleContent(msg: MsgItem) {
                 msg.stickerEmoji.ifEmpty { "贴纸" },
                 fontSize = 40.sp
             )
+        }
+    }
+}
+
+/** Animated emoji (v0.9.16, W4): one big sticker with no
+ *  bubble chrome. Bitmap-decodable stickers render as an
+ *  image; animated .tgs files cannot be decoded by the
+ *  bitmap path, so those (and still-downloading ones) show
+ *  the emoji itself at a large size — the honest static
+ *  form. A click effect overlays the big effect sticker
+ *  while it is active (resolved through the shared file
+ *  resolver; it may still be downloading when the effect
+ *  starts, so the lookup polls briefly), or bounces the
+ *  base rendering for the documented "usual animation"
+ *  outcome (effect with fileId == 0). */
+@Composable
+fun AnimatedEmojiBubbleContent(msg: MsgItem, effect: AnimEffect?) {
+    val path = msg.filePath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { decodeCached(path) }
+        }
+    }
+    val bounce = remember { Animatable(1f) }
+    LaunchedEffect(effect?.nonce) {
+        if (effect != null && effect.fileId == 0) {
+            bounce.snapTo(1f)
+            bounce.animateTo(1.3f, Motion.tween(150))
+            bounce.animateTo(1f, Motion.tween(220))
+        }
+    }
+    val effectFileId = effect?.fileId ?: 0
+    val effectBitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, effect?.nonce
+    ) {
+        value = null
+        if (effectFileId != 0) {
+            var p = AvatarStore.pathForFile(effectFileId)
+            var tries = 0
+            while (p == null && tries < 12) {
+                delay(200)
+                p = AvatarStore.pathForFile(effectFileId)
+                tries++
+            }
+            if (p != null) {
+                value = withContext(Dispatchers.IO) {
+                    decodeCached(p)
+                }
+            }
+        }
+    }
+    Box(
+        modifier = Modifier.size(132.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = msg.stickerEmoji,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .size(120.dp)
+                    .scale(bounce.value)
+            )
+        } else {
+            Text(
+                msg.stickerEmoji.ifEmpty { "😀" },
+                fontSize = 76.sp,
+                modifier = Modifier.scale(bounce.value)
+            )
+        }
+        val eb = effectBitmap
+        if (effect != null && eb != null) {
+            Image(
+                bitmap = eb.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(132.dp)
+            )
+        }
+    }
+}
+
+/** One-shot player for animated-emoji click sounds
+ *  (v0.9.16, W4): the sound is a small Opus/OGG file TDLib
+ *  ships with the message; a fresh tap replaces whatever
+ *  is still playing. Failures stay silent — a decorative
+ *  sound must never break the tap. */
+object AnimSoundPlayer {
+    private var player: android.media.MediaPlayer? = null
+
+    fun play(path: String) {
+        try {
+            player?.release()
+            val p = android.media.MediaPlayer()
+            p.setDataSource(path)
+            p.setOnCompletionListener { it.release() }
+            p.prepare()
+            p.start()
+            player = p
+        } catch (t: Throwable) {
+            // Missing or undecodable sound: stay silent.
         }
     }
 }

@@ -883,6 +883,10 @@ object ChatStore {
                     ?.optString("emoji") ?: ""
                 if (emoji.isNotEmpty()) "[贴纸] $emoji" else "[贴纸]"
             }
+            "messageAnimatedEmoji" ->
+                // The emoji itself, like mature clients show
+                // it in the list (v0.9.16, W4).
+                content.optString("emoji").ifEmpty { "[动态表情]" }
             "messageVideoNote" -> "[视频消息]"
             "messagePoll" -> {
                 val question = content.optJSONObject("poll")

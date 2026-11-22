@@ -121,7 +121,9 @@ fun SimpleMessageBubble(
             Column(
                 modifier = Modifier
                     .background(
-                        if (msg.kind == MsgKind.STICKER) {
+                        if (msg.kind == MsgKind.STICKER ||
+                            msg.kind == MsgKind.ANIMATED_EMOJI
+                        ) {
                             Color.Transparent
                         } else if (outgoing) {
                             Color(0xFFD8EDCB)
@@ -145,6 +147,7 @@ fun SimpleMessageBubble(
                                 }
                             } else if (msg.fileId != 0 &&
                                 msg.kind != MsgKind.STICKER &&
+                                msg.kind != MsgKind.ANIMATED_EMOJI &&
                                 msg.kind != MsgKind.VOICE &&
                                 msg.kind != MsgKind.DICE &&
                                 msg.kind != MsgKind.GAME
@@ -207,6 +210,12 @@ fun SimpleMessageBubble(
                         }
                     }
                     MsgKind.STICKER -> StickerBubbleContent(msg)
+                    MsgKind.ANIMATED_EMOJI ->
+                        // Static rendering only (v0.9.16, W4):
+                        // the click sound/effect lives in the
+                        // main chat, whose store owns the
+                        // clickAnimatedEmojiMessage call.
+                        AnimatedEmojiBubbleContent(msg, null)
                     MsgKind.ANIMATION -> {
                         AnimationBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
