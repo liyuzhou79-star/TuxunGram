@@ -437,11 +437,11 @@ private fun AuthHost() {
                 )
                 is AuthState.WaitCode -> {
                     if (forcePhone) {
-                        PhoneScreen { fullNumber ->
+                        PhoneScreen(onSubmit = { fullNumber ->
                             enteredPhone = fullNumber
                             forcePhone = false
                             TdRepository.setPhone(fullNumber)
-                        }
+                        })
                     } else {
                         CodeScreen(
                             phone = enteredPhone,

@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, ANIMATED_EMOJI, OTHER }
+enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, ANIMATED_EMOJI, CHECKLIST, OTHER }
 
 /** One poll option, flattened from pollOption. */
 data class PollOptionUi(
@@ -30,6 +30,17 @@ data class PollUi(
     val allowsMultiple: Boolean,
     val isQuiz: Boolean,
     val explanation: String = ""
+)
+
+/** One checklist task, flattened from checklistTask
+ *  (v0.9.24, Q7). [completed] mirrors completion_date != 0;
+ *  toggling goes through markChecklistTasksAsDone and the
+ *  fresh state arrives with updateMessageContent. */
+data class ChecklistTaskUi(
+    val id: Int,
+    val text: String,
+    val entities: List<TextEntityUi> = emptyList(),
+    val completed: Boolean = false
 )
 
 /** One finished message translation (v0.9.5, O4): the
@@ -214,7 +225,20 @@ data class MsgItem(
     // (animatedEmoji.sound, an Opus/OGG file, may be absent)
     // rides these two.
     val animSoundFileId: Int = 0,
-    val animSoundPath: String? = null
+    val animSoundPath: String? = null,
+    // Send effect (message.effect_id, v0.9.24 Q8): non-zero
+    // when the message was sent with an effect in a private
+    // chat. The bubble shows the effect's emoji as a marker;
+    // the full-screen animation is the receiving client's
+    // job and is not faked here.
+    val effectId: Long = 0L,
+    // Checklist payload (CHECKLIST kind, v0.9.24 Q7).
+    val checklistTitle: String = "",
+    val checklistTitleEntities: List<TextEntityUi> = emptyList(),
+    val checklistTasks: List<ChecklistTaskUi> = emptyList(),
+    // Whether THIS account may tick tasks on this checklist
+    // (sender, or others_can_mark_tasks_as_done).
+    val checklistCanMark: Boolean = false
 )
 
 /** A click effect for one animated-emoji message
@@ -243,10 +267,17 @@ data class AlbumPart(
 data class SendModifiers(
     val silent: Boolean = false,
     val scheduleAtSec: Long = 0L,
-    val whenOnline: Boolean = false
+    val whenOnline: Boolean = false,
+    // Suppress the link preview for this one text message
+    // (v0.9.24, Q3): rides inputMessageText.link_preview_options.
+    val disableLinkPreview: Boolean = false,
+    // Message effect for this send (v0.9.24, Q8): rides
+    // messageSendOptions.effect_id; private chats only.
+    val effectId: Long = 0L
 ) {
     val isDefault: Boolean
-        get() = !silent && scheduleAtSec == 0L && !whenOnline
+        get() = !silent && scheduleAtSec == 0L && !whenOnline &&
+            effectId == 0L
 }
 
 /**
@@ -1421,6 +1452,7 @@ object MessageStore {
             put("disable_notification", mods.silent)
             put("from_background", false)
             put("protect_content", false)
+            if (mods.effectId != 0L) put("effect_id", mods.effectId)
             when {
                 mods.whenOnline -> put(
                     "scheduling_state",
@@ -1438,6 +1470,106 @@ object MessageStore {
                 )
             }
         }
+    }
+
+    /** What the composer link-preview card shows (v0.9.24,
+     *  Q3): the getLinkPreview answer for the first URL in the
+     *  draft. [url] is the URL the preview belongs to — the
+     *  card (and a "preview off" choice) only applies while
+     *  the draft still contains exactly that URL. */
+    data class ComposerPreview(
+        val url: String,
+        val siteName: String,
+        val title: String,
+        val description: String,
+        val photoFileId: Int = 0,
+        val photoPath: String? = null
+    )
+
+    private val _composerPreview =
+        MutableStateFlow<ComposerPreview?>(null)
+    val composerPreview: StateFlow<ComposerPreview?> =
+        _composerPreview
+
+    @Volatile
+    private var composerPreviewUrl: String = ""
+
+    /** Fetch (or clear) the composer link preview for the
+     *  first URL in [text]. Called debounced from the chat
+     *  screen; a response that arrives after the draft moved
+     *  on to another URL is dropped. */
+    fun refreshComposerPreview(text: String) {
+        val url = firstUrlIn(text)
+        if (url == null) {
+            composerPreviewUrl = ""
+            _composerPreview.value = null
+            return
+        }
+        if (url == composerPreviewUrl &&
+            _composerPreview.value != null
+        ) {
+            return
+        }
+        composerPreviewUrl = url
+        _composerPreview.value = null
+        val query = TdClient.request("getLinkPreview").apply {
+            put("url", url)
+            put("link_preview_options", JSONObject.NULL)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (composerPreviewUrl != url) return@sendRaw
+            if (TdClient.isError(response)) {
+                // No preview for this link (or the fetch was
+                // refused): the card simply stays away.
+                if (composerPreviewUrl == url) {
+                    composerPreviewUrl = ""
+                }
+                return@sendRaw
+            }
+            val type = response.optString("@type")
+            if (type == "linkPreview") {
+                val photo = lpPhotoFile(response)
+                val photoId = photo?.optInt("id", 0) ?: 0
+                if (photoId != 0 &&
+                    downloadedPath(photo) == null
+                ) {
+                    requestDownload(photoId, priority = 1)
+                }
+                _composerPreview.value = ComposerPreview(
+                    url = url,
+                    siteName = response.optString("site_name"),
+                    title = response.optString("title"),
+                    description = response.optJSONObject("description")
+                        ?.optString("text") ?: "",
+                    photoFileId = photoId,
+                    photoPath = downloadedPath(photo)
+                )
+            } else if (type == "webPageInstantView") {
+                // Instant-view pages carry their title in the
+                // first page block; showing just the link is
+                // honest enough for the composer card.
+                _composerPreview.value = ComposerPreview(
+                    url = url,
+                    siteName = "",
+                    title = url,
+                    description = ""
+                )
+            }
+        }
+    }
+
+    fun clearComposerPreview() {
+        composerPreviewUrl = ""
+        _composerPreview.value = null
+    }
+
+    private fun firstUrlIn(text: String): String? {
+        val match = Regex("""https?://\S+|www\.\S+|t\.me/\S+""")
+            .find(text) ?: return null
+        var url = match.value.trimEnd('.', ',', ')', ']', '}', '!', '?')
+        if (url.startsWith("www.")) url = "https://$url"
+        if (url.startsWith("t.me/")) url = "https://$url"
+        return url
     }
 
     fun sendText(text: String) = sendText(text, SendModifiers())
@@ -1486,7 +1618,21 @@ object MessageStore {
             put("input_message_content", JSONObject().apply {
                 put("@type", "inputMessageText")
                 put("text", richFormattedText(text, extraEntities))
-                put("link_preview_options", JSONObject.NULL)
+                // Per-send preview switch (v0.9.24, Q3): the
+                // composer's card close button arms
+                // disableLinkPreview for this draft only.
+                if (mods.disableLinkPreview) {
+                    put("link_preview_options", JSONObject().apply {
+                        put("@type", "linkPreviewOptions")
+                        put("is_disabled", true)
+                        put("url", "")
+                        put("force_small_media", false)
+                        put("force_large_media", false)
+                        put("show_above_text", false)
+                    })
+                } else {
+                    put("link_preview_options", JSONObject.NULL)
+                }
                 put("clear_draft", true)
             })
         }
@@ -1860,6 +2006,11 @@ object MessageStore {
             message.contains("SCHEDULE", ignoreCase = true) ||
                 message.contains("scheduling", ignoreCase = true) ->
                 "这个对话不支持定时发送（比如秘密聊天），或者定的时间不对。"
+            // Premium-gated sends (v0.9.24: checklists and
+            // premium effects) — say what the server means
+            // instead of leaking a bare code.
+            message.contains("PREMIUM", ignoreCase = true) ->
+                "这个功能要 Telegram Premium 才能用（比如发送清单、会员特效），普通账号用不了。"
             else -> "发送失败，再试一次。（错误码 ${error.optInt("code")}）"
         }
     }
@@ -2278,6 +2429,7 @@ object MessageStore {
             replyChatId = replyTargetChatId(msg),
             replySummary = replySummaryOf(msg),
             mediaAlbumId = msg.optLong("media_album_id"),
+            effectId = msg.optLong("effect_id"),
             reactions = reactionsOf(msg.optJSONObject("interaction_info")),
             buttons = parseButtons(msg.optJSONObject("reply_markup")),
             isChannelPost = msg.optBoolean("is_channel_post"),
@@ -2365,6 +2517,44 @@ object MessageStore {
                     kind = MsgKind.POLL,
                     pollId = pollObj?.optLong("id", 0L) ?: 0L,
                     poll = pollObj?.let { parsePoll(it) }
+                )
+            }
+            "messageChecklist" -> {
+                // Checklist message (v0.9.24, Q7): fields per
+                // td_api.tl checklist / checklistTask. Whether
+                // this account may tick tasks is the server's
+                // own can_mark_tasks_as_done flag.
+                val list = content.optJSONObject("list")
+                val tasks = ArrayList<ChecklistTaskUi>()
+                val arr = list?.optJSONArray("tasks")
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val t = arr.optJSONObject(i) ?: continue
+                        tasks.add(
+                            ChecklistTaskUi(
+                                id = t.optInt("id"),
+                                text = t.optJSONObject("text")
+                                    ?.optString("text") ?: "",
+                                entities = entitiesOf(
+                                    t.optJSONObject("text")
+                                ),
+                                completed =
+                                    t.optInt("completion_date") != 0
+                            )
+                        )
+                    }
+                }
+                base.copy(
+                    kind = MsgKind.CHECKLIST,
+                    checklistTitle = list?.optJSONObject("title")
+                        ?.optString("text") ?: "",
+                    checklistTitleEntities = entitiesOf(
+                        list?.optJSONObject("title")
+                    ),
+                    checklistTasks = tasks,
+                    checklistCanMark =
+                        list?.optBoolean("can_mark_tasks_as_done")
+                            ?: false
                 )
             }
             "messageLocation" -> {
@@ -2673,6 +2863,62 @@ object MessageStore {
             put("chat_id", chatId)
             put("message_id", item.id)
             put("option_ids", ids)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            }
+        }
+    }
+
+    /** Send a checklist (v0.9.24, Q7): inputMessageChecklist
+     *  with an inputChecklist (title + tasks, ids assigned
+     *  here as 1..n). Sending checklists is Premium-gated by
+     *  the server; a refusal is mapped by sendErrorText to a
+     *  plain "needs Premium" sentence. Editing the task list
+     *  after sending is deliberately not offered (noted in
+     *  FEATURE_GAP); toggling is [markChecklistTask]. */
+    fun sendChecklist(
+        title: String,
+        tasks: List<String>,
+        othersCanMark: Boolean
+    ) {
+        val taskArray = JSONArray()
+        tasks.forEachIndexed { index, text ->
+            taskArray.put(JSONObject().apply {
+                put("@type", "inputChecklistTask")
+                put("id", index + 1)
+                put("text", formattedText(text))
+            })
+        }
+        val content = JSONObject().apply {
+            put("@type", "inputMessageChecklist")
+            put("checklist", JSONObject().apply {
+                put("@type", "inputChecklist")
+                put("title", formattedText(title))
+                put("tasks", taskArray)
+                put("others_can_add_tasks", false)
+                put("others_can_mark_tasks_as_done", othersCanMark)
+            })
+        }
+        sendContent(content)
+    }
+
+    /** Tick or untick one checklist task (v0.9.24, Q7):
+     *  markChecklistTasksAsDone with exactly one of the two
+     *  id lists filled. The fresh task state arrives with
+     *  updateMessageContent and re-renders the bubble. */
+    fun markChecklistTask(item: MsgItem, task: ChecklistTaskUi) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val done = JSONArray()
+        val notDone = JSONArray()
+        if (task.completed) notDone.put(task.id) else done.put(task.id)
+        val query = TdClient.request("markChecklistTasksAsDone").apply {
+            put("chat_id", chatId)
+            put("message_id", item.id)
+            put("marked_as_done_task_ids", done)
+            put("marked_as_not_done_task_ids", notDone)
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {
@@ -3306,6 +3552,11 @@ object MessageStore {
                 val q = content.optJSONObject("poll")
                     ?.optJSONObject("question")?.optString("text") ?: ""
                 if (q.isEmpty()) "[投票]" else "[投票] $q"
+            }
+            "messageChecklist" -> {
+                val title = content.optJSONObject("list")
+                    ?.optJSONObject("title")?.optString("text") ?: ""
+                if (title.isEmpty()) "[清单]" else "[清单] $title"
             }
             "messageVideoNote" -> "[视频消息]"
             "messageDice" -> {

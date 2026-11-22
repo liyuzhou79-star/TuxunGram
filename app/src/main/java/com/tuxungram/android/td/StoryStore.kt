@@ -17,12 +17,19 @@ data class StoryRing(
 }
 
 /** One story being viewed: content kind + file, with the local
- *  path filled in when the download lands. */
+ *  path filled in when the download lands. The two page flags
+ *  (v0.9.24, Q5) come straight from the story object:
+ *  is_posted_to_chat_page says the story also lives on the
+ *  profile page (a precondition for pinning it there), and
+ *  can_toggle_is_posted_to_chat_page says this account may
+ *  change that. */
 data class StoryContentUi(
     val storyId: Int,
     val isVideo: Boolean,
     val fileId: Int,
-    val localPath: String? = null
+    val localPath: String? = null,
+    val isPostedToPage: Boolean = false,
+    val canTogglePosted: Boolean = false
 )
 
 /**
@@ -132,6 +139,9 @@ object StoryStore {
         TdRepository.sendRaw(query) { story ->
             if (TdClient.isError(story)) return@sendRaw
             val content = story.optJSONObject("content") ?: return@sendRaw
+            val posted = story.optBoolean("is_posted_to_chat_page")
+            val canToggle =
+                story.optBoolean("can_toggle_is_posted_to_chat_page")
             val parsed = when (content.optString("@type")) {
                 "storyContentPhoto" -> {
                     val sizes = content.optJSONObject("photo")
@@ -144,7 +154,9 @@ object StoryStore {
                         fileId = file?.optInt("id") ?: 0
                         path = downloadedPath(file)
                     }
-                    StoryContentUi(storyId, false, fileId, path)
+                    StoryContentUi(
+                        storyId, false, fileId, path, posted, canToggle
+                    )
                 }
                 "storyContentVideo" -> {
                     val file = content.optJSONObject("video")
@@ -152,10 +164,12 @@ object StoryStore {
                     StoryContentUi(
                         storyId, true,
                         file?.optInt("id") ?: 0,
-                        downloadedPath(file)
+                        downloadedPath(file), posted, canToggle
                     )
                 }
-                else -> StoryContentUi(storyId, false, 0, null)
+                else -> StoryContentUi(
+                    storyId, false, 0, null, posted, canToggle
+                )
             }
             val current = _viewerStories.value.toMutableList()
             val index = current.indexOfFirst { it.storyId == storyId }
@@ -289,5 +303,127 @@ object StoryStore {
                 "动态已发布，所有人可见，24 小时后自动归档。"
             }
         }
+    }
+
+    // ---- Pinning my stories to my profile page (v0.9.24, Q5) ----
+
+    /** Story ids currently pinned on my profile page, read
+     *  back from getChatPostedToChatPageStories'
+     *  pinned_story_ids. There is no per-story pin toggle in
+     *  TDLib: setChatPinnedStories replaces the whole list,
+     *  and only stories already posted to the page can be in
+     *  it (posting one is toggleStoryIsPostedToChatPage). */
+    private val _myPinnedStoryIds =
+        MutableStateFlow<Set<Int>>(emptySet())
+    val myPinnedStoryIds: StateFlow<Set<Int>> = _myPinnedStoryIds
+
+    fun loadMyPinned() {
+        val myId = MeStore.me.value.id
+        if (myId == 0L) return
+        val query = TdClient.request(
+            "getChatPostedToChatPageStories"
+        ).apply {
+            put("chat_id", myId)
+            put("offset", 0)
+            put("limit", 100)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) return@sendRaw
+            val arr = response.optJSONArray("pinned_story_ids")
+                ?: return@sendRaw
+            val ids = LinkedHashSet<Int>()
+            for (i in 0 until arr.length()) ids.add(arr.optInt(i))
+            _myPinnedStoryIds.value = ids
+        }
+    }
+
+    /** Pin [story] to my profile page, or unpin it when it is
+     *  already pinned. Pinning first posts the story to the
+     *  page when needed (the pinned list can only hold page
+     *  stories) and respects the server cap from the
+     *  pinned_story_count_max option. Results land in
+     *  [postNotice] like publish results. */
+    fun togglePinStory(posterChatId: Long, story: StoryContentUi) {
+        val pinned = _myPinnedStoryIds.value
+        if (story.storyId in pinned) {
+            applyPinned(posterChatId, pinned - story.storyId) {
+                _postNotice.value = "已取消置顶。"
+            }
+            return
+        }
+        val capQuery = TdClient.request("getOption").apply {
+            put("name", "pinned_story_count_max")
+        }
+        TdRepository.sendRaw(capQuery) { capResponse ->
+            val cap = if (TdClient.isError(capResponse)) {
+                0
+            } else {
+                capResponse.optLong("value").toInt()
+            }
+            if (cap > 0 && pinned.size >= cap) {
+                _postNotice.value =
+                    "置顶动态已达上限（$cap 条），先取消一条再置顶新的。"
+                return@sendRaw
+            }
+            if (story.isPostedToPage) {
+                applyPinned(posterChatId, pinned + story.storyId) {
+                    _postNotice.value = "已置顶到资料页。"
+                }
+            } else if (story.canTogglePosted) {
+                val post = TdClient.request(
+                    "toggleStoryIsPostedToChatPage"
+                ).apply {
+                    put("story_poster_chat_id", posterChatId)
+                    put("story_id", story.storyId)
+                    put("is_posted_to_chat_page", true)
+                }
+                TdRepository.sendRaw(post) { postResponse ->
+                    if (TdClient.isError(postResponse)) {
+                        _postNotice.value =
+                            "置顶失败，再试一次。（错误码 " +
+                                "${postResponse.optInt("code")}）"
+                        return@sendRaw
+                    }
+                    markViewerStoryPosted(story.storyId)
+                    applyPinned(posterChatId, pinned + story.storyId) {
+                        _postNotice.value = "已置顶到资料页。"
+                    }
+                }
+            } else {
+                _postNotice.value =
+                    "这条动态不能放到资料页，置顶不了。"
+            }
+        }
+    }
+
+    private fun applyPinned(
+        posterChatId: Long,
+        ids: Set<Int>,
+        onOk: () -> Unit
+    ) {
+        val arr = JSONArray()
+        for (id in ids) arr.put(id)
+        val query = TdClient.request("setChatPinnedStories").apply {
+            put("chat_id", posterChatId)
+            put("story_ids", arr)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _postNotice.value =
+                    "置顶失败，再试一次。（错误码 " +
+                        "${response.optInt("code")}）"
+            } else {
+                _myPinnedStoryIds.value = ids
+                onOk()
+            }
+        }
+    }
+
+    private fun markViewerStoryPosted(storyId: Int) {
+        val current = _viewerStories.value.toMutableList()
+        val index = current.indexOfFirst { it.storyId == storyId }
+        if (index < 0) return
+        current[index] = current[index].copy(isPostedToPage = true)
+        _viewerStories.value = current
     }
 }

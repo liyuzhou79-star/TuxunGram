@@ -130,6 +130,10 @@ import com.tuxungram.android.td.SecretChatStore
 import com.tuxungram.android.td.StickerSetStore
 import com.tuxungram.android.td.TrendingSetUi
 import com.tuxungram.android.td.SendModifiers
+import com.tuxungram.android.td.EffectUi
+import com.tuxungram.android.td.EffectsStore
+import com.tuxungram.android.td.ChecklistTaskUi
+import androidx.compose.ui.text.style.TextDecoration
 import com.tuxungram.android.td.SuggestStore
 import com.tuxungram.android.td.SuggestUser
 import com.tuxungram.android.td.TextEntityUi
@@ -386,6 +390,47 @@ fun ChatScreen(
     // Send-button long-press menu (v0.9.3, M5): silent and
     // scheduled sending.
     var sendMenuOpen by remember { mutableStateOf(false) }
+    // Composer extras (v0.9.24, Q3/Q8): the link-preview card
+    // state comes from MessageStore (getLinkPreview, fetched
+    // on a debounce while typing). previewDisabledUrl
+    // remembers which draft URL the user closed the preview
+    // for; it stops applying the moment the draft's first URL
+    // changes. armedEffect is the message effect picked for
+    // the NEXT send in this chat and is consumed by it.
+    val composerPreview by
+        MessageStore.composerPreview.collectAsState()
+    var previewDisabledUrl by remember(chatId) {
+        mutableStateOf<String?>(null)
+    }
+    var armedEffect by remember(chatId) {
+        mutableStateOf<EffectUi?>(null)
+    }
+    var effectPickerOpen by remember { mutableStateOf(false) }
+    var checklistCreateOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(input) {
+        delay(900)
+        MessageStore.refreshComposerPreview(input)
+    }
+
+    /** Fold the composer's preview switch and the armed
+     *  effect into a send's modifiers (v0.9.24, Q3/Q8). */
+    fun withSendExtras(base: SendModifiers): SendModifiers {
+        val preview = composerPreview
+        return base.copy(
+            disableLinkPreview = preview != null &&
+                previewDisabledUrl == preview.url,
+            effectId = armedEffect?.id ?: 0L
+        )
+    }
+
+    /** Bookkeeping shared by every text-send path once the
+     *  message is on its way: the armed effect is spent and
+     *  the preview switch resets with the draft. */
+    fun afterTextSent() {
+        armedEffect = null
+        previewDisabledUrl = null
+        MessageStore.clearComposerPreview()
+    }
     var pendingPhoto by remember { mutableStateOf<String?>(null) }
     var photoCaption by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -1225,6 +1270,7 @@ fun ChatScreen(
                                         MsgKind.STICKER -> "[贴纸]"
                                         MsgKind.ANIMATION -> "[动图]"
                                         MsgKind.POLL -> "[投票]"
+                                        MsgKind.CHECKLIST -> "[清单]"
                                         MsgKind.LOCATION -> "[位置]"
                                         MsgKind.CONTACT -> "[联系人]"
                                         MsgKind.VIDEO_NOTE -> "[视频消息]"
@@ -1359,6 +1405,29 @@ fun ChatScreen(
                     MessageStore.clearSendError()
                     MessageStore.sendPoll(q, opts, anon, multi, correct, expl)
                     pollCreateOpen = false
+                }
+            )
+        }
+
+        if (checklistCreateOpen) {
+            ChecklistCreateDialog(
+                onDismiss = { checklistCreateOpen = false },
+                onSend = { title, tasks, othersCanMark ->
+                    MessageStore.clearSendError()
+                    MessageStore.sendChecklist(
+                        title, tasks, othersCanMark
+                    )
+                    checklistCreateOpen = false
+                }
+            )
+        }
+
+        if (effectPickerOpen) {
+            EffectPickerDialog(
+                onDismiss = { effectPickerOpen = false },
+                onPick = { effect ->
+                    armedEffect = effect
+                    effectPickerOpen = false
                 }
             )
         }
@@ -1935,6 +2004,7 @@ fun ChatScreen(
                                         MsgKind.STICKER -> "[贴纸]"
                                         MsgKind.ANIMATION -> "[动图]"
                                         MsgKind.POLL -> "[投票]"
+                                        MsgKind.CHECKLIST -> "[清单]"
                                         MsgKind.LOCATION -> "[位置]"
                                         MsgKind.CONTACT -> "[联系人]"
                                         MsgKind.VIDEO_NOTE -> "[视频消息]"
@@ -2007,6 +2077,98 @@ fun ChatScreen(
                     }
                     IconButton(onClick = { MessageStore.setReplyTarget(null) }) {
                         Icon(Icons.Filled.Close, contentDescription = "取消回复")
+                    }
+                }
+            }
+            // Composer link-preview card (v0.9.24, Q3): what
+            // the first link in the draft will preview as. The
+            // close button suppresses the preview for THIS
+            // draft's URL only — the send then carries
+            // link_preview_options with is_disabled — and a
+            // slim "no preview" line with an undo takes its
+            // place so the choice stays visible.
+            val cp = composerPreview
+            if (cp != null && previewDisabledUrl != cp.url) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFF5F5F5))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            cp.siteName.ifEmpty { "链接预览" },
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (cp.title.isNotEmpty()) {
+                            Text(
+                                cp.title, fontSize = 13.sp,
+                                maxLines = 1
+                            )
+                        }
+                        if (cp.description.isNotEmpty()) {
+                            Text(
+                                cp.description,
+                                color = Color.Gray, fontSize = 12.sp,
+                                maxLines = 2
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = { previewDisabledUrl = cp.url }
+                    ) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "这条不带链接预览"
+                        )
+                    }
+                }
+            } else if (cp != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFF5F5F5))
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "这条消息不带链接预览",
+                        color = Color.Gray, fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = { previewDisabledUrl = null }
+                    ) {
+                        Text("恢复预览", fontSize = 12.sp)
+                    }
+                }
+            }
+            // Armed message effect (v0.9.24, Q8): the next
+            // send in this chat carries this effect; the chip
+            // can cancel it.
+            val armed = armedEffect
+            if (armed != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFF5F5F5))
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "下一条消息带特效 ${armed.emoji}" +
+                            if (armed.isPremium) "（会员特效）" else "",
+                        color = Color.Gray, fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { armedEffect = null }) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "取消特效"
+                        )
                     }
                 }
             }
@@ -2769,6 +2931,16 @@ fun ChatScreen(
                             )
                             DropdownMenuItem(
                                 leadingIcon = {
+                                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
+                                text = { Text("清单") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    checklistCreateOpen = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                leadingIcon = {
                                     Icon(Icons.Filled.LocationOn, contentDescription = null, modifier = Modifier.size(20.dp))
                                 },
                                 text = { Text("位置") },
@@ -2925,11 +3097,12 @@ fun ChatScreen(
                                         MessageStore.clearSendError()
                                         MessageStore.sendText(
                                             text,
-                                            SendModifiers(),
+                                            withSendExtras(SendModifiers()),
                                             mentionExtrasFor(input)
                                         )
                                         forcedMentions = emptyList()
                                         input = ""
+                                        afterTextSent()
                                     }
                                 },
                                 onLongClick = { sendMenuOpen = true }
@@ -2950,17 +3123,34 @@ fun ChatScreen(
                                 allowWhenOnline = chat != null &&
                                     !chat.isGroup && !chat.isChannel &&
                                     !chat.isSecret,
+                                // Message effects (v0.9.24, Q8)
+                                // exist only in private chats;
+                                // secret chats are excluded like
+                                // the other send options TDLib
+                                // refuses there.
+                                onEffect = if (
+                                    chat != null && !chat.isGroup &&
+                                    !chat.isChannel && !chat.isSecret
+                                ) {
+                                    {
+                                        sendMenuOpen = false
+                                        effectPickerOpen = true
+                                    }
+                                } else {
+                                    null
+                                },
                                 onPick = { mods ->
                                     sendMenuOpen = false
                                     val text = input.trim()
                                     if (text.isNotEmpty()) {
                                         MessageStore.clearSendError()
                                         MessageStore.sendText(
-                                            text, mods,
+                                            text, withSendExtras(mods),
                                             mentionExtrasFor(input)
                                         )
                                         forcedMentions = emptyList()
                                         input = ""
+                                        afterTextSent()
                                     }
                                 },
                                 onCustom = {
@@ -2971,13 +3161,16 @@ fun ChatScreen(
                                             MessageStore.clearSendError()
                                             MessageStore.sendText(
                                                 text,
-                                                SendModifiers(
-                                                    scheduleAtSec = sec
+                                                withSendExtras(
+                                                    SendModifiers(
+                                                        scheduleAtSec = sec
+                                                    )
                                                 ),
                                                 mentionExtrasFor(input)
                                             )
                                             forcedMentions = emptyList()
                                             input = ""
+                                            afterTextSent()
                                         }
                                     }
                                 }
@@ -3265,8 +3458,18 @@ fun AlbumPreview(
 fun SendOptionMenuItems(
     allowWhenOnline: Boolean,
     onPick: (SendModifiers) -> Unit,
-    onCustom: () -> Unit
+    onCustom: () -> Unit,
+    // Message-effect entry (v0.9.24, Q8): only the chat
+    // input passes it (private chats); the photo preview's
+    // menu leaves it null.
+    onEffect: (() -> Unit)? = null
 ) {
+    if (onEffect != null) {
+        DropdownMenuItem(
+            text = { Text("消息特效…") },
+            onClick = onEffect
+        )
+    }
     DropdownMenuItem(
         text = { Text("静默发送（不提醒对方）") },
         onClick = { onPick(SendModifiers(silent = true)) }
@@ -3306,6 +3509,71 @@ fun SendOptionMenuItems(
     DropdownMenuItem(
         text = { Text("自定义时间…") },
         onClick = onCustom
+    )
+}
+
+/** Message-effect picker (v0.9.24, Q8): the effects the
+ *  server announced via updateAvailableMessageEffects,
+ *  resolved by EffectsStore into emoji + premium flags.
+ *  Picking one arms it for the next send (the chip above the
+ *  input shows it). An empty list is stated plainly — the
+ *  catalog arrives as an update and may not have landed yet.
+ *  Premium effects are listed with a tag; the server refuses
+ *  them for free accounts at send time and that refusal is
+ *  mapped to plain language like every other. */
+@Composable
+fun EffectPickerDialog(
+    onDismiss: () -> Unit,
+    onPick: (EffectUi) -> Unit
+) {
+    val effects by EffectsStore.effects.collectAsState()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("消息特效") },
+        text = {
+            if (effects.isEmpty()) {
+                Text(
+                    "特效列表还没从服务器同步下来，等一会儿再打开看看。",
+                    color = Color.Gray, fontSize = 13.sp
+                )
+            } else {
+                Column(
+                    modifier = Modifier.verticalScroll(
+                        rememberScrollState()
+                    )
+                ) {
+                    Text(
+                        "选一个特效，下一条消息发送时会带上。对方客户端会播放特效动画，本应用里以表情标记显示。",
+                        color = Color.Gray, fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    for (effect in effects) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(effect) }
+                                .padding(vertical = 8.dp)
+                        ) {
+                            Text(effect.emoji, fontSize = 22.sp)
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                if (effect.isPremium) {
+                                    "会员特效"
+                                } else {
+                                    "特效"
+                                },
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
     )
 }
 
@@ -3737,6 +4005,17 @@ fun MessageBubble(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val haptics = LocalHapticFeedback.current
+    // Message-effect marker (v0.9.24, Q8): the effect's emoji
+    // is resolved lazily and shown next to the time in the
+    // footer. The full-screen effect animation is the
+    // receiving client's own rendering in the official apps;
+    // this app shows the marker instead of faking playback.
+    val effectEmojis by EffectsStore.emojiById.collectAsState()
+    LaunchedEffect(msg.effectId) {
+        if (msg.effectId != 0L) {
+            EffectsStore.ensureEffect(msg.effectId)
+        }
+    }
     var menuOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
@@ -4135,6 +4414,7 @@ fun MessageBubble(
                             )
                         }
                     }
+                    MsgKind.CHECKLIST -> ChecklistBubbleContent(msg)
                     MsgKind.LOCATION -> LocationBubbleContent(msg)
                     MsgKind.CONTACT -> ContactBubbleContent(msg)
                     MsgKind.VIDEO_NOTE -> VideoNoteBubbleContent(msg)
@@ -4198,6 +4478,12 @@ fun MessageBubble(
                         .padding(top = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (msg.effectId != 0L) {
+                        Text(
+                            (effectEmojis[msg.effectId] ?: "✨") + " ",
+                            fontSize = 11.sp
+                        )
+                    }
                     Text(
                         formatMsgTime(msg.dateSeconds),
                         color = if (outgoing) palette.outTime else palette.inTime,
@@ -5101,6 +5387,7 @@ fun messageSummaryText(msg: MsgItem): String =
             MsgKind.STICKER -> "[贴纸]"
             MsgKind.ANIMATION -> "[动图]"
             MsgKind.POLL -> "[投票] ${msg.poll?.question ?: ""}"
+            MsgKind.CHECKLIST -> "[清单] ${msg.checklistTitle}"
             MsgKind.LOCATION -> "[位置]"
             MsgKind.CONTACT -> "[联系人] ${msg.contactName}"
             MsgKind.VIDEO_NOTE -> "[视频消息]"
@@ -5954,6 +6241,104 @@ fun AnimationBubbleContent(msg: MsgItem) {
  *  Single-answer polls vote on tap; multiple-answer polls collect
  *  a local selection and submit together. State always re-renders
  *  from TDLib's poll object (updatePoll keeps it current). */
+@Composable
+/** Checklist bubble (v0.9.24, Q7): the title, a done/total
+ *  progress line, then one row per task with a checkbox.
+ *  Tapping a row toggles it through
+ *  MessageStore.markChecklistTask when this account may mark
+ *  (checklistCanMark — the server's own flag: the sender, or
+ *  everyone when the sender allowed it); the fresh state
+ *  arrives with updateMessageContent. Completed tasks strike
+ *  through. Editing the task list after sending is not
+ *  offered (noted in FEATURE_GAP). */
+@Composable
+private fun ChecklistBubbleContent(msg: MsgItem) {
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
+    val subText = if (outgoing) palette.outTime else palette.inTime
+    val doneCount = msg.checklistTasks.count { it.completed }
+    Column(modifier = Modifier.width(240.dp)) {
+        if (msg.checklistTitle.isNotEmpty()) {
+            Text(
+                msg.checklistTitle,
+                color = mainText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(2.dp))
+        }
+        Text(
+            "清单 · $doneCount/${msg.checklistTasks.size} 已完成",
+            color = subText, fontSize = 12.sp
+        )
+        Spacer(Modifier.height(6.dp))
+        for (task in msg.checklistTasks) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = msg.checklistCanMark) {
+                        MessageStore.clearSendError()
+                        MessageStore.markChecklistTask(msg, task)
+                    }
+                    .padding(vertical = 4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .background(
+                            if (task.completed) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                Color.Transparent
+                            },
+                            RoundedCornerShape(5.dp)
+                        )
+                        .border(
+                            1.5.dp,
+                            if (task.completed) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                subText
+                            },
+                            RoundedCornerShape(5.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (task.completed) {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    task.text,
+                    color = if (task.completed) subText else mainText,
+                    fontSize = 14.sp,
+                    style = TextStyle(
+                        textDecoration = if (task.completed) {
+                            TextDecoration.LineThrough
+                        } else {
+                            null
+                        }
+                    )
+                )
+            }
+        }
+        if (!msg.checklistCanMark && msg.checklistTasks.isNotEmpty()) {
+            Text(
+                "只有清单作者能勾选",
+                color = subText, fontSize = 11.sp
+            )
+        }
+    }
+}
+
 @Composable
 private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
     var selected by remember(msg.id) {

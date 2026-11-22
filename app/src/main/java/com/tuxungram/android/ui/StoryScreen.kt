@@ -1,6 +1,7 @@
 package com.tuxungram.android.ui
 
 import android.graphics.BitmapFactory
+import android.widget.Toast
 import android.widget.VideoView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -24,6 +25,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -37,11 +39,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.tuxungram.android.td.ChatStore
+import com.tuxungram.android.td.MeStore
 import com.tuxungram.android.td.StoryStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -59,8 +63,24 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
     val stories by StoryStore.viewerStories.collectAsState()
     val chat = ChatStore.itemOf(chatId)
     var index by remember(chatId) { mutableIntStateOf(0) }
+    // Pinning my own stories to my profile page (v0.9.24,
+    // Q5): only when the poster chat is my own account (for
+    // personal stories the poster chat id IS the user id).
+    val context = LocalContext.current
+    val me by MeStore.me.collectAsState()
+    val isOwn = me.id != 0L && chatId == me.id
+    val pinnedIds by StoryStore.myPinnedStoryIds.collectAsState()
+    val postNotice by StoryStore.postNotice.collectAsState()
 
-    LaunchedEffect(chatId) { StoryStore.openChat(chatId) }
+    LaunchedEffect(chatId) {
+        StoryStore.openChat(chatId)
+        if (isOwn) StoryStore.loadMyPinned()
+    }
+    LaunchedEffect(postNotice) {
+        val notice = postNotice ?: return@LaunchedEffect
+        Toast.makeText(context, notice, Toast.LENGTH_SHORT).show()
+        StoryStore.clearPostNotice()
+    }
 
     val current = stories.getOrNull(index)
     // Photos advance automatically once they are on screen.
@@ -188,6 +208,29 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
                         .weight(1f)
                         .padding(start = 8.dp)
                 )
+                if (isOwn && current != null) {
+                    val isPinned = current.storyId in pinnedIds
+                    TextButton(
+                        onClick = {
+                            StoryStore.togglePinStory(chatId, current)
+                        }
+                    ) {
+                        Icon(
+                            PinIcon,
+                            contentDescription = null,
+                            tint = if (isPinned) {
+                                Color(0xFFFFD54F)
+                            } else {
+                                Color.White
+                            },
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                        Text(
+                            if (isPinned) "已置顶" else "置顶到资料页",
+                            color = Color.White, fontSize = 13.sp
+                        )
+                    }
+                }
                 IconButton(onClick = onBack) {
                     Icon(
                         Icons.Filled.Close,
