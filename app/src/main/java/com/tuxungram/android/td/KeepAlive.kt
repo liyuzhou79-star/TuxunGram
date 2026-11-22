@@ -224,6 +224,8 @@ object Notifier {
             "messageSticker" -> "[贴纸]"
             "messageAnimation" -> "[动图]"
             "messagePoll" -> "[投票]"
+            "messageDice" -> "[骰子]"
+            "messageGame" -> "[游戏]"
             else -> "新消息"
         }
     }

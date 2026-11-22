@@ -11,6 +11,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Round video notes (v0.9.14, U4) are recorded through
+         the system camera app; on Android 11+ the capture
+         intent only resolves with this visibility entry. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.VIDEO_CAPTURE" />
+        </intent>
+    </queries>
+
     <!-- No backups (audit fix A8): the TDLib database and the
          app's preferences (which include proxy credentials)
          must not be extractable through cloud backup or

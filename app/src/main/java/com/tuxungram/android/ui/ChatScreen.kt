@@ -444,6 +444,69 @@ fun ChatScreen(
         }
     }
 
+    // Round video notes (v0.9.14, U4): recorded with the
+    // system camera app through ACTION_VIDEO_CAPTURE (the
+    // caller needs no camera permission and no camera
+    // library); the result is copied into cacheDir, its
+    // duration/size read back, and sent as a video note.
+    val videoCapture = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val uri = result.data?.data
+        if (result.resultCode == android.app.Activity.RESULT_OK &&
+            uri != null
+        ) {
+            try {
+                val file = File(
+                    context.cacheDir,
+                    "videonote_${System.currentTimeMillis()}.mp4"
+                )
+                context.contentResolver.openInputStream(uri)
+                    ?.use { inputStream ->
+                        file.outputStream().use { output ->
+                            inputStream.copyTo(output)
+                        }
+                    }
+                val retriever = android.media.MediaMetadataRetriever()
+                retriever.setDataSource(file.absolutePath)
+                val durationMs = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever
+                        .METADATA_KEY_DURATION
+                )?.toLongOrNull() ?: 0L
+                val width = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever
+                        .METADATA_KEY_VIDEO_WIDTH
+                )?.toIntOrNull() ?: 0
+                val height = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever
+                        .METADATA_KEY_VIDEO_HEIGHT
+                )?.toIntOrNull() ?: 0
+                retriever.release()
+                val side = minOf(width, height)
+                if (durationMs > 0 && side > 0) {
+                    MessageStore.clearSendError()
+                    MessageStore.sendVideoNote(
+                        file.absolutePath,
+                        (durationMs / 1000).toInt(),
+                        side
+                    )
+                } else {
+                    Toast.makeText(
+                        context,
+                        "这段视频读不出时长，没有发出去。",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (t: Throwable) {
+                Toast.makeText(
+                    context,
+                    "视频保存失败，没有发出去。",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
     var attachMenuOpen by remember { mutableStateOf(false) }
     // Create-a-poll sheet (v0.9.4, N1).
     var pollCreateOpen by remember { mutableStateOf(false) }
@@ -785,6 +848,9 @@ fun ChatScreen(
                                         MsgKind.POLL -> "[投票]"
                                         MsgKind.LOCATION -> "[位置]"
                                         MsgKind.CONTACT -> "[联系人]"
+                                        MsgKind.VIDEO_NOTE -> "[视频消息]"
+                                        MsgKind.DICE -> "[骰子]"
+                                        MsgKind.GAME -> "[游戏]"
                                         else -> "[消息]"
                                     }
                                 },
@@ -1340,6 +1406,9 @@ fun ChatScreen(
                                         MsgKind.POLL -> "[投票]"
                                         MsgKind.LOCATION -> "[位置]"
                                         MsgKind.CONTACT -> "[联系人]"
+                                        MsgKind.VIDEO_NOTE -> "[视频消息]"
+                                        MsgKind.DICE -> "[骰子]"
+                                        MsgKind.GAME -> "[游戏]"
                                         else -> "[消息]"
                                     }
                                 }
@@ -1854,6 +1923,41 @@ fun ChatScreen(
                                     attachMenuOpen = false
                                     AppLock.noteExternalLaunch()
                                     filePicker.launch("*/*")
+                                }
+                            )
+                            DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
+                                text = { Text("圆形视频") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    val intent = android.content.Intent(
+                                        android.provider.MediaStore
+                                            .ACTION_VIDEO_CAPTURE
+                                    ).apply {
+                                        putExtra(
+                                            android.provider.MediaStore
+                                                .EXTRA_DURATION_LIMIT, 60
+                                        )
+                                        putExtra(
+                                            android.provider.MediaStore
+                                                .EXTRA_VIDEO_QUALITY, 0
+                                        )
+                                    }
+                                    if (intent.resolveActivity(
+                                            context.packageManager
+                                        ) == null
+                                    ) {
+                                        Toast.makeText(
+                                            context,
+                                            "这台设备上没有可用的相机应用。",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } else {
+                                        AppLock.noteExternalLaunch()
+                                        videoCapture.launch(intent)
+                                    }
                                 }
                             )
                             DropdownMenuItem(
@@ -2428,7 +2532,11 @@ fun InlineButtonGrid(msg: MsgItem, chatId: Long) {
             }
             "switch" ->
                 toast("这个按钮要在输入框里配合机器人使用，暂未支持")
-            "game" -> toast("小游戏按钮暂未支持")
+            "game" -> MessageStore.answerCallbackGame(
+                chatId, msg.id, msg.gameShortName,
+                onAnswer = ::onAnswer,
+                onError = { toast(it) }
+            )
             "buy" -> toast("付款按钮暂未支持")
             "user" -> toast("暂未支持从按钮打开对方主页")
             else -> toast("这个按钮暂不可用")
@@ -2738,8 +2846,19 @@ fun MessageBubble(
                                 // undownloaded video falls through
                                 // to the download branch below.
                                 onOpenVideo(msg)
+                            } else if (msg.kind == MsgKind.VIDEO_NOTE) {
+                                // Round video (v0.9.14, U4):
+                                // play in-app once downloaded,
+                                // otherwise start the download.
+                                if (msg.filePath != null) {
+                                    onOpenVideo(msg)
+                                } else {
+                                    MessageStore.downloadFileFor(msg)
+                                }
                             } else if (msg.fileId != 0 && msg.kind != MsgKind.STICKER &&
-                                msg.kind != MsgKind.VOICE
+                                msg.kind != MsgKind.VOICE &&
+                                msg.kind != MsgKind.DICE &&
+                                msg.kind != MsgKind.GAME
                             ) {
                                 // File-like messages: tap opens the
                                 // downloaded file, or starts the
@@ -2874,6 +2993,9 @@ fun MessageBubble(
                     }
                     MsgKind.LOCATION -> LocationBubbleContent(msg)
                     MsgKind.CONTACT -> ContactBubbleContent(msg)
+                    MsgKind.VIDEO_NOTE -> VideoNoteBubbleContent(msg)
+                    MsgKind.DICE -> DiceBubbleContent(msg)
+                    MsgKind.GAME -> GameBubbleContent(msg)
                     MsgKind.OTHER -> Text(
                         "[消息]",
                         color = Color.Gray,
@@ -3427,6 +3549,9 @@ fun messageSummaryText(msg: MsgItem): String =
             MsgKind.POLL -> "[投票] ${msg.poll?.question ?: ""}"
             MsgKind.LOCATION -> "[位置]"
             MsgKind.CONTACT -> "[联系人] ${msg.contactName}"
+            MsgKind.VIDEO_NOTE -> "[视频消息]"
+            MsgKind.DICE -> "[骰子] ${msg.diceEmoji}"
+            MsgKind.GAME -> "[游戏] ${msg.gameTitle}"
             else -> "[消息]"
         }
     }
@@ -3766,6 +3891,232 @@ fun PhotoBubbleContent(msg: MsgItem) {
     }
 }
 
+
+/** Decode a minithumbnail's inline bytes (base64, as
+ *  TDLib's JSON interface ships bytes fields). */
+private fun decodeMiniThumb(data: String): android.graphics.Bitmap? {
+    return try {
+        val bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT)
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } catch (t: Throwable) {
+        null
+    }
+}
+
+/** Round video message (v0.9.14, U4): a circle-cropped
+ *  thumbnail with the duration on it; the tap (handled by
+ *  the bubble's click chain) plays it in the in-app player
+ *  once the video file is down, or starts the download. */
+@Composable
+fun VideoNoteBubbleContent(msg: MsgItem) {
+    val thumb = msg.thumbPath
+    val mini = msg.miniThumbData
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, thumb, mini
+    ) {
+        value = when {
+            thumb != null ->
+                withContext(Dispatchers.IO) { decodeCached(thumb) }
+            mini.isNotEmpty() ->
+                withContext(Dispatchers.IO) { decodeMiniThumb(mini) }
+            else -> null
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(200.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF37474F)),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = "视频消息",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(CircleShape)
+                .background(Color(0x66000000)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                if (msg.filePath != null) {
+                    Icons.Filled.PlayArrow
+                } else {
+                    DownloadIcon
+                },
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(30.dp)
+            )
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 14.dp)
+                .background(Color(0x66000000), RoundedCornerShape(8.dp))
+                .padding(horizontal = 7.dp, vertical = 2.dp)
+        ) {
+            Text(
+                formatDurationClock(msg.durationSec),
+                color = Color.White, fontSize = 11.sp
+            )
+        }
+    }
+}
+
+/** Dice message (v0.9.14, U5): the final state's static
+ *  sticker when it decodes (animated .tgs files cannot —
+ *  then the big emoji is the face), with the rolled value
+ *  under it. A value of 0 means the throw has no result
+ *  yet and renders as an ellipsis. */
+@Composable
+fun DiceBubbleContent(msg: MsgItem) {
+    val path = msg.filePath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { decodeCached(path) }
+        }
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = msg.diceEmoji,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(120.dp)
+            )
+        } else {
+            Text(
+                msg.diceEmoji.ifEmpty { "🎲" },
+                fontSize = 56.sp
+            )
+        }
+        Text(
+            if (msg.diceValue > 0) {
+                "点数 ${msg.diceValue}"
+            } else {
+                "…"
+            },
+            fontSize = 13.sp,
+            color = Color.Gray,
+            modifier = Modifier.padding(top = 2.dp)
+        )
+    }
+}
+
+/** Game message (v0.9.14, U5): cover, title, description
+ *  and a start button. Starting rides the same callback
+ *  the message's own game button uses
+ *  (answerCallbackGame); the bot's answer opens as a link
+ *  or shows as text/a dialog, like other bot answers. */
+@Composable
+fun GameBubbleContent(msg: MsgItem) {
+    val context = LocalContext.current
+    var alertText by remember { mutableStateOf<String?>(null) }
+    val path = msg.photoPath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { decodeCached(path) }
+        }
+    }
+    Column(modifier = Modifier.width(220.dp)) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = msg.gameTitle,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(width = 220.dp, height = 124.dp)
+                    .clip(RoundedCornerShape(8.dp))
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+        Text(
+            msg.gameTitle.ifEmpty { "游戏" },
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        if (msg.gameDescription.isNotEmpty()) {
+            Text(
+                msg.gameDescription,
+                fontSize = 12.sp,
+                color = Color.Gray,
+                maxLines = 3,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
+        Button(
+            onClick = {
+                MessageStore.answerCallbackGame(
+                    MessageStore.currentChatId, msg.id,
+                    msg.gameShortName,
+                    onAnswer = { text, showAlert, url ->
+                        when {
+                            url.isNotEmpty() ->
+                                com.tuxungram.android.td.LinkRouter
+                                    .open(context, url)
+                            showAlert && text.isNotEmpty() ->
+                                alertText = text
+                            text.isNotEmpty() -> Toast.makeText(
+                                context, text, Toast.LENGTH_SHORT
+                            ).show()
+                            else -> Toast.makeText(
+                                context, "游戏没有打开。",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
+                    onError = {
+                        Toast.makeText(
+                            context, it, Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                )
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+        ) {
+            Text("开始游戏")
+        }
+    }
+    val alert = alertText
+    if (alert != null) {
+        AlertDialog(
+            onDismissRequest = { alertText = null },
+            title = { Text(msg.gameTitle.ifEmpty { "游戏" }) },
+            text = { Text(alert) },
+            confirmButton = {
+                TextButton(onClick = { alertText = null }) {
+                    Text("好")
+                }
+            }
+        )
+    }
+}
+
+private fun formatDurationClock(totalSec: Int): String {
+    val m = totalSec / 60
+    val s = totalSec % 60
+    return "$m:${s.toString().padStart(2, '0')}"
+}
 
 /** Sticker image (webp decoded straight from the TDLib file);
  *  shown at a fixed chat-friendly size, no bubble chrome. */

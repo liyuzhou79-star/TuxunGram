@@ -312,6 +312,21 @@ object ChatExporter {
             }
             "messagePhoto" -> text = withCaption("[图片]")
             "messageVideo" -> text = withCaption("[视频]")
+            "messageVideoNote" -> text = "[视频消息]"
+            "messageDice" -> {
+                val emoji = content.optString("emoji")
+                val value = content.optInt("value")
+                text = if (value > 0) {
+                    "[骰子 $emoji 点数 $value]"
+                } else {
+                    "[骰子 $emoji]"
+                }
+            }
+            "messageGame" -> {
+                val title = content.optJSONObject("game")
+                    ?.optString("title") ?: ""
+                text = if (title.isEmpty()) "[游戏]" else "[游戏 $title]"
+            }
             "messageAnimation" -> text = withCaption("[GIF]")
             "messageDocument" -> {
                 val name = content.optJSONObject("document")

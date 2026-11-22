@@ -137,9 +137,17 @@ fun SimpleMessageBubble(
                             ) {
                                 // In-app player (v0.9.1, J3).
                                 onOpenVideo(msg)
+                            } else if (msg.kind == MsgKind.VIDEO_NOTE) {
+                                if (msg.filePath != null) {
+                                    onOpenVideo(msg)
+                                } else {
+                                    onDownloadFile(msg)
+                                }
                             } else if (msg.fileId != 0 &&
                                 msg.kind != MsgKind.STICKER &&
-                                msg.kind != MsgKind.VOICE
+                                msg.kind != MsgKind.VOICE &&
+                                msg.kind != MsgKind.DICE &&
+                                msg.kind != MsgKind.GAME
                             ) {
                                 val path = msg.filePath
                                 if (path != null) {
@@ -237,6 +245,9 @@ fun SimpleMessageBubble(
                     }
                     MsgKind.LOCATION -> LocationBubbleContent(msg)
                     MsgKind.CONTACT -> ContactBubbleContent(msg)
+                    MsgKind.VIDEO_NOTE -> VideoNoteBubbleContent(msg)
+                    MsgKind.DICE -> DiceBubbleContent(msg)
+                    MsgKind.GAME -> GameBubbleContent(msg)
                     MsgKind.OTHER -> Text(
                         "[消息]",
                         color = Color.Gray,

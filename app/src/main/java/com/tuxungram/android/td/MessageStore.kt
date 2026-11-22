@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, OTHER }
+enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, OTHER }
 
 /** One poll option, flattened from pollOption. */
 data class PollOptionUi(
@@ -185,7 +185,24 @@ data class MsgItem(
     // contact is a Telegram user (0 = not known / not a user).
     val contactName: String = "",
     val contactPhone: String = "",
-    val contactUserId: Long = 0L
+    val contactUserId: Long = 0L,
+    // Video note payload (VIDEO_NOTE kind, v0.9.14 U4): the
+    // round thumbnail rides [thumbFileId]/[thumbPath] (or the
+    // inline [miniThumbData], base64 as TDLib ships bytes);
+    // the video itself rides the generic file fields.
+    val videoNoteLength: Int = 0,
+    val thumbFileId: Int = 0,
+    val thumbPath: String? = null,
+    val miniThumbData: String = "",
+    // Dice payload (DICE kind, v0.9.14 U5): the final state's
+    // static sticker rides the generic file fields.
+    val diceEmoji: String = "",
+    val diceValue: Int = 0,
+    // Game payload (GAME kind, v0.9.14 U5): the cover rides
+    // the photo fields.
+    val gameTitle: String = "",
+    val gameDescription: String = "",
+    val gameShortName: String = ""
 )
 
 /** How one send should deviate from the plain immediate send
@@ -1455,6 +1472,10 @@ object MessageStore {
                         byId[id] = item.copy(lpPhotoPath = path)
                         changed = true
                     }
+                    if (completed && item.thumbFileId == fileId && item.thumbFileId != 0 && item.thumbPath == null) {
+                        byId[id] = item.copy(thumbPath = path)
+                        changed = true
+                    }
                     if (item.fileId == fileId && item.fileId != 0) {
                         if (completed && item.filePath == null) {
                             byId[id] = item.copy(filePath = path, fileDownloading = false)
@@ -1814,6 +1835,90 @@ object MessageStore {
                     fileMime = voice?.optString("mime_type") ?: "",
                     durationSec = voice?.optInt("duration", 0) ?: 0,
                     waveform = decodeWaveform(voice?.optString("waveform"))
+                )
+            }
+            "messageVideoNote" -> {
+                // Round video message (v0.9.14, U4): the
+                // thumbnail and the (small, meant-to-be-instant)
+                // video both auto-download; playback goes
+                // through the in-app video player on tap.
+                val note = content.optJSONObject("video_note")
+                val file = note?.optJSONObject("video")
+                val fileId = file?.optInt("id", 0) ?: 0
+                if (fileId != 0 && downloadedPath(file) == null) {
+                    requestDownload(fileId, priority = 8)
+                }
+                val thumbFile = note?.optJSONObject("thumbnail")
+                    ?.optJSONObject("file")
+                val thumbId = thumbFile?.optInt("id", 0) ?: 0
+                if (thumbId != 0 && downloadedPath(thumbFile) == null) {
+                    requestDownload(thumbId, priority = 1)
+                }
+                base.copy(
+                    kind = MsgKind.VIDEO_NOTE,
+                    fileId = fileId,
+                    filePath = downloadedPath(file),
+                    fileName = "视频消息",
+                    fileSize = fileSizeOf(file),
+                    fileMime = "video/mp4",
+                    durationSec = note?.optInt("duration", 0) ?: 0,
+                    videoNoteLength = note?.optInt("length", 0) ?: 0,
+                    thumbFileId = thumbId,
+                    thumbPath = downloadedPath(thumbFile),
+                    miniThumbData = note?.optJSONObject("minithumbnail")
+                        ?.optString("data") ?: ""
+                )
+            }
+            "messageDice" -> {
+                // Dice (v0.9.14, U5): the final state's
+                // regular sticker renders as a static image
+                // (animated .tgs files cannot be decoded by
+                // the bitmap path — the emoji + value below
+                // are the honest fallback). Slot-machine
+                // states carry several stickers and no single
+                // image, so they stay emoji + value.
+                val state = content.optJSONObject("final_state")
+                    ?: content.optJSONObject("initial_state")
+                var diceFile: JSONObject? = null
+                if (state?.optString("@type") == "diceStickersRegular") {
+                    diceFile = state.optJSONObject("sticker")
+                        ?.optJSONObject("sticker")
+                }
+                val diceFileId = diceFile?.optInt("id", 0) ?: 0
+                if (diceFileId != 0 && downloadedPath(diceFile) == null) {
+                    requestDownload(diceFileId, priority = 16)
+                }
+                base.copy(
+                    kind = MsgKind.DICE,
+                    diceEmoji = content.optString("emoji"),
+                    diceValue = content.optInt("value", 0),
+                    fileId = diceFileId,
+                    filePath = downloadedPath(diceFile),
+                    fileMime = "image/webp"
+                )
+            }
+            "messageGame" -> {
+                // Game (v0.9.14, U5): cover rides the photo
+                // machinery (auto-download like messagePhoto);
+                // launching rides the message's own inline
+                // game button (see answerCallbackGame).
+                val game = content.optJSONObject("game")
+                val photo = game?.optJSONObject("photo")
+                val size = pickPhotoSize(photo?.optJSONArray("sizes"))
+                val file = size?.optJSONObject("photo")
+                val fileId = file?.optInt("id", 0) ?: 0
+                if (fileId != 0 && downloadedPath(file) == null) {
+                    requestDownload(fileId, priority = 1)
+                }
+                base.copy(
+                    kind = MsgKind.GAME,
+                    gameTitle = game?.optString("title") ?: "",
+                    gameDescription = game?.optString("description") ?: "",
+                    gameShortName = game?.optString("short_name") ?: "",
+                    photoFileId = fileId,
+                    photoPath = downloadedPath(file),
+                    photoWidth = size?.optInt("width", 0) ?: 0,
+                    photoHeight = size?.optInt("height", 0) ?: 0
                 )
             }
             else -> base.copy(kind = MsgKind.OTHER, text = "")
@@ -2299,6 +2404,80 @@ object MessageStore {
         }
     }
 
+    /** Launch a game through the message's own game button
+     *  (v0.9.14, U5): getCallbackQueryAnswer with a
+     *  callbackQueryPayloadGame payload (verified in
+     *  td_api.tl); the bot's answer (usually a URL) is handled
+     *  by the same onAnswer path as data callbacks. */
+    fun answerCallbackGame(
+        chatId: Long,
+        messageId: Long,
+        shortName: String,
+        onAnswer: (text: String, showAlert: Boolean, url: String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val payload = JSONObject().apply {
+            put("@type", "callbackQueryPayloadGame")
+            put("game_short_name", shortName)
+        }
+        val query = TdClient.request("getCallbackQueryAnswer").apply {
+            put("chat_id", chatId)
+            put("message_id", messageId)
+            put("payload", payload)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                onError(sendErrorText(response))
+            } else {
+                onAnswer(
+                    response.optString("text"),
+                    response.optBoolean("show_alert"),
+                    response.optString("url")
+                )
+            }
+        }
+    }
+
+    /** Send a recorded round video as a video note
+     *  (v0.9.14, U4): inputMessageVideoNote / inputVideoNote
+     *  verified in td_api.tl; [length] is the (square) side
+     *  the other clients crop to — the capture's smaller
+     *  dimension. */
+    fun sendVideoNote(path: String, durationSec: Int, length: Int) {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val replyTo = replyToJson()
+        _replyTarget.value = null
+        val content = JSONObject().apply {
+            put("@type", "inputMessageVideoNote")
+            put("video_note", JSONObject().apply {
+                put("@type", "inputVideoNote")
+                put("video_note", JSONObject().apply {
+                    put("@type", "inputFileLocal")
+                    put("path", path)
+                })
+                put("thumbnail", JSONObject.NULL)
+                put("duration", durationSec)
+                put("length", length)
+            })
+            put("self_destruct_type", JSONObject.NULL)
+        }
+        val query = TdClient.request("sendMessage").apply {
+            put("chat_id", chatId)
+            if (replyTo != null) put("reply_to", replyTo)
+            put("input_message_content", content)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            } else {
+                val item = parseMessage(response)
+                byId[item.id] = item
+                publish()
+            }
+        }
+    }
+
     val COMMON_REACTIONS = listOf("👍", "❤️", "🔥", "🎉", "😂", "👏")
 
     /** Add my reaction, or remove it if I already chose it
@@ -2452,6 +2631,16 @@ object MessageStore {
                 val q = content.optJSONObject("poll")
                     ?.optJSONObject("question")?.optString("text") ?: ""
                 if (q.isEmpty()) "[投票]" else "[投票] $q"
+            }
+            "messageVideoNote" -> "[视频消息]"
+            "messageDice" -> {
+                val emoji = content.optString("emoji")
+                if (emoji.isEmpty()) "[骰子]" else "[骰子] $emoji"
+            }
+            "messageGame" -> {
+                val title = content.optJSONObject("game")
+                    ?.optString("title") ?: ""
+                if (title.isEmpty()) "[游戏]" else "[游戏] $title"
             }
             else -> "[消息]"
         }
