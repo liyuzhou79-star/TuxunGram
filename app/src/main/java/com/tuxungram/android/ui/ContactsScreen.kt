@@ -7,6 +7,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +25,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -30,8 +33,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,8 +44,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -123,44 +126,103 @@ fun ContactsScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    val palette = OfficialTheme.current()
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.windowBg)
+    ) {
+        // Official header + search (v0.9.20, AA3): the bar
+        // row on the bar background, then the rounded gray
+        // search field the official contacts page uses —
+        // not an outlined text field.
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(palette.actionBarBg)
+                .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回"
+                    contentDescription = "返回",
+                    tint = palette.actionBarIcon
                 )
             }
             Text(
                 "通讯录",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = palette.actionBarTitle
             )
             if (contacts.isNotEmpty()) {
                 Spacer(Modifier.width(8.dp))
                 Text(
                     "${contacts.size} 人",
-                    color = Color.Gray, fontSize = 13.sp
+                    color = palette.textSecondary, fontSize = 13.sp
                 )
             }
         }
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text("搜索联系人") },
-            leadingIcon = {
-                Icon(Icons.Filled.Search, contentDescription = null)
-            },
-            singleLine = true,
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
+                .height(0.5.dp)
+                .background(palette.divider)
         )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .background(
+                    palette.graySection,
+                    RoundedCornerShape(10.dp)
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.Search, contentDescription = null,
+                tint = palette.textSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                textStyle = TextStyle(
+                    color = palette.textPrimary, fontSize = 15.sp
+                ),
+                modifier = Modifier.weight(1f),
+                decorationBox = { inner ->
+                    if (query.isEmpty()) {
+                        Text(
+                            "搜索联系人",
+                            color = palette.textSecondary,
+                            fontSize = 15.sp
+                        )
+                    }
+                    inner()
+                }
+            )
+            if (query.isNotEmpty()) {
+                Icon(
+                    Icons.Filled.Close, contentDescription = "清空",
+                    tint = palette.textSecondary,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clickable { query = "" }
+                )
+            }
+        }
         // Sync entry (v0.9.13, T4): one tap, one explanation,
-        // one permission ask — never automatic.
+        // one permission ask — never automatic. It is this
+        // page's top action row (v0.9.20, AA3): the official
+        // contacts page heads the list with an accent action
+        // row; the official's invite-friends row has no
+        // backing feature in this app, so the real sync row
+        // takes the slot instead of a decorative invite row.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -168,19 +230,19 @@ fun ContactsScreen(
                 .clickable(enabled = !syncBusy) {
                     syncExplainOpen = true
                 }
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Icon(
                 Icons.Filled.Refresh,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
+                tint = palette.accent,
+                modifier = Modifier.size(22.dp)
             )
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(12.dp))
             Text(
                 "同步手机通讯录",
                 fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.primary,
+                color = palette.accent,
                 modifier = Modifier.weight(1f)
             )
             if (syncBusy) {
@@ -192,13 +254,24 @@ fun ContactsScreen(
         if (syncStatus != null) {
             Text(
                 syncStatus!!,
-                fontSize = 12.5.sp, color = Color.Gray,
+                fontSize = 12.5.sp, color = palette.textSecondary,
                 modifier = Modifier.padding(
                     start = 16.dp, end = 16.dp, bottom = 4.dp
                 )
             )
         }
-        Spacer(Modifier.height(8.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(palette.divider)
+            )
+        }
         if (shown.isEmpty()) {
             val loadFinished by ContactsStore.loadFinished.collectAsState()
             CenterColumn {
@@ -229,9 +302,8 @@ fun ContactsScreen(
                     item(key = "group_$key") {
                         Text(
                             key,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 14.sp,
+                            color = palette.textSecondary,
                             modifier = Modifier.padding(
                                 horizontal = 16.dp, vertical = 6.dp
                             )
@@ -296,64 +368,88 @@ private fun groupKeyOf(name: String): String {
 
 @Composable
 private fun ContactRow(contact: ContactEntry, onClick: () -> Unit) {
-    val hue = (contact.userId % 8 + 8) % 8
-    val colors = listOf(
-        Color(0xFFEF9A9A), Color(0xFFF48FB1), Color(0xFFCE93D8),
-        Color(0xFF90CAF9), Color(0xFF80CBC4), Color(0xFFA5D6A7),
-        Color(0xFFFFCC80), Color(0xFFBCAAA4)
-    )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (contact.photoPath != null) {
-            AvatarImage(path = contact.photoPath, sizeDp = 44)
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .background(colors[hue.toInt()], CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    contact.name.trim().firstOrNull()?.toString() ?: "?",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp
+    // Official contacts row (v0.9.20, AA3): 46 dp avatar
+    // (the official placeholder gradient when there is no
+    // photo — this page used to keep its own pastel set),
+    // name, one secondary status line (accent while
+    // online), nothing on the right, and a hairline under
+    // the row inset to the text column.
+    val palette = OfficialTheme.current()
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onClick() }
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (contact.photoPath != null) {
+                AvatarImage(path = contact.photoPath, sizeDp = 46)
+            } else {
+                val pair = OfficialTheme.avatarColors(
+                    contact.userId, OfficialTheme.dark
                 )
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(pair.first, pair.second)
+                            ),
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        contact.name.trim().firstOrNull()?.toString()
+                            ?: "?",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                }
             }
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                contact.name,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
-                maxLines = 1
-            )
-            val sub = buildList {
-                if (contact.statusText.isNotEmpty()) {
-                    add(contact.statusText)
-                }
-                if (contact.username.isNotEmpty()) {
-                    add("@${contact.username}")
-                }
-            }.joinToString(" · ")
-            if (sub.isNotEmpty()) {
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    sub,
-                    color = if (contact.isOnline) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        Color.Gray
-                    },
-                    fontSize = 13.sp,
+                    contact.name,
+                    color = palette.textPrimary,
+                    fontSize = 16.sp,
                     maxLines = 1
                 )
+                val sub = buildList {
+                    if (contact.statusText.isNotEmpty()) {
+                        add(contact.statusText)
+                    }
+                    if (contact.username.isNotEmpty()) {
+                        add("@${contact.username}")
+                    }
+                }.joinToString(" · ")
+                if (sub.isNotEmpty()) {
+                    Text(
+                        sub,
+                        color = if (contact.isOnline) {
+                            palette.accentText
+                        } else {
+                            palette.textSecondary
+                        },
+                        fontSize = 13.sp,
+                        maxLines = 1
+                    )
+                }
             }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 74.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(palette.divider)
+            )
         }
     }
 }
