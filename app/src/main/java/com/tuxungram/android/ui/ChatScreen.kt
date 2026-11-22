@@ -6241,7 +6241,6 @@ fun AnimationBubbleContent(msg: MsgItem) {
  *  Single-answer polls vote on tap; multiple-answer polls collect
  *  a local selection and submit together. State always re-renders
  *  from TDLib's poll object (updatePoll keeps it current). */
-@Composable
 /** Checklist bubble (v0.9.24, Q7): the title, a done/total
  *  progress line, then one row per task with a checkbox.
  *  Tapping a row toggles it through

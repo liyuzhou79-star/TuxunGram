@@ -358,6 +358,19 @@ fun SimpleMessageBubble(
                     MsgKind.VIDEO_NOTE -> VideoNoteBubbleContent(msg)
                     MsgKind.DICE -> DiceBubbleContent(msg)
                     MsgKind.GAME -> GameBubbleContent(msg)
+                    // Checklists render read-only here
+                    // (v0.9.24, Q7): toggling lives in the
+                    // main chat, whose store owns the open
+                    // chat id markChecklistTasksAsDone needs.
+                    MsgKind.CHECKLIST -> Text(
+                        "[清单] ${msg.checklistTitle}",
+                        color = if (outgoing) {
+                            palette.outText
+                        } else {
+                            palette.inText
+                        },
+                        fontSize = 14.sp
+                    )
                     MsgKind.OTHER -> Text(
                         "[消息]",
                         color = if (outgoing) {
