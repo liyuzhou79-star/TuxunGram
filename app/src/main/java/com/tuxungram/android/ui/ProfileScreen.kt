@@ -72,6 +72,9 @@ import com.tuxungram.android.td.AvatarStore
 import com.tuxungram.android.td.BlockStore
 import com.tuxungram.android.td.ProfilePhotoUi
 import com.tuxungram.android.td.ProfilePhotosStore
+import com.tuxungram.android.td.TdClient
+import com.tuxungram.android.td.TdRepository
+import org.json.JSONObject
 import com.tuxungram.android.td.InviteLinkUi
 import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MeStore
@@ -150,7 +153,7 @@ fun ProfileScreen(
     var blockNotice by remember { mutableStateOf<String?>(null) }
     // Profile photo wall + viewer (v0.9.12, S3).
     val profilePhotos by ProfilePhotosStore.state.collectAsState()
-    val photoNotice by ProfilePhotosStore.notice.collectAsState()
+    val wallNotice by ProfilePhotosStore.notice.collectAsState()
     var photoViewerIndex by remember { mutableStateOf<Int?>(null) }
     var photoDeleteTarget by remember {
         mutableStateOf<ProfilePhotoUi?>(null)
@@ -161,6 +164,36 @@ fun ProfileScreen(
         .collectAsState()
     var exportDialogOpen by remember { mutableStateOf(false) }
     var exportAll by remember { mutableStateOf(false) }
+    // Per-chat theme (v0.9.12, S6).
+    var themeDialogOpen by remember { mutableStateOf(false) }
+    var themeNotice by remember { mutableStateOf<String?>(null) }
+    val applyTheme: (String?) -> Unit = { emoji ->
+        themeDialogOpen = false
+        val query = TdClient.request("setChatTheme").apply {
+            put("chat_id", chatId)
+            if (emoji == null) {
+                put("theme", JSONObject.NULL)
+            } else {
+                put("theme", JSONObject().apply {
+                    put("@type", "inputChatThemeEmoji")
+                    put("name", emoji)
+                })
+            }
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                themeNotice =
+                    "这个主题没换上，换一个试试（有些主题要对方客户端支持）。"
+            } else {
+                themeNotice = if (emoji == null) {
+                    "已恢复默认主题。"
+                } else {
+                    "已换成 $emoji 主题。"
+                }
+                ProfileStore.load(chatId)
+            }
+        }
+    }
     var exportSavedNotice by remember { mutableStateOf<String?>(null) }
     val exportSaver = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
@@ -421,6 +454,66 @@ fun ProfileScreen(
                         contentDescription = null, tint = Color.Gray,
                         modifier = Modifier.size(19.dp)
                     )
+                }
+            }
+            if (p.userId != 0L) {
+                item(key = "chat_theme") {
+                    // Per-chat theme (v0.9.12, S6):
+                    // setChatTheme supports private and
+                    // secret chats only (td_api.tl), which is
+                    // exactly the userId != 0 population here.
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { themeDialogOpen = true }
+                                .padding(
+                                    horizontal = 20.dp, vertical = 12.dp
+                                ),
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                PaletteIcon,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme
+                                    .primary,
+                                modifier = Modifier.size(21.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                "对话主题",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                when {
+                                    p.themeIsGift -> "礼物主题"
+                                    p.themeName.isNotEmpty() ->
+                                        p.themeName
+                                    else -> "默认"
+                                },
+                                color = Color.Gray, fontSize = 14.sp
+                            )
+                            Icon(
+                                Icons.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = Color.Gray,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        if (themeNotice != null) {
+                            Text(
+                                themeNotice!!,
+                                color = Color.Gray, fontSize = 12.5.sp,
+                                modifier = Modifier.padding(
+                                    start = 20.dp, end = 20.dp,
+                                    bottom = 8.dp
+                                )
+                            )
+                        }
+                    }
                 }
             }
             if (p.userId != 0L && !p.isSecretChat) {
@@ -1028,6 +1121,56 @@ fun ProfileScreen(
             }
         )
     }
+    // Theme picker (v0.9.12, S6): a small curated emoji set;
+    // the name IS the theme id for inputChatThemeEmoji.
+    if (themeDialogOpen && current != null &&
+        current.userId != 0L
+    ) {
+        AlertDialog(
+            onDismissRequest = { themeDialogOpen = false },
+            title = { Text("对话主题") },
+            text = {
+                Column {
+                    Text(
+                        "选一个表情作为这个对话的主题，对方那边也会变。" +
+                            "恢复默认选最下面一项。",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    val options = listOf(
+                        "❤️", "🔥", "🎉", "👍", "😂", "😎",
+                        "🌙", "⭐", "🎈", "🌸", "⚡", "🐱"
+                    )
+                    for (rowEmojis in options.chunked(6)) {
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            for (emoji in rowEmojis) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable {
+                                            applyTheme(emoji)
+                                        }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(emoji, fontSize = 26.sp)
+                                }
+                            }
+                        }
+                    }
+                    TextButton(onClick = { applyTheme(null) }) {
+                        Text("默认（无主题）")
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = {
+                    themeDialogOpen = false
+                }) { Text("取消") }
+            }
+        )
+    }
     // Chat export dialog (v0.9.12, S4): range choice, then
     // live progress from ChatExporter, then hand the temp
     // file to the system save picker.
@@ -1288,11 +1431,11 @@ fun ProfileScreen(
             }
         )
     }
-    if (photoNotice != null) {
+    if (wallNotice != null) {
         AlertDialog(
             onDismissRequest = { ProfilePhotosStore.clearNotice() },
             title = { Text("历史头像") },
-            text = { Text(photoNotice!!) },
+            text = { Text(wallNotice!!) },
             confirmButton = {
                 TextButton(onClick = {
                     ProfilePhotosStore.clearNotice()

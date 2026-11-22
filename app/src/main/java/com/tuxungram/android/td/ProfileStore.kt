@@ -77,7 +77,12 @@ data class ProfileUi(
     val slowModeDelay: Int = 0,
     /** True when the chat is a supergroup or channel
      *  (slow mode exists only there, per td_api.tl). */
-    val isSupergroup: Boolean = false
+    val isSupergroup: Boolean = false,
+    /** chat.theme as an emoji name (v0.9.12, S6); empty when
+     *  the chat carries no emoji theme. Gift themes set
+     *  [themeIsGift] instead — they are not picked here. */
+    val themeName: String = "",
+    val themeIsGift: Boolean = false
 )
 
 /**
@@ -105,6 +110,8 @@ object ProfileStore {
     private var currentProtected = false
     private var currentSlowMode = 0
     private var currentIsSupergroup = false
+    private var currentThemeName = ""
+    private var currentThemeIsGift = false
     private var supergroupId = 0L
     private var memberOffset = 0
     private var membersLoading = false
@@ -131,6 +138,8 @@ object ProfileStore {
         currentProtected = false
         currentSlowMode = 0
         currentIsSupergroup = false
+        currentThemeName = ""
+        currentThemeIsGift = false
         supergroupId = 0L
         memberOffset = 0
         membersLoading = false
@@ -140,6 +149,16 @@ object ProfileStore {
         TdRepository.sendRaw(query) { chat ->
             if (TdClient.isError(chat) || currentChatId != chatId) return@sendRaw
             val title = chat.optString("title")
+            // Chat theme (v0.9.12, S6): chat.theme is a
+            // chatThemeEmoji{name} or chatThemeGift{...}.
+            val themeObj = chat.optJSONObject("theme")
+            currentThemeName = ""
+            currentThemeIsGift = false
+            when (themeObj?.optString("@type")) {
+                "chatThemeEmoji" ->
+                    currentThemeName = themeObj.optString("name")
+                "chatThemeGift" -> currentThemeIsGift = true
+            }
             currentAutoDelete = chat.optInt("message_auto_delete_time")
             currentProtected = chat.optBoolean("has_protected_content")
             val perms = chat.optJSONObject("permissions")
@@ -206,7 +225,9 @@ object ProfileStore {
             groupPerms = currentPerms,
             hasProtectedContent = currentProtected,
             slowModeDelay = currentSlowMode,
-            isSupergroup = currentIsSupergroup
+            isSupergroup = currentIsSupergroup,
+            themeName = currentThemeName,
+            themeIsGift = currentThemeIsGift
         )
     }
 
