@@ -48,11 +48,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
@@ -4735,17 +4732,22 @@ private fun InlineResultRow(
                 )
             } else {
                 Icon(
+                    // Fallback glyphs come from the core icon
+                    // set + the hand-drawn AppIcons: Description
+                    // / Image / MusicNote live only in the
+                    // extended set this app does not depend on.
                     when (result.kind) {
                         "photo", "animation", "sticker" ->
-                            Icons.Filled.Image
+                            ImageIcon
                         "video" -> Icons.Filled.PlayArrow
-                        "audio", "voiceNote" ->
-                            Icons.Filled.MusicNote
+                        "audio" -> ClipIcon
+                        "voiceNote" -> MicIcon
                         "contact" -> Icons.Filled.Person
                         "location", "venue" ->
                             Icons.Filled.LocationOn
                         "game" -> Icons.Filled.Face
-                        else -> Icons.Filled.Description
+                        "article" -> LinkIcon
+                        else -> ClipIcon
                     },
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
