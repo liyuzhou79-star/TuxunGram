@@ -60,6 +60,9 @@ fun MeScreen(
     // My QR code page (v0.9.24, Q2): the code encodes the
     // account's own t.me link, generated on-device.
     onOpenMyQr: () -> Unit,
+    // My stories page (v0.9.32, Y2): my profile-page
+    // stories, their viewers and deletion.
+    onOpenMyStories: () -> Unit,
     // Back target (v0.9.19, Z5): the host always passes
     // the chats tab, so the system Back key behaves here
     // exactly like on the contacts and settings tabs
@@ -211,6 +214,12 @@ fun MeScreen(
                 QrIcon, "我的二维码",
                 "扫码打开我的主页",
                 onClick = onOpenMyQr
+            )
+            SettingsDivider()
+            IconRow(
+                ImageIcon, "我的动态",
+                "发到资料页的动态、谁看过、删除",
+                onClick = onOpenMyStories
             )
             SettingsDivider()
             IconRow(

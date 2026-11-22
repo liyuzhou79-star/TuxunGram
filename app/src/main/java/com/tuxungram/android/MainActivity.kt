@@ -143,6 +143,7 @@ import com.tuxungram.android.ui.NetworkStatsScreen
 import com.tuxungram.android.ui.StatsScreen
 import com.tuxungram.android.ui.AboutScreen
 import com.tuxungram.android.ui.MyQrScreen
+import com.tuxungram.android.ui.MyStoriesScreen
 import com.tuxungram.android.ui.QrLoginScreen
 import com.tuxungram.android.ui.QrScanScreen
 import com.tuxungram.android.ui.ChangelogScreen
@@ -504,6 +505,10 @@ private sealed interface Route {
         override val depth = 1
     }
 
+    data object MyStories : Route {
+        override val depth = 1
+    }
+
     data object GuideReplay : Route {
         override val depth = 1
     }
@@ -639,6 +644,7 @@ private fun ReadyHost() {
     var showChangelog by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showMyQr by remember { mutableStateOf(false) }
+    var showMyStories by remember { mutableStateOf(false) }
     var showGuideReplay by remember { mutableStateOf(false) }
     var showEditProfile by remember { mutableStateOf(false) }
     var showBlocked by remember { mutableStateOf(false) }
@@ -768,6 +774,7 @@ private fun ReadyHost() {
         showChangelog -> Route.Changelog
         showAbout -> Route.About
         showMyQr -> Route.MyQr
+        showMyStories -> Route.MyStories
         showGuideReplay -> Route.GuideReplay
         thread != null -> Route.Thread(thread.first, thread.second)
         showEditProfile -> Route.EditProfile
@@ -841,6 +848,9 @@ private fun ReadyHost() {
                         showMyQr = false
                         showEditProfile = true
                     }
+                )
+                is Route.MyStories -> MyStoriesScreen(
+                    onBack = { showMyStories = false }
                 )
                 is Route.GuideReplay -> GuideScreen(
                     onDone = { showGuideReplay = false }
@@ -1043,7 +1053,8 @@ private fun ReadyHost() {
                             onOpenSettingsTab = { homeTab = 2 },
                             onOpenChangelog = { showChangelog = true },
                             onOpenAbout = { showAbout = true },
-                            onOpenMyQr = { showMyQr = true }
+                            onOpenMyQr = { showMyQr = true },
+                            onOpenMyStories = { showMyStories = true }
                         )
                         else -> ChatListScreen(
                             onOpenChat = { openChatId = it },
