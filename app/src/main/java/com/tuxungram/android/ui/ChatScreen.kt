@@ -2505,19 +2505,6 @@ fun ChatScreen(
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Sticker/emoji panel toggle: the input bar's
-                // left-side entry, like in mature clients.
-                IconButton(onClick = {
-                    stickerPanelOpen = !stickerPanelOpen
-                    if (stickerPanelOpen) MediaStore.load()
-                }) {
-                    Icon(
-                        if (stickerPanelOpen) KeyboardIcon else FaceIcon,
-                        contentDescription = "表情与贴纸",
-                        tint = Color.Gray,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
                 if (botUi?.takeIf { it.chatId == chatId }
                         ?.let { it.commands.isNotEmpty() || it.groupBots.isNotEmpty() } == true
                 ) {
@@ -2548,6 +2535,31 @@ fun ChatScreen(
                     },
                     modifier = Modifier.weight(1f),
                     maxLines = 4,
+                    // Emoji toggle inside the field (v0.9.18,
+                    // Y2): the official layout puts the sticker
+                    // / emoji entry at the capsule's left edge,
+                    // not outside it. Same toggle, same panel,
+                    // same mutex rules — only the seat moved.
+                    leadingIcon = {
+                        IconButton(
+                            onClick = {
+                                stickerPanelOpen = !stickerPanelOpen
+                                if (stickerPanelOpen) MediaStore.load()
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                if (stickerPanelOpen) {
+                                    KeyboardIcon
+                                } else {
+                                    FaceIcon
+                                },
+                                contentDescription = "表情与贴纸",
+                                tint = Color.Gray,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    },
                     // Official capsule field (v0.9.17, X4):
                     // rounded rect on the panel background,
                     // no outline, no underline indicator.
