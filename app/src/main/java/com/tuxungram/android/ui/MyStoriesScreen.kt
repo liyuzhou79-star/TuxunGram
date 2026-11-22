@@ -2,9 +2,11 @@ package com.tuxungram.android.ui
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -28,9 +31,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.MyStoriesStore
 import com.tuxungram.android.td.MyStoryUi
+import com.tuxungram.android.td.StoryAlbumUi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -74,8 +82,14 @@ fun MyStoriesScreen(onBack: () -> Unit) {
     val loading by MyStoriesStore.loading.collectAsState()
     val exhausted by MyStoriesStore.exhausted.collectAsState()
     val notice by MyStoriesStore.notice.collectAsState()
+    val albums by MyStoriesStore.albums.collectAsState()
     var selectedId by remember { mutableStateOf<Int?>(null) }
-    val selected = stories.firstOrNull { it.storyId == selectedId }
+    var openAlbumId by remember { mutableStateOf<Int?>(null) }
+    val albumStories by MyStoriesStore.albumStories.collectAsState()
+    val selected = (stories + albumStories).firstOrNull {
+        it.storyId == selectedId
+    }
+    val openAlbum = albums.firstOrNull { it.id == openAlbumId }
 
     LaunchedEffect(Unit) { MyStoriesStore.load() }
     LaunchedEffect(notice) {
@@ -83,8 +97,15 @@ fun MyStoriesScreen(onBack: () -> Unit) {
         Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
         MyStoriesStore.clearNotice()
     }
-    // In detail, Back returns to the grid first.
-    BackHandler(enabled = selected != null) { selectedId = null }
+    // Back walks out one level at a time: detail, then
+    // album, then the page itself.
+    BackHandler(enabled = selected != null || openAlbum != null) {
+        if (selected != null) {
+            selectedId = null
+        } else {
+            openAlbumId = null
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -92,7 +113,13 @@ fun MyStoriesScreen(onBack: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = {
-                if (selected != null) selectedId = null else onBack()
+                if (selected != null) {
+                    selectedId = null
+                } else if (openAlbum != null) {
+                    openAlbumId = null
+                } else {
+                    onBack()
+                }
             }) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
@@ -100,7 +127,11 @@ fun MyStoriesScreen(onBack: () -> Unit) {
                 )
             }
             Text(
-                "我的动态",
+                if (openAlbum != null && selected == null) {
+                    openAlbum.name
+                } else {
+                    "我的动态"
+                },
                 fontSize = 19.sp, fontWeight = FontWeight.SemiBold
             )
         }
@@ -110,6 +141,12 @@ fun MyStoriesScreen(onBack: () -> Unit) {
                 story = detail,
                 onDeleted = { selectedId = null }
             )
+        } else if (openAlbum != null) {
+            AlbumDetail(
+                album = openAlbum,
+                allStories = stories,
+                onOpenStory = { selectedId = it }
+            )
         } else {
             when {
                 loading && stories.isEmpty() -> Box(
@@ -118,24 +155,44 @@ fun MyStoriesScreen(onBack: () -> Unit) {
                 ) {
                     CircularProgressIndicator()
                 }
-                stories.isEmpty() -> Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "你还没有发到资料页的动态。\n" +
-                            "发动态时把「发布到资料页」打开，" +
-                            "或者在动态上置顶到资料页，" +
-                            "它们就会列在这里。",
-                        color = Color.Gray, fontSize = 14.sp
-                    )
-                }
-                else -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
+                stories.isEmpty() -> Column(
                     modifier = Modifier.fillMaxSize()
                 ) {
+                    AlbumsSection(
+                        albums = albums,
+                        allStories = stories,
+                        onOpenAlbum = { openAlbumId = it }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "你还没有发到资料页的动态。\n" +
+                                "发动态时把「发布到资料页」打开，" +
+                                "或者在动态上置顶到资料页，" +
+                                "它们就会列在这里。",
+                            color = Color.Gray, fontSize = 14.sp
+                        )
+                    }
+                }
+                else -> Column(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    AlbumsSection(
+                        albums = albums,
+                        allStories = stories,
+                        onOpenAlbum = { openAlbumId = it }
+                    )
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
                     items(stories, key = { it.storyId }) { story ->
                         StoryGridCell(story) { selectedId = story.storyId }
                     }
@@ -151,6 +208,7 @@ fun MyStoriesScreen(onBack: () -> Unit) {
                                 )
                             }
                         }
+                    }
                     }
                 }
             }
@@ -311,6 +369,69 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
                     Text("删除这条动态", color = Color(0xFFC62828))
                 }
             }
+            // Story albums (v0.9.35, B2): which of my albums
+            // this story is in, with add/remove per album.
+            // Stories the server will not let into albums
+            // (can_be_added_to_album false and in no album)
+            // get one honest line instead of dead buttons.
+            val albums by MyStoriesStore.albums.collectAsState()
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "相册",
+                fontSize = 15.sp, fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(4.dp))
+            if (albums.isEmpty()) {
+                Text(
+                    "还没有相册。回列表顶部可以新建一个，把动态分门别类放好。",
+                    fontSize = 13.5.sp, color = Color.Gray
+                )
+            } else if (!story.canBeAddedToAlbum &&
+                story.albumIds.isEmpty()
+            ) {
+                Text(
+                    "这条动态不能加入相册（服务器没有开放它）。",
+                    fontSize = 13.5.sp, color = Color.Gray
+                )
+            } else {
+                for (album in albums) {
+                    val member = album.id in story.albumIds
+                    if (!member && !story.canBeAddedToAlbum) {
+                        continue
+                    }
+                    Row(
+                        verticalAlignment =
+                            Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                    ) {
+                        Text(
+                            album.name,
+                            fontSize = 14.5.sp,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1
+                        )
+                        if (member) {
+                            Text(
+                                "已加入",
+                                fontSize = 12.5.sp, color = Color.Gray
+                            )
+                            TextButton(onClick = {
+                                MyStoriesStore.removeFromAlbum(
+                                    album.id, listOf(story.storyId)
+                                )
+                            }) { Text("移出") }
+                        } else {
+                            TextButton(onClick = {
+                                MyStoriesStore.addToAlbum(
+                                    album.id, listOf(story.storyId)
+                                )
+                            }) { Text("加入") }
+                        }
+                    }
+                }
+            }
             Spacer(Modifier.height(8.dp))
             Text(
                 "看过的人",
@@ -428,6 +549,479 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
             },
             dismissButton = {
                 TextButton(onClick = { deleteConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+/** Story albums strip (v0.9.35, B2): my albums as a
+ *  horizontal row of cover tiles over the story grid;
+ *  long-press an album for rename/delete. The trailing
+ *  tile creates a new album (name 1-12 characters, with
+ *  an optional first batch of stories). */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AlbumsSection(
+    albums: List<StoryAlbumUi>,
+    allStories: List<MyStoryUi>,
+    onOpenAlbum: (Int) -> Unit
+) {
+    var createOpen by remember { mutableStateOf(false) }
+    var renameTarget by remember {
+        mutableStateOf<StoryAlbumUi?>(null)
+    }
+    var deleteTarget by remember {
+        mutableStateOf<StoryAlbumUi?>(null)
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(
+                start = 16.dp, end = 8.dp, top = 10.dp, bottom = 4.dp
+            )
+        ) {
+            Text(
+                "相册",
+                fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { createOpen = true }) {
+                Text("新建相册")
+            }
+        }
+        if (albums.isEmpty()) {
+            Text(
+                "还没有相册。建一个，把发过的动态按主题收好，别人看你的资料页时能按相册翻。",
+                fontSize = 13.sp, color = Color.Gray,
+                modifier = Modifier.padding(
+                    start = 16.dp, end = 16.dp, bottom = 8.dp
+                )
+            )
+        } else {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                contentPadding =
+                    androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = 12.dp
+                    )
+            ) {
+                items(albums, key = { it.id }) { album ->
+                    var menuOpen by remember(album.id) {
+                        mutableStateOf(false)
+                    }
+                    Box {
+                        Column(
+                            horizontalAlignment =
+                                Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp)
+                                .combinedClickable(
+                                    onClick = {
+                                        onOpenAlbum(album.id)
+                                    },
+                                    onLongClick = {
+                                        menuOpen = true
+                                    }
+                                )
+                        ) {
+                            AlbumCover(album)
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                album.name,
+                                fontSize = 12.sp, maxLines = 1,
+                                modifier = Modifier.width(64.dp),
+                                textAlign =
+                                    androidx.compose.ui.text.style
+                                        .TextAlign.Center
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("改名") },
+                                onClick = {
+                                    menuOpen = false
+                                    renameTarget = album
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "删除相册",
+                                        color = Color(0xFFC62828)
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    deleteTarget = album
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (createOpen) {
+        AlbumNameDialog(
+            title = "新建相册",
+            initial = "",
+            allStories = allStories,
+            confirmLabel = "创建",
+            onDismiss = { createOpen = false },
+            onConfirm = { name, storyIds ->
+                createOpen = false
+                MyStoriesStore.createAlbum(name, storyIds)
+            }
+        )
+    }
+    val toRename = renameTarget
+    if (toRename != null) {
+        AlbumNameDialog(
+            title = "相册改名",
+            initial = toRename.name,
+            allStories = emptyList(),
+            confirmLabel = "改名",
+            onDismiss = { renameTarget = null },
+            onConfirm = { name, _ ->
+                renameTarget = null
+                MyStoriesStore.renameAlbum(toRename, name)
+            }
+        )
+    }
+    val toDelete = deleteTarget
+    if (toDelete != null) {
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除相册？") },
+            text = {
+                Text(
+                    "「${toDelete.name}」会被删掉，里面的动态" +
+                        "本身不会删，还在你的资料页里。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    deleteTarget = null
+                    MyStoriesStore.deleteAlbum(toDelete)
+                }) { Text("删除", color = Color(0xFFC62828)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun AlbumCover(album: StoryAlbumUi) {
+    val path = album.iconPath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { decodeCached(path, 256) }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(64.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF37474F)),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Text(
+                album.name.trim().firstOrNull()?.toString() ?: "相",
+                color = Color.White, fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+/** Album name dialog (create / rename). When [allStories]
+ *  is non-empty it also offers a first batch of stories
+ *  to put into the new album. Names are 1-12 characters
+ *  (the tl's limit), counted and enforced here. */
+@Composable
+private fun AlbumNameDialog(
+    title: String,
+    initial: String,
+    allStories: List<MyStoryUi>,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String, List<Int>) -> Unit
+) {
+    var name by remember { mutableStateOf(initial) }
+    var picked by remember {
+        mutableStateOf<Set<Int>>(emptySet())
+    }
+    val addable = allStories.filter { it.canBeAddedToAlbum }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(12) },
+                    placeholder = { Text("相册名字（1–12 个字）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (addable.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "顺便把这些动态放进去（可不选）：",
+                        fontSize = 13.sp, color = Color.Gray
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                    ) {
+                        LazyColumn {
+                            items(addable, key = { it.storyId }) {
+                                story ->
+                                Row(
+                                    verticalAlignment =
+                                        Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            picked =
+                                                if (story.storyId in picked) {
+                                                    picked - story.storyId
+                                                } else {
+                                                    picked + story.storyId
+                                                }
+                                        }
+                                        .padding(vertical = 2.dp)
+                                ) {
+                                    Checkbox(
+                                        checked =
+                                            story.storyId in picked,
+                                        onCheckedChange = { checked ->
+                                            picked =
+                                                if (checked) {
+                                                    picked + story.storyId
+                                                } else {
+                                                    picked - story.storyId
+                                                }
+                                        }
+                                    )
+                                    Text(
+                                        formatDayLabel(
+                                            story.dateSeconds
+                                        ) + " " + formatMsgTime(
+                                            story.dateSeconds
+                                        ) + if (story.isVideo) {
+                                            " · 视频"
+                                        } else {
+                                            " · 照片"
+                                        },
+                                        fontSize = 13.5.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(name, picked.toList()) },
+                enabled = name.isNotBlank()
+            ) { Text(confirmLabel) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+/** One album's page (v0.9.35, B2): its stories as the
+ *  same grid as the main list, an add-stories picker
+ *  (stories not in this album that the server allows),
+ *  and per-story removal through the story detail's
+ *  album section. */
+@Composable
+private fun AlbumDetail(
+    album: StoryAlbumUi,
+    allStories: List<MyStoryUi>,
+    onOpenStory: (Int) -> Unit
+) {
+    val albumStories by MyStoriesStore.albumStories.collectAsState()
+    val loading by
+        MyStoriesStore.albumStoriesLoading.collectAsState()
+    val exhausted by
+        MyStoriesStore.albumStoriesExhausted.collectAsState()
+    var addPickerOpen by remember(album.id) {
+        mutableStateOf(false)
+    }
+    LaunchedEffect(album.id) { MyStoriesStore.openAlbum(album.id) }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(
+                start = 16.dp, end = 8.dp, vertical = 4.dp
+            )
+        ) {
+            Text(
+                "共 ${albumStories.size} 条",
+                fontSize = 13.sp, color = Color.Gray,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { addPickerOpen = true }) {
+                Text("添加动态")
+            }
+        }
+        when {
+            loading && albumStories.isEmpty() -> Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+            albumStories.isEmpty() -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "这个相册还是空的。点右上角「添加动态」把动态放进来，" +
+                        "也可以打开任意一条动态，在它的相册区里加入。",
+                    color = Color.Gray, fontSize = 14.sp
+                )
+            }
+            else -> LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(albumStories, key = { it.storyId }) { story ->
+                    StoryGridCell(story) {
+                        onOpenStory(story.storyId)
+                    }
+                }
+                if (!exhausted) {
+                    item {
+                        TextButton(
+                            onClick = {
+                                MyStoriesStore.loadMoreAlbumStories()
+                            },
+                            enabled = !loading,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                if (loading) "正在加载…" else "加载更多"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (addPickerOpen) {
+        val candidates = allStories.filter {
+            it.canBeAddedToAlbum && album.id !in it.albumIds
+        }
+        var picked by remember(album.id) {
+            mutableStateOf<Set<Int>>(emptySet())
+        }
+        AlertDialog(
+            onDismissRequest = { addPickerOpen = false },
+            title = { Text("添加到「${album.name}」") },
+            text = {
+                if (candidates.isEmpty()) {
+                    Text(
+                        "暂时没有能加进来的动态：要么都已经在这个相册里，" +
+                            "要么服务器没开放其余动态的加入。",
+                        fontSize = 13.5.sp, color = Color.Gray
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(240.dp)
+                    ) {
+                        items(candidates, key = { it.storyId }) {
+                            story ->
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        picked =
+                                            if (story.storyId in picked) {
+                                                picked - story.storyId
+                                            } else {
+                                                picked + story.storyId
+                                            }
+                                    }
+                                    .padding(vertical = 2.dp)
+                            ) {
+                                Checkbox(
+                                    checked = story.storyId in picked,
+                                    onCheckedChange = { checked ->
+                                        picked =
+                                            if (checked) {
+                                                picked + story.storyId
+                                            } else {
+                                                picked - story.storyId
+                                            }
+                                    }
+                                )
+                                Text(
+                                    formatDayLabel(story.dateSeconds) +
+                                        " " + formatMsgTime(
+                                            story.dateSeconds
+                                        ) + if (story.isVideo) {
+                                            " · 视频"
+                                        } else {
+                                            " · 照片"
+                                        },
+                                    fontSize = 13.5.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        addPickerOpen = false
+                        MyStoriesStore.addToAlbum(
+                            album.id, picked.toList()
+                        )
+                    },
+                    enabled = picked.isNotEmpty()
+                ) { Text("加入") }
+            },
+            dismissButton = {
+                TextButton(onClick = { addPickerOpen = false }) {
                     Text("取消")
                 }
             }

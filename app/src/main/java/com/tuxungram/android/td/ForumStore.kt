@@ -20,6 +20,10 @@ data class ForumTopicUi(
     val lastText: String,
     val lastDate: Int,
     val iconColor: Int = 0,
+    /** Custom-emoji icon id (forumTopicIcon.custom_emoji_id,
+     *  v0.9.35 B3); 0 = the topic shows its colored initial.
+     *  Set through editForumTopic's icon fields. */
+    val iconCustomEmojiId: Long = 0,
     /** The topic creator's user id (forumTopicInfo.creator_id,
      *  v0.9.15 V5) — a topic can be managed by its creator or
      *  by an admin holding can_manage_topics. 0 when the
@@ -187,13 +191,13 @@ object ForumStore {
         // Color(iconColor) renders it directly; the wire value
         // is plain RGB.
         val icon = info.optJSONObject("icon")
-        val rawColor = if (
-            icon != null && icon.optLong("custom_emoji_id") == 0L
-        ) {
-            icon.optInt("color")
-        } else {
-            0
-        }
+        // The color is kept even when a custom emoji icon
+        // is set (v0.9.35, B3): it is the fallback shown
+        // until the emoji renders, and what "restore
+        // default" falls back to visually.
+        val rawColor = icon?.optInt("color") ?: 0
+        val iconCustomEmojiId = icon?.optLong("custom_emoji_id")
+            ?: 0L
         val creator = info.optJSONObject("creator_id")
         val creatorId = if (
             creator?.optString("@type") == "messageSenderUser"
@@ -218,6 +222,7 @@ object ForumStore {
             } else {
                 0
             },
+            iconCustomEmojiId = iconCustomEmojiId,
             creatorId = creatorId
         )
     }
@@ -376,6 +381,37 @@ object ForumStore {
                     "改名没成功：可能是权限不够，或服务器拒绝了。"
             } else {
                 patchTopic(topic.topicId) { it.copy(name = trimmed) }
+            }
+        }
+    }
+
+    /** Change a topic's icon to a custom emoji (v0.9.35,
+     *  B3; editForumTopic icon fields verified in
+     *  td_api.tl: edit_icon_custom_emoji + icon_custom_emoji_id,
+     *  and the topic name must be passed along unchanged).
+     *  [customEmojiId] 0 restores the colored initial.
+     *  Server refusals (no manage rights, emoji not usable)
+     *  land on manageError in plain language. */
+    fun setTopicIcon(topic: ForumTopicUi, customEmojiId: Long) {
+        val chatId = topicsChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("editForumTopic").apply {
+            put("chat_id", chatId)
+            put("forum_topic_id", topic.topicId)
+            put("name", topic.name)
+            put("edit_icon_custom_emoji", true)
+            put("icon_custom_emoji_id", customEmojiId)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _manageError.value =
+                    "图标没换成：可能是权限不够（要话题管理权限），" +
+                        "或者这个表情服务器不让用。（错误码 " +
+                        "${response.optInt("code")}）"
+            } else {
+                patchTopic(topic.topicId) {
+                    it.copy(iconCustomEmojiId = customEmojiId)
+                }
             }
         }
     }

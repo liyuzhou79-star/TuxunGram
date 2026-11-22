@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AppLock
+import com.tuxungram.android.td.CustomEmojiStore
 import com.tuxungram.android.td.ForumStore
 import com.tuxungram.android.td.ForumTopicUi
 import com.tuxungram.android.td.MsgItem
@@ -91,6 +92,10 @@ fun ForumTopicsList(
     var renameName by remember { mutableStateOf("") }
     var closeTarget by remember { mutableStateOf<ForumTopicUi?>(null) }
     var deleteTarget by remember { mutableStateOf<ForumTopicUi?>(null) }
+    // Topic icon picker (v0.9.35, B3).
+    var iconPickerTarget by remember {
+        mutableStateOf<ForumTopicUi?>(null)
+    }
     LaunchedEffect(chatId) {
         ForumStore.loadTopics(chatId)
         ForumStore.loadViewerRights(chatId)
@@ -216,6 +221,182 @@ fun ForumTopicsList(
             }
         )
     }
+    // Topic icon picker (v0.9.35, B3): the account's
+    // installed custom-emoji sets supply the choices —
+    // the same pool the reaction/message emoji come from.
+    // A choice calls editForumTopic through ForumStore;
+    // "恢复默认" returns the topic to its colored initial.
+    val iconTopic = iconPickerTarget
+    if (iconTopic != null) {
+        var iconChoices by remember(iconTopic.topicId) {
+            mutableStateOf<List<Pair<Long, Int>>>(emptyList())
+        }
+        var iconChoicesLoaded by remember(iconTopic.topicId) {
+            mutableStateOf(false)
+        }
+        LaunchedEffect(iconTopic.topicId) {
+            val setsQuery = com.tuxungram.android.td.TdClient
+                .request("getInstalledStickerSets").apply {
+                    put(
+                        "sticker_type",
+                        JSONObject().apply {
+                            put(
+                                "@type",
+                                "stickerTypeCustomEmoji"
+                            )
+                        }
+                    )
+                }
+            com.tuxungram.android.td.TdRepository.sendRaw(
+                setsQuery
+            ) { sets ->
+                val setIds = sets.optJSONArray("sets")
+                if (com.tuxungram.android.td.TdClient
+                        .isError(sets) || setIds == null
+                ) {
+                    iconChoicesLoaded = true
+                    return@sendRaw
+                }
+                val ids = ArrayList<Long>()
+                for (i in 0 until setIds.length()) {
+                    setIds.optJSONObject(i)?.optLong("id")
+                        ?.let { ids.add(it) }
+                }
+                if (ids.isEmpty()) {
+                    iconChoicesLoaded = true
+                    return@sendRaw
+                }
+                var pending = ids.size
+                val collected =
+                    ArrayList<Pair<Long, Int>>()
+                for (setId in ids) {
+                    val setQuery = com.tuxungram.android.td
+                        .TdClient.request("getStickerSet")
+                        .apply { put("set_id", setId) }
+                    com.tuxungram.android.td.TdRepository
+                        .sendRaw(setQuery) { set ->
+                            val stickers =
+                                set.optJSONArray("stickers")
+                            if (stickers != null) {
+                                for (j in 0 until
+                                    stickers.length()) {
+                                    val sticker =
+                                        stickers.optJSONObject(j)
+                                            ?: continue
+                                    val emojiId = sticker
+                                        .optJSONObject("full_type")
+                                        ?.optLong(
+                                            "custom_emoji_id"
+                                        ) ?: 0L
+                                    val fileId = sticker
+                                        .optJSONObject("sticker")
+                                        ?.optInt("id") ?: 0
+                                    if (emojiId != 0L &&
+                                        fileId != 0
+                                    ) {
+                                        collected.add(
+                                            emojiId to fileId
+                                        )
+                                    }
+                                }
+                            }
+                            pending--
+                            if (pending == 0) {
+                                iconChoices = collected
+                                iconChoicesLoaded = true
+                                CustomEmojiStore
+                                    .ensureStickerFiles(
+                                        collected.map {
+                                            it.first to it.second
+                                        }
+                                    )
+                            }
+                        }
+                }
+            }
+        }
+        val iconPaths by CustomEmojiStore.paths.collectAsState()
+        AlertDialog(
+            onDismissRequest = { iconPickerTarget = null },
+            title = { Text("给「${iconTopic.name}」换图标") },
+            text = {
+                Column {
+                    if (iconTopic.iconCustomEmojiId != 0L) {
+                        TextButton(onClick = {
+                            ForumStore.setTopicIcon(iconTopic, 0L)
+                            iconPickerTarget = null
+                        }) { Text("恢复默认（彩色首字母）") }
+                    }
+                    when {
+                        !iconChoicesLoaded -> Text(
+                            "正在加载你装好的自定义表情…",
+                            fontSize = 13.5.sp, color = Color.Gray
+                        )
+                        iconChoices.isEmpty() -> Text(
+                            "你还没有装任何自定义表情包，所以暂时没得选。" +
+                                "先在聊天里装一套自定义表情，再回来换图标。",
+                            fontSize = 13.5.sp, color = Color.Gray
+                        )
+                        else -> Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(260.dp)
+                        ) {
+                            androidx.compose.foundation.lazy
+                                .grid.LazyVerticalGrid(
+                                    columns = androidx.compose
+                                        .foundation.lazy.grid
+                                        .GridCells.Fixed(6),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    items(
+                                        iconChoices.size
+                                    ) { index ->
+                                        val (emojiId, _) =
+                                            iconChoices[index]
+                                        Box(
+                                            modifier = Modifier
+                                                .padding(4.dp)
+                                                .clickable {
+                                                    ForumStore
+                                                        .setTopicIcon(
+                                                            iconTopic,
+                                                            emojiId
+                                                        )
+                                                    iconPickerTarget =
+                                                        null
+                                                },
+                                            contentAlignment =
+                                                Alignment.Center
+                                        ) {
+                                            val path =
+                                                iconPaths[emojiId]
+                                            if (path != null) {
+                                                CustomEmojiImage(
+                                                    path = path,
+                                                    sizeDp = 34
+                                                )
+                                            } else {
+                                                Text(
+                                                    "…",
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                        }
+                    }
+                }
+            },
+            confirmButton = { },
+            dismissButton = {
+                TextButton(onClick = {
+                    iconPickerTarget = null
+                }) { Text("取消") }
+            }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Create entry (v0.9.15, V5): shown when the chat's
@@ -315,13 +496,47 @@ fun ForumTopicsList(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                topic.name.trim().firstOrNull()
-                                    ?.toString() ?: "#",
-                                color = Color.White,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            // Custom-emoji icon (v0.9.35, B3):
+                            // rendered over the colored tile
+                            // once its sticker file is local;
+                            // the initial letter shows until
+                            // then (and for emoji-less topics).
+                            val topicEmojiPaths by
+                                CustomEmojiStore.paths
+                                    .collectAsState()
+                            if (topic.iconCustomEmojiId != 0L) {
+                                LaunchedEffect(
+                                    topic.iconCustomEmojiId
+                                ) {
+                                    CustomEmojiStore.ensure(
+                                        listOf(
+                                            topic.iconCustomEmojiId
+                                        )
+                                    )
+                                }
+                            }
+                            val topicEmojiPath =
+                                if (topic.iconCustomEmojiId != 0L) {
+                                    topicEmojiPaths[
+                                        topic.iconCustomEmojiId
+                                    ]
+                                } else {
+                                    null
+                                }
+                            if (topicEmojiPath != null) {
+                                CustomEmojiImage(
+                                    path = topicEmojiPath,
+                                    sizeDp = 28
+                                )
+                            } else {
+                                Text(
+                                    topic.name.trim().firstOrNull()
+                                        ?.toString() ?: "#",
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -393,6 +608,13 @@ fun ForumTopicsList(
                                 menuOpen = false
                                 renameName = topic.name
                                 renameTarget = topic
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("换图标") },
+                            onClick = {
+                                menuOpen = false
+                                iconPickerTarget = topic
                             }
                         )
                         if (topic.isClosed) {

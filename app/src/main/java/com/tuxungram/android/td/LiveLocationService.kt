@@ -54,8 +54,21 @@ data class LiveShare(
  * if the user denies autostart/battery access; and a fix
  * comes from the system's last-known/single-update APIs —
  * no continuous GPS tracking is done between pushes.
+ *
+ * Persistence (v0.9.35, B5): the registry used to live in
+ * memory only, so a process restart (system kill, update,
+ * crash) silently ended background updates for shares
+ * that were still live server-side. Active shares are
+ * now written to a small per-account-slot preference
+ * (chat/message/expiry only) on every change and rebuilt
+ * at attach time; expired entries are dropped, and a
+ * share that was stopped from another client while this
+ * app was dead is dropped on the service's first push
+ * (the server answers 400, which removes the entry).
  */
 object LiveShareRegistry {
+
+    private const val PREFS = "live_shares"
 
     private val shares =
         ConcurrentHashMap<Pair<Long, Long>, LiveShare>()
@@ -66,11 +79,85 @@ object LiveShareRegistry {
     @Volatile
     private var attached = false
 
+    /** Account slot the persisted shares belong to. Read
+     *  straight from the accounts preferences at attach
+     *  time — attach runs before AccountStore.init in
+     *  MainActivity, and the slot must be right anyway. */
+    @Volatile
+    private var slot = 0
+
     fun attach(context: Context) {
         appContext = context.applicationContext
         if (attached) return
         attached = true
+        slot = try {
+            context.getSharedPreferences("accounts", Context.MODE_PRIVATE)
+                .getInt("current_slot", 0)
+        } catch (t: Throwable) {
+            0
+        }
+        restore()
         TdRepository.addUpdateListener { update -> handleUpdate(update) }
+    }
+
+    private fun prefs() =
+        appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun persistKey() = "shares_$slot"
+
+    /** Write the active shares out after every change. */
+    private fun persist() {
+        val ctx = appContext ?: return
+        try {
+            val arr = org.json.JSONArray()
+            for (share in shares.values) {
+                arr.put(JSONObject().apply {
+                    put("chat_id", share.chatId)
+                    put("message_id", share.messageId)
+                    put("expires_at", share.expiresAtSec)
+                })
+            }
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(persistKey(), arr.toString()).apply()
+        } catch (t: Throwable) {
+            // Persistence is a recovery aid; failing to
+            // write it must never break sharing itself.
+        }
+    }
+
+    /** Rebuild the registry from the persisted shares at
+     *  startup and restart the service for the ones still
+     *  live. Entries at (or within a minute of) their
+     *  expiry are dropped — the server ends those itself. */
+    private fun restore() {
+        val raw = try {
+            prefs()?.getString(persistKey(), null)
+        } catch (t: Throwable) {
+            null
+        } ?: return
+        val nowSec = System.currentTimeMillis() / 1000
+        try {
+            val arr = org.json.JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val chatId = obj.optLong("chat_id")
+                val messageId = obj.optLong("message_id")
+                val expiresAt = obj.optLong("expires_at")
+                if (chatId == 0L || messageId == 0L) continue
+                if (expiresAt - nowSec <= 60) continue
+                shares[chatId to messageId] =
+                    LiveShare(chatId, messageId, expiresAt)
+            }
+        } catch (t: Throwable) {
+            // A corrupt record restores nothing; sharing
+            // itself is unaffected.
+            shares.clear()
+            return
+        }
+        if (shares.isNotEmpty()) {
+            persist()
+            syncService()
+        }
     }
 
     fun isActive(chatId: Long, messageId: Long): Boolean =
@@ -150,11 +237,13 @@ object LiveShareRegistry {
         shares[chatId to messageId] = LiveShare(
             chatId, messageId, expiresAt
         )
+        persist()
         syncService()
     }
 
     fun remove(chatId: Long, messageId: Long) {
         if (shares.remove(chatId to messageId) != null) {
+            persist()
             syncService()
         }
     }
