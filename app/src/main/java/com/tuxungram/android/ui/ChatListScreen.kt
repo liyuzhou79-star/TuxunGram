@@ -1106,17 +1106,37 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
             }
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (chat.previewThumbPath != null) {
-                    MediaThumbChip(chat.previewThumbPath)
-                    Spacer(Modifier.width(6.dp))
+                if (chat.draftText.isNotEmpty()) {
+                    // Draft preview (v0.9.16, W2): a red
+                    // 草稿： prefix plus the draft text replaces
+                    // the last-message preview (and its media
+                    // thumb) while a draft exists.
+                    Text(
+                        "草稿：",
+                        color = Color(0xFFC62828),
+                        fontSize = 14.sp,
+                        maxLines = 1
+                    )
+                    Text(
+                        chat.draftText,
+                        color = Color.Gray,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
+                    )
+                } else {
+                    if (chat.previewThumbPath != null) {
+                        MediaThumbChip(chat.previewThumbPath)
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        chat.preview,
+                        color = Color.Gray,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
-                Text(
-                    chat.preview,
-                    color = Color.Gray,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f)
-                )
                 if (chat.isPinned) {
                     Icon(
                         PinIcon, contentDescription = "置顶",
@@ -1355,16 +1375,33 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (chat.previewThumbPath != null) {
-                                    MediaThumbChip(chat.previewThumbPath)
-                                    Spacer(Modifier.width(6.dp))
+                                if (chat.draftText.isNotEmpty()) {
+                                    // Draft preview (v0.9.16,
+                                    // W2), same as the main row.
+                                    Text(
+                                        "草稿：",
+                                        color = Color(0xFFC62828),
+                                        fontSize = 14.sp,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        chat.draftText,
+                                        color = Color.Gray,
+                                        fontSize = 14.sp,
+                                        maxLines = 1
+                                    )
+                                } else {
+                                    if (chat.previewThumbPath != null) {
+                                        MediaThumbChip(chat.previewThumbPath)
+                                        Spacer(Modifier.width(6.dp))
+                                    }
+                                    Text(
+                                        chat.preview,
+                                        color = Color.Gray,
+                                        fontSize = 14.sp,
+                                        maxLines = 1
+                                    )
                                 }
-                                Text(
-                                    chat.preview,
-                                    color = Color.Gray,
-                                    fontSize = 14.sp,
-                                    maxLines = 1
-                                )
                             }
                         }
                         if (chat.unreadCount > 0) {

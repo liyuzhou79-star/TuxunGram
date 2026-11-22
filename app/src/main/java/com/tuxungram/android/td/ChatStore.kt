@@ -44,7 +44,15 @@ data class ChatItem(
     // previews render as a small image chip in the row
     // instead of text only. Null while downloading or for
     // text-only last messages.
-    val previewThumbPath: String? = null
+    val previewThumbPath: String? = null,
+    // Draft preview (v0.9.16, W2): the chat's draft text
+    // from chat.draft_message, "" when there is no draft.
+    // When non-empty the row shows a red 草稿： prefix plus
+    // this text INSTEAD of the last-message preview, like
+    // mature clients. The draft's effect on list ORDER is
+    // not computed here: updateChatDraftMessage carries
+    // fresh positions and this store sorts by them verbatim.
+    val draftText: String = ""
 )
 
 /**
@@ -629,8 +637,33 @@ object ChatStore {
             allowedReactions = allowedReactionsOf(chat),
             previewThumbPath = AvatarStore.pathForFileObj(
                 previewThumbFile(last)
-            )
+            ),
+            draftText = draftTextOf(chat)
         )
+    }
+
+    /** The chat's draft as a one-line preview (v0.9.16, W2):
+     *  chat.draft_message is a draftMessage whose content is
+     *  a DraftMessageContent (td_api.tl L3886+). Text drafts
+     *  preview as their text; media drafts preview as their
+     *  type label, mirroring previewOf's vocabulary. A draft
+     *  object whose content is missing or unrecognised still
+     *  counts as a draft ("" would hide it), so it falls back
+     *  to a bare label. */
+    private fun draftTextOf(chat: JSONObject): String {
+        if (!chat.has("draft_message") || chat.isNull("draft_message")) {
+            return ""
+        }
+        val content = chat.optJSONObject("draft_message")
+            ?.optJSONObject("content") ?: return "[消息]"
+        return when (content.optString("@type")) {
+            "draftMessageContentText" ->
+                content.optJSONObject("text")?.optString("text")
+                    ?.takeIf { it.isNotEmpty() } ?: "[消息]"
+            "draftMessageContentVideoNote" -> "[视频消息]"
+            "draftMessageContentVoiceNote" -> "[语音]"
+            else -> "[消息]"
+        }
     }
 
     /** The last message's media thumbnail file, if any
