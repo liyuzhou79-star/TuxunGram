@@ -116,6 +116,8 @@ import com.tuxungram.android.td.SettingsBackup
 import com.tuxungram.android.td.StorageStore
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
+import com.tuxungram.android.td.ScopeNotifyStore
+import com.tuxungram.android.td.ScopeNotifyUi
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import com.tuxungram.android.td.UpdateChecker
@@ -1307,6 +1309,63 @@ fun SettingsScreen(
             color = Color.Gray, fontSize = 13.sp
         )
         }
+        Spacer(Modifier.height(16.dp))
+        GroupCard {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "按类别同步的通知偏好（与服务器同步）",
+            fontSize = 15.sp, fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            "下面三组存在 Telegram 服务器上，在这里改，官方客户端那边也跟着变；反过来也一样。" +
+                "和上面的「后台接收消息」不是一回事：那个是这台手机上的总开关，它关了，下面设得再细也不会弹通知。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        // Server-synced scope settings (v0.9.12, S1):
+        // getScopeNotificationSettings /
+        // setScopeNotificationSettings per scope.
+        val scopeStates by ScopeNotifyStore.scopes.collectAsState()
+        val scopeNotice by ScopeNotifyStore.notice.collectAsState()
+        LaunchedEffect(Unit) { ScopeNotifyStore.loadAll() }
+        if (scopeNotice != null) {
+            Text(
+                scopeNotice!!, color = Color(0xFFC62828), fontSize = 13.sp,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+        for ((scopeType, scopeLabel) in listOf(
+            ScopeNotifyStore.SCOPE_PRIVATE to "私聊",
+            ScopeNotifyStore.SCOPE_GROUPS to "群组",
+            ScopeNotifyStore.SCOPE_CHANNELS to "频道"
+        )) {
+            val st = scopeStates[scopeType]
+            Spacer(Modifier.height(14.dp))
+            Text(
+                scopeLabel, fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            when {
+                st == null || (!st.loaded && !st.failed) ->
+                    Text(
+                        "正在从服务器读取…",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                st.failed -> Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "读取失败。", color = Color.Gray, fontSize = 13.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        ScopeNotifyStore.load(scopeType)
+                    }) { Text("重试") }
+                }
+                else -> ScopeNotifyEditor(st)
+            }
+        }
+        }
         Spacer(Modifier.height(28.dp))
         SectionTitle(Icons.Filled.Face, "贴纸包")
         GroupCard {
@@ -1736,4 +1795,114 @@ fun PrivacySection() {
             }
         )
     }
+}
+
+/** Editor for one server-synced notification scope
+ *  (v0.9.12, S1). Every control writes through immediately,
+ *  like the rest of this page; the store re-reads the scope
+ *  from the server if a save is refused. mute_for is a raw
+ *  seconds count from the server — the presets write 0 /
+ *  1 h / 8 h / forever, and a leftover timed mute from
+ *  another client is shown as its remaining time instead of
+ *  being silently bucketed. */
+@Composable
+private fun ScopeNotifyEditor(st: ScopeNotifyUi) {
+    val muteOptions = listOf(
+        0 to "不静音",
+        3600 to "静音 1 小时",
+        28800 to "静音 8 小时",
+        ScopeNotifyUi.MUTE_FOREVER to "一直静音"
+    )
+    val matchedPreset = muteOptions.any { it.first == st.muteFor }
+    Text(
+        "静音", fontSize = 13.sp, color = Color.Gray,
+        modifier = Modifier.padding(top = 6.dp)
+    )
+    for ((value, label) in muteOptions) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    ScopeNotifyStore.save(st.copy(muteFor = value))
+                }
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioText(st.muteFor == value, label, fontSize = 14.sp)
+        }
+    }
+    if (!matchedPreset && st.muteFor > 0) {
+        Text(
+            "当前是限时静音（还剩约 ${formatMuteRemaining(st.muteFor)}，" +
+                "可能是在别的客户端设的），选上面任意一项就会改掉它。",
+            color = Color.Gray, fontSize = 12.5.sp
+        )
+    }
+    ScopeSwitchRow("通知里显示消息预览", st.showPreview) { on ->
+        ScopeNotifyStore.save(st.copy(showPreview = on))
+    }
+    ScopeSwitchRow("有人 @ 我时通知", !st.disableMentions) { on ->
+        ScopeNotifyStore.save(st.copy(disableMentions = !on))
+    }
+    ScopeSwitchRow("置顶消息通知", !st.disablePinned) { on ->
+        ScopeNotifyStore.save(st.copy(disablePinned = !on))
+    }
+    Text(
+        "动态通知", fontSize = 13.sp, color = Color.Gray,
+        modifier = Modifier.padding(top = 8.dp)
+    )
+    val storyMode = when {
+        st.muteStoriesUseDefault -> 0
+        st.muteStories -> 1
+        else -> 2
+    }
+    for ((mode, label) in listOf(
+        0 to "跟随默认", 1 to "静音", 2 to "正常提醒"
+    )) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    ScopeNotifyStore.save(
+                        when (mode) {
+                            0 -> st.copy(muteStoriesUseDefault = true)
+                            1 -> st.copy(
+                                muteStoriesUseDefault = false,
+                                muteStories = true
+                            )
+                            else -> st.copy(
+                                muteStoriesUseDefault = false,
+                                muteStories = false
+                            )
+                        }
+                    )
+                }
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioText(storyMode == mode, label, fontSize = 14.sp)
+        }
+    }
+}
+
+@Composable
+private fun ScopeSwitchRow(
+    label: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 2.dp)
+    ) {
+        Text(label, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+private fun formatMuteRemaining(seconds: Int): String = when {
+    seconds >= 86400 -> "${seconds / 86400} 天"
+    seconds >= 3600 -> "${seconds / 3600} 小时"
+    seconds >= 60 -> "${seconds / 60} 分钟"
+    else -> "$seconds 秒"
 }
