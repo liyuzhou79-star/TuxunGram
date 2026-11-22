@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
@@ -16,15 +17,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -33,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,7 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.tuxungram.android.td.MessageStore
+import com.tuxungram.android.td.MediaContextStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import kotlinx.coroutines.Dispatchers
@@ -56,36 +62,90 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Full-screen photo viewer (v0.7.0, F2), modelled on the mature
- * clients: swipe left/right between the chat's photos, pinch or
- * double-tap to zoom, drag up/down to dismiss, sender + time in
- * the header, caption at the bottom. The list comes straight
- * from MessageStore's live flow, so a photo whose download
- * finishes while the viewer is open appears on its own.
+ * Full-screen media viewer (v0.7.0, F2; whole-conversation
+ * context v0.9.31, X2), modelled on the mature clients:
+ * swipe left/right through the chat's photos AND videos,
+ * pinch or double-tap to zoom a photo, drag up/down to
+ * dismiss, sender + time in the header, caption at the
+ * bottom, and a 第 n / 共 m 张 counter up top.
  *
- * Videos deliberately do NOT come here: tapping a video bubble
- * opens the in-app VideoPlayerScreen (v0.9.1, J3), with the
- * system player kept as a long-press menu alternative.
+ * The media stream comes from MediaContextStore
+ * (searchChatMessages PhotoAndVideo paging over the whole
+ * conversation), not from the chat's loaded window, so
+ * media far outside the visible history is reachable;
+ * swiping near the oldest loaded end pulls the next page
+ * automatically. Display order: when the tapped message
+ * belongs to an album, the album group comes first (in
+ * chat order), then every other media item in chat order —
+ * the group is what the user was looking at, the rest of
+ * the conversation follows. Video pages show the still
+ * with a play button; playback itself stays in the in-app
+ * VideoPlayerScreen, opened over this viewer. Thread and
+ * topic surfaces are out of scope and keep their players.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MediaViewerScreen(initialId: Long, onClose: () -> Unit) {
-    val messages by MessageStore.messages.collectAsState()
-    val photos = messages.filter { it.kind == MsgKind.PHOTO }
-    if (photos.isEmpty()) {
+fun MediaViewerScreen(
+    chatId: Long,
+    anchor: MsgItem,
+    albumGroup: List<MsgItem>,
+    onClose: () -> Unit,
+    onPlayVideo: (MsgItem) -> Unit
+) {
+    LaunchedEffect(chatId, anchor.id) {
+        MediaContextStore.open(chatId, anchor)
+    }
+    val contextItems by MediaContextStore.items.collectAsState()
+    val exhausted by MediaContextStore.exhausted.collectAsState()
+    val display = remember(contextItems, albumGroup) {
+        val groupIds = albumGroup.map { it.id }.toSet()
+        val group = albumGroup.sortedBy { it.id }
+        val rest = contextItems
+            .filter { it.id !in groupIds }
+            .sortedBy { it.id }
+        group + rest
+    }
+    if (display.isEmpty()) {
         LaunchedEffect(Unit) { onClose() }
         return
     }
-    val initialPage = photos.indexOfFirst { it.id == initialId }
+    val initialPage = display.indexOfFirst { it.id == anchor.id }
         .coerceAtLeast(0)
     val pagerState = rememberPagerState(
         initialPage = initialPage
-    ) { photos.size }
-    // The current page's zoom level gates pager swiping (a zoomed
-    // photo pans instead of flipping pages).
+    ) { display.size }
+    // The item currently on screen, tracked by id: paging
+    // in older media prepends pages and shifts every index,
+    // so the pager is re-anchored to the same item whenever
+    // the display list changes under it.
+    var currentItemId by remember {
+        mutableLongStateOf(anchor.id)
+    }
+    LaunchedEffect(pagerState.currentPage, display) {
+        display.getOrNull(pagerState.currentPage)?.let {
+            currentItemId = it.id
+        }
+    }
+    LaunchedEffect(display) {
+        val idx = display.indexOfFirst { it.id == currentItemId }
+        if (idx >= 0 && idx != pagerState.currentPage &&
+            !pagerState.isScrollInProgress
+        ) {
+            pagerState.scrollToPage(idx)
+        }
+    }
+    // Near the oldest loaded end: pull the next page.
+    LaunchedEffect(pagerState.currentPage, display.size) {
+        if (pagerState.currentPage <= 5) {
+            MediaContextStore.loadMore()
+        }
+    }
+    // The current page's zoom level gates pager swiping (a
+    // zoomed photo pans instead of flipping pages).
     var currentScale by remember { mutableFloatStateOf(1f) }
-    // Unzoomed vertical drag distance; drives both the photo's
-    // offset and the backdrop fade, and closes past a threshold.
+    // Unzoomed vertical drag distance; drives both the
+    // photo's offset and the backdrop fade, and closes past
+    // a threshold.
     var closeDrag by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(pagerState.currentPage) {
         currentScale = 1f
@@ -104,20 +164,25 @@ fun MediaViewerScreen(initialId: Long, onClose: () -> Unit) {
             userScrollEnabled = currentScale <= 1.01f,
             modifier = Modifier.fillMaxSize()
         ) { page ->
-            PhotoPage(
-                item = photos[page],
-                onScaleChange = { scale ->
-                    if (page == pagerState.currentPage) {
-                        currentScale = scale
-                    }
-                },
-                closeDrag = closeDrag,
-                onCloseDragChange = { closeDrag = it },
-                onClose = onClose
-            )
+            val item = display[page]
+            if (item.kind == MsgKind.VIDEO) {
+                VideoPage(item = item, onPlayVideo = onPlayVideo)
+            } else {
+                PhotoPage(
+                    item = item,
+                    onScaleChange = { scale ->
+                        if (page == pagerState.currentPage) {
+                            currentScale = scale
+                        }
+                    },
+                    closeDrag = closeDrag,
+                    onCloseDragChange = { closeDrag = it },
+                    onClose = onClose
+                )
+            }
         }
 
-        val current = photos.getOrNull(pagerState.currentPage)
+        val current = display.getOrNull(pagerState.currentPage)
         // Header: back, sender + time, page counter.
         Row(
             modifier = Modifier
@@ -156,9 +221,11 @@ fun MediaViewerScreen(initialId: Long, onClose: () -> Unit) {
                     )
                 }
             }
-            if (photos.size > 1) {
+            if (display.size > 1) {
                 Text(
-                    "${pagerState.currentPage + 1} / ${photos.size}",
+                    "${pagerState.currentPage + 1} / " +
+                        "${display.size}" +
+                        if (exhausted) "" else "+",
                     color = Color(0xFFB0BEC5),
                     fontSize = 13.sp
                 )
@@ -166,10 +233,10 @@ fun MediaViewerScreen(initialId: Long, onClose: () -> Unit) {
             }
         }
 
-        // Caption of the current photo, if it has one —
+        // Caption of the current item, if it has one —
         // rendered through the shared rich-text builder like
         // every other surface (regression fix R4, v0.9.6), in
-        // white to stay readable over the photo.
+        // white to stay readable over the media.
         val captionMsg = current?.takeIf { it.text.isNotEmpty() }
         if (captionMsg != null) {
             Box(
@@ -188,6 +255,96 @@ fun MediaViewerScreen(initialId: Long, onClose: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+/** One video page of the viewer (X2): the video's still
+ *  (its thumbnail, the minithumbnail until that lands)
+ *  with a central play button. A video whose file is not
+ *  on disk yet downloads first — the button says so —
+ *  through the download center's queue; once the file
+ *  lands the same button plays it in the player screen. */
+@Composable
+private fun VideoPage(
+    item: MsgItem,
+    onPlayVideo: (MsgItem) -> Unit
+) {
+    val stillPath = item.thumbPath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, stillPath, item.miniThumbData
+    ) {
+        value = withContext(Dispatchers.IO) {
+            when {
+                stillPath != null -> decodeSampled(stillPath)
+                item.miniThumbData.isNotEmpty() ->
+                    decodeMiniThumb(item.miniThumbData)
+                else -> null
+            }
+        }
+    }
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .background(Color(0x66000000), CircleShape)
+                    .clickable {
+                        if (item.filePath != null) {
+                            onPlayVideo(item)
+                        } else {
+                            MediaContextStore.downloadVideo(item)
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = "播放",
+                    tint = Color.White,
+                    modifier = Modifier.size(40.dp)
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                when {
+                    item.filePath != null ->
+                        formatDuration(item.durationSec)
+                    item.fileDownloading -> "正在下载…"
+                    else -> "点按下载视频 · " +
+                        formatDuration(item.durationSec)
+                },
+                color = Color.White,
+                fontSize = 13.sp
+            )
+        }
+    }
+}
+
+/** Decode a minithumbnail (base64 JPEG bytes as TDLib
+ *  ships them) — the same tiny decode the chat's album
+ *  cells use, kept local to this file. */
+private fun decodeMiniThumb(
+    data: String
+): android.graphics.Bitmap? {
+    return try {
+        val bytes = android.util.Base64.decode(
+            data, android.util.Base64.DEFAULT
+        )
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } catch (t: Throwable) {
+        null
     }
 }
 

@@ -72,7 +72,12 @@ fun RichMessageText(
     // Link / mention / hashtag color override (v0.9.17, X2):
     // bubbles whose background is the official out-blue need
     // their links in the out-text color, not the accent.
-    linkColor: Color = Color.Unspecified
+    linkColor: Color = Color.Unspecified,
+    // In-chat search highlight (v0.9.31, X3): when non-empty,
+    // every case-insensitive occurrence of this query in the
+    // text gets a warm highlight background, mapped through
+    // the same custom-emoji offset shift as the entities.
+    highlightQuery: String = ""
 ) {
     // Custom emoji (L2): kick off the sticker fetch for this
     // message's ids and watch the downloaded paths; the inline
@@ -89,7 +94,14 @@ fun RichMessageText(
         }
     }
     if (msg.entities.isEmpty()) {
-        Text(msg.text, fontSize = fontSize, color = color)
+        if (highlightQuery.isEmpty()) {
+            Text(msg.text, fontSize = fontSize, color = color)
+        } else {
+            Text(
+                highlightedPlain(msg.text, highlightQuery),
+                fontSize = fontSize, color = color
+            )
+        }
         return
     }
     val context = LocalContext.current
@@ -310,6 +322,33 @@ fun RichMessageText(
                 else -> Unit
             }
         }
+        // Search highlight (v0.9.31, X3): background spans
+        // over every occurrence of the query, in built-string
+        // coordinates via the same removedBefore() shift the
+        // entities use; clamped to the built length so an
+        // exotic case-fold can never push a span out of range.
+        if (highlightQuery.isNotEmpty()) {
+            val builtLength = text.length - removedBefore(text.length)
+            val needle = highlightQuery.lowercase()
+            val hay = text.lowercase()
+            var from = 0
+            while (needle.isNotEmpty()) {
+                val idx = hay.indexOf(needle, from)
+                if (idx < 0) break
+                val rawEnd = idx + needle.length
+                val start = (idx - removedBefore(idx))
+                    .coerceIn(0, builtLength)
+                val end = (rawEnd - removedBefore(rawEnd))
+                    .coerceIn(start, builtLength)
+                if (end > start) {
+                    addStyle(
+                        SpanStyle(background = Color(0x73FFC400)),
+                        start, end
+                    )
+                }
+                from = rawEnd
+            }
+        }
     }
     val inlineContent = remember(customs, cePaths) {
         customs.distinctBy { it.customEmojiId }.associate { ce ->
@@ -411,6 +450,35 @@ private fun CustomEmojiInline(
         )
     } else {
         Text(alt, fontSize = fontSize)
+    }
+}
+
+/** Plain-text search highlight (v0.9.31, X3): the
+ *  no-entities fast path of RichMessageText still owes the
+ *  user visible matches when a search navigation landed on
+ *  the message. Same warm background as the entity path. */
+private fun highlightedPlain(
+    text: String,
+    query: String
+): AnnotatedString {
+    val needle = query.lowercase()
+    if (needle.isEmpty()) return AnnotatedString(text)
+    val hay = text.lowercase()
+    return buildAnnotatedString {
+        append(text)
+        var from = 0
+        while (true) {
+            val idx = hay.indexOf(needle, from)
+            if (idx < 0) break
+            val end = idx + needle.length
+            if (end <= text.length) {
+                addStyle(
+                    SpanStyle(background = Color(0x73FFC400)),
+                    idx, end
+                )
+            }
+            from = end
+        }
     }
 }
 

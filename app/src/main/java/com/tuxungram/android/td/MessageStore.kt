@@ -307,6 +307,16 @@ data class SendModifiers(
             effectId == 0L
 }
 
+/** In-chat search type filters (v0.9.31, X3), mapped to
+ *  searchChatMessages' SearchMessagesFilter types (verified
+ *  in td_api.tl). ALL keeps the historical Empty filter. */
+enum class ChatSearchFilter(val type: String, val label: String) {
+    ALL("searchMessagesFilterEmpty", "全部"),
+    PHOTO("searchMessagesFilterPhoto", "照片"),
+    DOCUMENT("searchMessagesFilterDocument", "文件"),
+    URL("searchMessagesFilterUrl", "链接")
+}
+
 /**
  * State for the one chat currently open on screen: history paging,
  * live appends, send bookkeeping (pending/succeeded/failed via
@@ -402,8 +412,38 @@ object MessageStore {
     private val _searchExhausted = MutableStateFlow(true)
     val searchExhausted: StateFlow<Boolean> = _searchExhausted
 
+    /** Approximate total hits of the running search
+     *  (foundChatMessages.total_count, v0.9.31 X3); -1 while
+     *  unknown. Approximate by the server's own definition —
+     *  the UI labels it as such through the loaded count. */
+    private val _searchTotal = MutableStateFlow(-1)
+    val searchTotal: StateFlow<Int> = _searchTotal
+
+    /** Active type filter of the running search (X3). */
+    private val _searchFilter =
+        MutableStateFlow(ChatSearchFilter.ALL)
+    val searchFilter: StateFlow<ChatSearchFilter> = _searchFilter
+
+    /** Index (into [searchResults], newest first) of the hit
+     *  the user is currently navigated to; -1 = none yet. */
+    private val _searchNavIndex = MutableStateFlow(-1)
+    val searchNavIndex: StateFlow<Int> = _searchNavIndex
+
+    /** The navigated-to hit and the query that produced it:
+     *  the bubble for this message highlights the query in
+     *  its text (X3). Cleared with the search UI. */
+    private val _searchHighlightId = MutableStateFlow(0L)
+    val searchHighlightId: StateFlow<Long> = _searchHighlightId
+
+    private val _searchHighlightQuery = MutableStateFlow("")
+    val searchHighlightQuery: StateFlow<String> = _searchHighlightQuery
+
     private var searchQuery = ""
     private var searchFromId = 0L
+    /** A navigation target waiting for the next results page
+     *  (X3): set when the user steps past the loaded end;
+     *  consumed by the search response handler. */
+    private var searchPendingNav = -1
 
     // ---- Pinned messages (v0.9.4, N3) ----
 
@@ -667,14 +707,29 @@ object MessageStore {
 
     /** searchChatMessages paging: from_message_id cursor plus
      *  next_from_message_id from the previous page (verified in
-     *  td_api.tl — a different scheme from global search). */
-    fun searchInChat(query: String, append: Boolean = false) {
+     *  td_api.tl — a different scheme from global search).
+     *
+     *  v0.9.31 (X3): [filter] narrows by content type; a fresh
+     *  (non-append) call restarts paging, the total and the
+     *  navigation cursor, and once its first page lands the
+     *  newest hit is navigated to automatically, like the
+     *  official client's search. Changing only the filter
+     *  re-runs the same query under the new filter. */
+    fun searchInChat(
+        query: String,
+        append: Boolean = false,
+        filter: ChatSearchFilter = _searchFilter.value
+    ) {
         val chatId = currentChatId
         if (chatId == 0L) return
         if (!append) {
             searchQuery = query.trim()
             searchFromId = 0L
+            _searchFilter.value = filter
             _searchResults.value = emptyList()
+            _searchTotal.value = -1
+            _searchNavIndex.value = -1
+            searchPendingNav = -1
             _searchExhausted.value = searchQuery.isEmpty()
             if (searchQuery.isEmpty()) return
         }
@@ -686,20 +741,27 @@ object MessageStore {
             put("from_message_id", searchFromId)
             put("offset", 0)
             put("limit", 30)
-            put("filter", JSONObject().put("@type", "searchMessagesFilterEmpty"))
+            put(
+                "filter",
+                JSONObject().put("@type", _searchFilter.value.type)
+            )
         }
         TdRepository.sendRaw(q) { response ->
             if (currentChatId != chatId) return@sendRaw
             if (TdClient.isError(response)) {
                 _searchExhausted.value = true
+                searchPendingNav = -1
                 return@sendRaw
             }
+            val total = response.optInt("total_count", -1)
+            if (total >= 0) _searchTotal.value = total
             val next = response.optLong("next_from_message_id")
             searchFromId = next
             if (next == 0L) _searchExhausted.value = true
             val arr = response.optJSONArray("messages") ?: JSONArray()
             if (arr.length() == 0) {
                 _searchExhausted.value = true
+                searchPendingNav = -1
                 return@sendRaw
             }
             val items = ArrayList<MsgItem>()
@@ -708,7 +770,66 @@ object MessageStore {
                 items.add(parseMessage(msg))
             }
             _searchResults.value = _searchResults.value + items
+            // Navigation follow-through (X3): a fresh search
+            // lands on its newest hit; a step that ran past
+            // the loaded end completes once its page arrives.
+            val pending = searchPendingNav
+            when {
+                pending >= 0 -> {
+                    searchPendingNav = -1
+                    if (pending < _searchResults.value.size) {
+                        navigateSearchTo(pending)
+                    }
+                }
+                !append && _searchNavIndex.value == -1 &&
+                    _searchResults.value.isNotEmpty() ->
+                    navigateSearchTo(0)
+            }
         }
+    }
+
+    /** Jump the chat window to the hit at [index] (X3) and
+     *  arm its query highlight. Out-of-range indexes clamp;
+     *  stepping past the loaded end pages more results in
+     *  first (the response handler finishes the step). */
+    fun navigateSearchTo(index: Int) {
+        val results = _searchResults.value
+        if (results.isEmpty() || index < 0) return
+        if (index >= results.size) {
+            if (_searchExhausted.value) return
+            searchPendingNav = index
+            searchInChat(searchQuery, append = true)
+            return
+        }
+        _searchNavIndex.value = index
+        val hit = results[index]
+        _searchHighlightId.value = hit.id
+        _searchHighlightQuery.value = searchQuery
+        jumpTo(hit.id)
+    }
+
+    /** One step to the next older hit (X3). */
+    fun searchNavOlder() {
+        val next = _searchNavIndex.value + 1
+        if (next < _searchResults.value.size || !_searchExhausted.value) {
+            navigateSearchTo(next)
+        }
+    }
+
+    /** One step back to the next newer hit (X3). */
+    fun searchNavNewer() {
+        val prev = _searchNavIndex.value - 1
+        if (prev >= 0) navigateSearchTo(prev)
+    }
+
+    /** The search UI closed (X3): drop the highlight and the
+     *  navigation cursor; results themselves stay cached
+     *  until the next fresh search replaces them. */
+    fun clearSearchNav() {
+        _searchNavIndex.value = -1
+        searchPendingNav = -1
+        _searchHighlightId.value = 0L
+        _searchHighlightQuery.value = ""
     }
 
     /** Replace the loaded history with the window around
@@ -1144,6 +1265,9 @@ object MessageStore {
         clearReplyTarget()
         _searchResults.value = emptyList()
         _searchExhausted.value = true
+        _searchTotal.value = -1
+        _searchFilter.value = ChatSearchFilter.ALL
+        clearSearchNav()
         _pinnedMessages.value = emptyList()
         _replyKb.value = ReplyKb.Hidden
         searchQuery = ""

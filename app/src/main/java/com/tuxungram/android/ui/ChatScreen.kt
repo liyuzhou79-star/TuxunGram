@@ -61,6 +61,8 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -367,9 +369,22 @@ fun ChatScreen(
         ForumStore.checkForum(chatId)
     }
     var pendingDelete by remember { mutableStateOf<List<MsgItem>?>(null) }
-    // Full-screen photo viewer (v0.7.0, F2): the photo message
-    // id the viewer opens at; null = closed.
-    var viewerId by remember { mutableStateOf<Long?>(null) }
+    // Full-screen media viewer (v0.7.0, F2; whole-chat
+    // context v0.9.31, X2): the tapped message the viewer
+    // opens on, with its album group when it belongs to
+    // one; null anchor = closed.
+    var viewerAnchor by remember { mutableStateOf<MsgItem?>(null) }
+    var viewerGroup by remember {
+        mutableStateOf<List<MsgItem>>(emptyList())
+    }
+    fun openInViewer(m: MsgItem) {
+        viewerGroup = if (m.mediaAlbumId != 0L) {
+            messages.filter { it.mediaAlbumId == m.mediaAlbumId }
+        } else {
+            emptyList()
+        }
+        viewerAnchor = m
+    }
     // In-app video player target (v0.9.1, J3).
     var videoItem by remember { mutableStateOf<MsgItem?>(null) }
     var input by remember { mutableStateOf("") }
@@ -663,8 +678,20 @@ fun ChatScreen(
     }
     var chatSearchOpen by remember { mutableStateOf(false) }
     var chatSearchQuery by remember { mutableStateOf("") }
+    // Results list collapse (v0.9.31, X3): tapping a hit
+    // navigates to it and folds the list away so the chat
+    // (and the nav bar) stay usable; a fresh search or a
+    // filter change unfolds it again.
+    var searchListCollapsed by remember { mutableStateOf(false) }
     val chatSearchResults by MessageStore.searchResults.collectAsState()
     val chatSearchExhausted by MessageStore.searchExhausted.collectAsState()
+    // Search navigation + highlight state (v0.9.31, X3).
+    val searchTotal by MessageStore.searchTotal.collectAsState()
+    val searchFilter by MessageStore.searchFilter.collectAsState()
+    val searchNavIndex by MessageStore.searchNavIndex.collectAsState()
+    val searchHighlightId by MessageStore.searchHighlightId.collectAsState()
+    val searchHighlightQuery by
+        MessageStore.searchHighlightQuery.collectAsState()
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -1256,7 +1283,12 @@ fun ChatScreen(
                 }
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { chatSearchOpen = !chatSearchOpen }) {
+            IconButton(onClick = {
+                chatSearchOpen = !chatSearchOpen
+                // Closing the search drops its navigation
+                // cursor and highlight (v0.9.31, X3).
+                if (!chatSearchOpen) MessageStore.clearSearchNav()
+            }) {
                 Icon(
                     SearchIcon, contentDescription = "搜索聊天记录",
                     tint = headerPalette.actionBarIcon
@@ -1397,12 +1429,120 @@ fun ChatScreen(
                     modifier = Modifier.weight(1f)
                 )
                 TextButton(onClick = {
+                    searchListCollapsed = false
                     MessageStore.searchInChat(chatSearchQuery)
                 }) {
                     Text("搜索")
                 }
             }
+            // Type filter row (v0.9.31, X3): re-runs the
+            // current query under the picked SearchMessages
+            // Filter; an empty query just records the filter
+            // for the next search.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                for (f in com.tuxungram.android.td.ChatSearchFilter
+                    .entries) {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                if (searchFilter == f) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme
+                                        .surfaceVariant
+                                },
+                                RoundedCornerShape(50)
+                            )
+                            .clickable {
+                                searchListCollapsed = false
+                                MessageStore.searchInChat(
+                                    chatSearchQuery, filter = f
+                                )
+                            }
+                            .padding(horizontal = 12.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            f.label, fontSize = 12.5.sp,
+                            color = if (searchFilter == f) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme
+                                    .onSurfaceVariant
+                            }
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+            }
             if (chatSearchResults.isNotEmpty()) {
+                // Result navigation bar (v0.9.31, X3): which
+                // hit we're on out of how many, with prev /
+                // next stepping through the hits in the chat
+                // window itself (the hit's query highlights
+                // in its bubble).
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (searchNavIndex >= 0) {
+                            "第 ${searchNavIndex + 1} 个 / 共 " +
+                                (if (searchTotal > 0) {
+                                    "$searchTotal"
+                                } else {
+                                    "${chatSearchResults.size}" +
+                                        if (chatSearchExhausted) {
+                                            ""
+                                        } else {
+                                            "+"
+                                        }
+                                }) + " 个结果"
+                        } else {
+                            "共 ${chatSearchResults.size} 个结果"
+                        },
+                        fontSize = 12.5.sp, color = Color.Gray
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (searchListCollapsed) {
+                        TextButton(onClick = {
+                            searchListCollapsed = false
+                        }) {
+                            Text("结果列表", fontSize = 12.5.sp)
+                        }
+                    }
+                    IconButton(
+                        onClick = { MessageStore.searchNavNewer() },
+                        enabled = searchNavIndex > 0
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowUp,
+                            contentDescription = "上一个结果"
+                        )
+                    }
+                    IconButton(
+                        onClick = { MessageStore.searchNavOlder() },
+                        enabled = searchNavIndex >= 0 &&
+                            (searchNavIndex <
+                                chatSearchResults.size - 1 ||
+                                !chatSearchExhausted)
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = "下一个结果"
+                        )
+                    }
+                }
+            }
+            if (chatSearchResults.isNotEmpty() &&
+                !searchListCollapsed
+            ) {
                 val chatSearchListState = rememberLazyListState()
                 LazyColumn(
                     state = chatSearchListState,
@@ -1420,8 +1560,17 @@ fun ChatScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    chatSearchOpen = false
-                                    MessageStore.jumpTo(hit.id)
+                                    // Navigate (v0.9.31, X3):
+                                    // the hit becomes the nav
+                                    // cursor with its query
+                                    // highlighted, and the list
+                                    // folds away; the search
+                                    // bar and nav row stay for
+                                    // further stepping.
+                                    MessageStore.navigateSearchTo(
+                                        chatSearchResults.indexOf(hit)
+                                    )
+                                    searchListCollapsed = true
                                 }
                                 .padding(horizontal = 16.dp, vertical = 7.dp)
                         ) {
@@ -2114,8 +2263,8 @@ fun ChatScreen(
                         AlbumBubble(
                             items = albumRun,
                             isGroup = chat?.isGroup == true,
-                            onOpenPhoto = { m -> viewerId = m.id },
-                            onOpenVideo = { m -> videoItem = m },
+                            onOpenPhoto = { m -> openInViewer(m) },
+                            onOpenVideo = { m -> openInViewer(m) },
                             onReply = { m ->
                                 MessageStore.setReplyTarget(m)
                             },
@@ -2154,8 +2303,8 @@ fun ChatScreen(
                         onEnterSelection = { m ->
                             selectedIds = setOf(m.id)
                         },
-                        onOpenPhoto = { m -> viewerId = m.id },
-                        onOpenVideo = { m -> videoItem = m },
+                        onOpenPhoto = { m -> openInViewer(m) },
+                        onOpenVideo = { m -> openInViewer(m) },
                         canComment = chat?.isChannel == true &&
                             linkedChatId != 0L && msg.isChannelPost,
                         onOpenThread = { m -> onOpenThread(m.id) },
@@ -2170,7 +2319,13 @@ fun ChatScreen(
                         },
                         animEffect = animEffect?.takeIf {
                             it.messageId == msg.id
-                        }
+                        },
+                        highlightQuery =
+                            if (msg.id == searchHighlightId) {
+                                searchHighlightQuery
+                            } else {
+                                ""
+                            }
                     )
                     }
                 }
@@ -3580,11 +3735,14 @@ fun ChatScreen(
                 onDone = { effectPlay = null }
             )
         }
-        val vid = viewerId
-        if (vid != null) {
+        val anchor = viewerAnchor
+        if (anchor != null) {
             MediaViewerScreen(
-                initialId = vid,
-                onClose = { viewerId = null }
+                chatId = chatId,
+                anchor = anchor,
+                albumGroup = viewerGroup,
+                onClose = { viewerAnchor = null },
+                onPlayVideo = { m -> videoItem = m }
             )
         }
         val vItem = videoItem
@@ -4380,7 +4538,11 @@ fun MessageBubble(
     showTail: Boolean = false,
     // Animated-emoji click effect for THIS message, when
     // one is playing (v0.9.16, W4).
-    animEffect: AnimEffect? = null
+    animEffect: AnimEffect? = null,
+    // In-chat search highlight (v0.9.31, X3): non-empty only
+    // on the message the search navigation currently sits
+    // on; forwarded to every RichMessageText in the bubble.
+    highlightQuery: String = ""
 ) {
     val outgoing = msg.outgoing
     val context = LocalContext.current
@@ -4567,12 +4729,14 @@ fun MessageBubble(
                             } else if (msg.kind == MsgKind.PHOTO) {
                                 // Full-screen viewer (v0.7.0, F2).
                                 onOpenPhoto(msg)
-                            } else if (msg.kind == MsgKind.VIDEO &&
-                                msg.filePath != null
-                            ) {
-                                // In-app player (v0.9.1, J3); an
-                                // undownloaded video falls through
-                                // to the download branch below.
+                            } else if (msg.kind == MsgKind.VIDEO) {
+                                // Media viewer (v0.9.31, X2):
+                                // a video opens the viewer on
+                                // its page like a photo does;
+                                // the page itself offers the
+                                // download when the file is not
+                                // on disk yet, and playback when
+                                // it is.
                                 onOpenVideo(msg)
                             } else if (msg.kind == MsgKind.VIDEO_NOTE) {
                                 // Round video (v0.9.14, U4):
@@ -4707,6 +4871,7 @@ fun MessageBubble(
                         RichMessageText(
                             msg,
                             onBotCommand = { MessageStore.sendText(it) },
+                            highlightQuery = highlightQuery,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn
                         )
@@ -4737,6 +4902,7 @@ fun MessageBubble(
                             RichMessageText(
                                 msg,
                                 onBotCommand = { MessageStore.sendText(it) },
+                                highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn
                             )
@@ -4777,6 +4943,7 @@ fun MessageBubble(
                             RichMessageText(
                                 msg,
                                 onBotCommand = { MessageStore.sendText(it) },
+                                highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn
                             )
@@ -4789,6 +4956,7 @@ fun MessageBubble(
                             RichMessageText(
                                 msg,
                                 onBotCommand = { MessageStore.sendText(it) },
+                                highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn
                             )
@@ -4801,6 +4969,7 @@ fun MessageBubble(
                             RichMessageText(
                                 msg,
                                 onBotCommand = { MessageStore.sendText(it) },
+                                highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn
                             )
@@ -5537,10 +5706,11 @@ fun MessageBubble(
  *  media_album_id run — a 2-column grid of photo/video
  *  cells, the album caption (the first non-empty item text)
  *  under it, and the LAST item's time/read state as the
- *  footer. Tapping a photo opens the full-screen viewer on
- *  that item (which pages through the chat's photos);
- *  tapping a video plays it when downloaded, otherwise
- *  starts the download. The long-press menu is the basic
+ *  footer. Tapping a photo or a video opens the full-screen
+ *  viewer on that item (v0.9.31, X2: the viewer pages
+ *  through the whole chat's media, album group first; a
+ *  video page offers download / playback itself). The
+ *  long-press menu is the basic
  *  set: reply (anchored at the first item), forward and
  *  delete act on the whole album. Selection mode does not
  *  cover album rows in this version. */
@@ -5839,6 +6009,10 @@ fun AlbumCell(
             .clickable {
                 when {
                     item.kind == MsgKind.PHOTO -> onOpenPhoto(item)
+                    // Viewer (v0.9.31, X2): album videos open
+                    // the viewer on their page too; the page
+                    // itself handles download / play.
+                    item.kind == MsgKind.VIDEO -> onOpenVideo(item)
                     item.filePath != null -> onOpenVideo(item)
                     else -> MessageStore.downloadFileFor(item)
                 }
