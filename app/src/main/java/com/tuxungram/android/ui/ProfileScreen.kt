@@ -1,7 +1,9 @@
 package com.tuxungram.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,13 +15,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -35,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,7 +50,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -55,7 +68,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.td.AdminStore
 import com.tuxungram.android.td.AppLock
+import com.tuxungram.android.td.AvatarStore
 import com.tuxungram.android.td.BlockStore
+import com.tuxungram.android.td.ProfilePhotoUi
+import com.tuxungram.android.td.ProfilePhotosStore
 import com.tuxungram.android.td.InviteLinkUi
 import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MeStore
@@ -132,6 +148,42 @@ fun ProfileScreen(
     val me by MeStore.me.collectAsState()
     var blockConfirm by remember { mutableStateOf(false) }
     var blockNotice by remember { mutableStateOf<String?>(null) }
+    // Profile photo wall + viewer (v0.9.12, S3).
+    val profilePhotos by ProfilePhotosStore.state.collectAsState()
+    val photoNotice by ProfilePhotosStore.notice.collectAsState()
+    var photoViewerIndex by remember { mutableStateOf<Int?>(null) }
+    var photoDeleteTarget by remember {
+        mutableStateOf<ProfilePhotoUi?>(null)
+    }
+    // Chat export (v0.9.12, S4): dialog state + the system
+    // save picker that receives the finished temp file.
+    val exportState by com.tuxungram.android.td.ChatExporter.state
+        .collectAsState()
+    var exportDialogOpen by remember { mutableStateOf(false) }
+    var exportAll by remember { mutableStateOf(false) }
+    var exportSavedNotice by remember { mutableStateOf<String?>(null) }
+    val exportSaver = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        val donePath = com.tuxungram.android.td.ChatExporter
+            .state.value.donePath
+        if (uri != null && donePath != null) {
+            Thread {
+                try {
+                    java.io.FileInputStream(File(donePath)).use { input ->
+                        context.contentResolver
+                            .openOutputStream(uri)?.use { output ->
+                                input.copyTo(output)
+                            }
+                    }
+                    exportSavedNotice = "已保存到你选的位置。"
+                } catch (t: Throwable) {
+                    exportSavedNotice = "保存失败，再试一次。"
+                }
+                com.tuxungram.android.td.ChatExporter.reset()
+            }.start()
+        }
+    }
     LaunchedEffect(chatId) {
         ProfileStore.load(chatId)
         AdminStore.loadCaps(chatId)
@@ -159,6 +211,9 @@ fun ProfileScreen(
                 Text("正在加载资料…", color = Color.Gray)
             }
             return@Column
+        }
+        LaunchedEffect(p.userId) {
+            if (p.userId != 0L) ProfilePhotosStore.load(p.userId)
         }
         val profileListState = rememberLazyListState()
         LazyColumn(
@@ -242,6 +297,65 @@ fun ProfileScreen(
                     }
                 }
             }
+            if (p.userId != 0L &&
+                profilePhotos.userId == p.userId &&
+                profilePhotos.loaded &&
+                profilePhotos.photos.isNotEmpty()
+            ) {
+                item(key = "photo_wall") {
+                    // Profile photo history (v0.9.12, S3):
+                    // getUserProfilePhotos — user profiles
+                    // only, the tl has no equivalent call for
+                    // group/channel chats.
+                    Column(
+                        modifier = Modifier
+                            .padding(horizontal = 20.dp)
+                    ) {
+                        Row(
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                ImageIcon, contentDescription = null,
+                                tint = Color.Gray,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (profilePhotos.totalCount >
+                                    profilePhotos.photos.size
+                                ) {
+                                    "历史头像（最近 " +
+                                        "${profilePhotos.photos.size} 张，" +
+                                        "共 ${profilePhotos.totalCount} 张）"
+                                } else {
+                                    "历史头像（${profilePhotos.totalCount} 张）"
+                                },
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.Gray
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        LazyRow(
+                            horizontalArrangement =
+                                Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(
+                                count = profilePhotos.photos.size,
+                                key = { idx ->
+                                    profilePhotos.photos[idx].id
+                                }
+                            ) { idx ->
+                                ProfilePhotoThumb(
+                                    photo = profilePhotos.photos[idx]
+                                ) { photoViewerIndex = idx }
+                            }
+                        }
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
             item(key = "shared_media") {
                 // Shared media (v0.9.3, M4): photos / videos /
                 // files / links of this chat on their own page.
@@ -266,6 +380,40 @@ fun ProfileScreen(
                     )
                     Text(
                         "图片 · 视频 · 文件 · 链接",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                    Icon(
+                        Icons.Filled.KeyboardArrowRight,
+                        contentDescription = null, tint = Color.Gray,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
+            item(key = "export") {
+                // Chat export (v0.9.12, S4): text-only .txt
+                // via ChatExporter; the dialog lives at the
+                // bottom of this screen.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { exportDialogOpen = true }
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        DownloadIcon, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(21.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        "导出聊天记录",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "存成文本文件",
                         color = Color.Gray, fontSize = 13.sp
                     )
                     Icon(
@@ -880,6 +1028,278 @@ fun ProfileScreen(
             }
         )
     }
+    // Chat export dialog (v0.9.12, S4): range choice, then
+    // live progress from ChatExporter, then hand the temp
+    // file to the system save picker.
+    if (exportDialogOpen) {
+        val es = exportState
+        AlertDialog(
+            onDismissRequest = {
+                if (!es.running) {
+                    exportDialogOpen = false
+                    exportSavedNotice = null
+                    com.tuxungram.android.td.ChatExporter.reset()
+                }
+            },
+            title = { Text("导出聊天记录") },
+            text = {
+                Column {
+                    when {
+                        es.running -> {
+                            Text(
+                                "正在拉取历史记录，已拿到 ${es.count} 条…"
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "消息多的群拉全部记录要花点时间，可以随时取消，取消不会生成文件。",
+                                color = Color.Gray, fontSize = 12.5.sp
+                            )
+                        }
+                        es.donePath != null -> Text(
+                            "导出完成，共 ${es.doneCount} 条。" +
+                                "点「保存到…」选个位置把它存下来。"
+                        )
+                        es.error != null -> Text(es.error!!)
+                        exportSavedNotice != null ->
+                            Text(exportSavedNotice!!)
+                        else -> {
+                            Text(
+                                "把这个对话的文字记录存成一个 .txt 文件：" +
+                                    "每条一行，带时间和发送者。" +
+                                    "图片、视频、文件只留一行占位说明，不导文件本身。"
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportAll = false }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment =
+                                    Alignment.CenterVertically
+                            ) {
+                                RadioText(!exportAll, "最近 1000 条")
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportAll = true }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment =
+                                    Alignment.CenterVertically
+                            ) {
+                                RadioText(exportAll, "全部记录")
+                            }
+                            if (exportAll) {
+                                Text(
+                                    "全部记录：消息特别多的群可能要几分钟，期间请别关 App。",
+                                    color = Color.Gray,
+                                    fontSize = 12.5.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                when {
+                    es.running -> TextButton(onClick = {
+                        com.tuxungram.android.td.ChatExporter.cancel()
+                    }) { Text("取消导出") }
+                    es.donePath != null -> TextButton(onClick = {
+                        exportSaver.launch(
+                            exportFileName(current?.title ?: "")
+                        )
+                    }) { Text("保存到…") }
+                    es.error != null ||
+                        exportSavedNotice != null -> TextButton(
+                        onClick = {
+                            exportDialogOpen = false
+                            exportSavedNotice = null
+                            com.tuxungram.android.td.ChatExporter
+                                .reset()
+                        }
+                    ) { Text("关闭") }
+                    else -> TextButton(onClick = {
+                        val cid = current?.chatId
+                            ?: return@TextButton
+                        com.tuxungram.android.td.ChatExporter.start(
+                            context, cid, current?.title ?: "",
+                            if (exportAll) 0 else 1000
+                        )
+                    }) { Text("开始导出") }
+                }
+            },
+            dismissButton = {
+                if (!es.running && es.donePath == null) {
+                    TextButton(onClick = {
+                        exportDialogOpen = false
+                        exportSavedNotice = null
+                        com.tuxungram.android.td.ChatExporter.reset()
+                    }) { Text("取消") }
+                }
+            }
+        )
+    }
+    // Photo viewer (v0.9.12, S3): full-screen pager over the
+    // profile-photo history. On your own profile each page
+    // offers delete (deleteProfilePhoto); the viewer closes
+    // after a delete and the wall reloads underneath.
+    val viewerIndex = photoViewerIndex
+    if (viewerIndex != null && profilePhotos.loaded &&
+        profilePhotos.photos.isNotEmpty() &&
+        profilePhotos.userId != 0L &&
+        profilePhotos.userId == current?.userId
+    ) {
+        Dialog(
+            onDismissRequest = { photoViewerIndex = null },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false
+            )
+        ) {
+            val pagerState = rememberPagerState(
+                initialPage = viewerIndex.coerceIn(
+                    0, profilePhotos.photos.lastIndex
+                )
+            ) { profilePhotos.photos.size }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            ) {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
+                    val photo = profilePhotos.photos[page]
+                    LaunchedEffect(page) {
+                        ProfilePhotosStore.ensureFull(photo)
+                    }
+                    val fullPath =
+                        AvatarStore.pathForFile(photo.fullFileId)
+                            ?: AvatarStore.pathForFile(
+                                photo.thumbFileId
+                            )
+                    val bitmap by produceState<
+                        android.graphics.Bitmap?
+                    >(null, fullPath) {
+                        value = fullPath?.let {
+                            kotlinx.coroutines.withContext(
+                                kotlinx.coroutines.Dispatchers.IO
+                            ) { decodeCached(it, 1600) }
+                        }
+                    }
+                    val bmp = bitmap
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        photoViewerIndex = null
+                    }) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "关闭",
+                            tint = Color.White
+                        )
+                    }
+                    val currentPhoto = profilePhotos.photos[
+                        pagerState.currentPage.coerceIn(
+                            0, profilePhotos.photos.lastIndex
+                        )
+                    ]
+                    Column {
+                        Text(
+                            "${pagerState.currentPage + 1} / " +
+                                "${profilePhotos.photos.size}",
+                            color = Color.White, fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (currentPhoto.addedDate > 0) {
+                            Text(
+                                java.text.SimpleDateFormat(
+                                    "yyyy年M月d日",
+                                    java.util.Locale.getDefault()
+                                ).format(
+                                    currentPhoto.addedDate * 1000L
+                                ),
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (profilePhotos.userId == me.id) {
+                        IconButton(onClick = {
+                            photoDeleteTarget = currentPhoto
+                        }) {
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = "删除这张头像",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (photoDeleteTarget != null) {
+        AlertDialog(
+            onDismissRequest = { photoDeleteTarget = null },
+            title = { Text("删除这张历史头像？") },
+            text = {
+                Text("删的是服务器上的这张历史头像，删掉就恢复不了了。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = photoDeleteTarget
+                    photoDeleteTarget = null
+                    photoViewerIndex = null
+                    if (target != null) {
+                        ProfilePhotosStore.delete(target)
+                    }
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    photoDeleteTarget = null
+                }) { Text("取消") }
+            }
+        )
+    }
+    if (photoNotice != null) {
+        AlertDialog(
+            onDismissRequest = { ProfilePhotosStore.clearNotice() },
+            title = { Text("历史头像") },
+            text = { Text(photoNotice!!) },
+            confirmButton = {
+                TextButton(onClick = {
+                    ProfilePhotosStore.clearNotice()
+                }) { Text("知道了") }
+            }
+        )
+    }
     if (blockConfirm && current != null && current.userId != 0L) {
         AlertDialog(
             onDismissRequest = { blockConfirm = false },
@@ -987,4 +1407,64 @@ fun ProfileScreen(
             }
         )
     }
+}
+
+/** One thumbnail of the profile photo wall (v0.9.12, S3):
+ *  the smallest photoSize, decoded through the shared cache;
+ *  an image glyph stands in until the file lands. */
+@Composable
+private fun ProfilePhotoThumb(
+    photo: ProfilePhotoUi,
+    onClick: () -> Unit
+) {
+    val path = AvatarStore.pathForFile(photo.thumbFileId)
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        null, path
+    ) {
+        value = path?.let {
+            kotlinx.coroutines.withContext(
+                kotlinx.coroutines.Dispatchers.IO
+            ) { decodeCached(it, 192) }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(64.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Icon(
+                ImageIcon, contentDescription = null,
+                tint = Color.Gray, modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+/** Suggested save-picker name for a chat export (v0.9.12,
+ *  S4): the chat title with filesystem-hostile characters
+ *  folded to underscores. */
+private fun exportFileName(title: String): String {
+    val cleaned = buildString {
+        for (ch in title) {
+            if (ch.isLetterOrDigit() || ch == '-' || ch == '_') {
+                append(ch)
+            } else {
+                append('_')
+            }
+        }
+    }.trim('_').take(40)
+    val base = if (cleaned.isEmpty()) "对话" else cleaned
+    return "聊天记录-$base.txt"
 }
