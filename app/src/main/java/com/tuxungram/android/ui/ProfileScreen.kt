@@ -92,7 +92,8 @@ fun ProfileScreen(
     onOpenSecretChat: (Long) -> Unit = {},
     onOpenMembers: () -> Unit = {},
     onOpenSharedMedia: () -> Unit = {},
-    onOpenGroupSettings: () -> Unit = {}
+    onOpenGroupSettings: () -> Unit = {},
+    onOpenStats: () -> Unit = {}
 ) {
     BackHandler { onBack() }
     val profile by ProfileStore.profile.collectAsState()
@@ -167,6 +168,9 @@ fun ProfileScreen(
     // Per-chat theme (v0.9.12, S6).
     var themeDialogOpen by remember { mutableStateOf(false) }
     var themeNotice by remember { mutableStateOf<String?>(null) }
+    // Message auto-delete for regular chats (v0.9.13, T3).
+    var autoDeleteDialogOpen by remember { mutableStateOf(false) }
+    var autoDeleteNotice by remember { mutableStateOf<String?>(null) }
     val applyTheme: (String?) -> Unit = { emoji ->
         themeDialogOpen = false
         val query = TdClient.request("setChatTheme").apply {
@@ -454,6 +458,66 @@ fun ProfileScreen(
                         contentDescription = null, tint = Color.Gray,
                         modifier = Modifier.size(19.dp)
                     )
+                }
+            }
+            if (!p.isSecretChat) {
+                item(key = "auto_delete") {
+                    // Message auto-delete (v0.9.13, T3): the
+                    // chat-wide timer for regular chats; secret
+                    // chats keep their own finer-grained picker
+                    // inside the encryption section below. The
+                    // value shown is the one the last getChat
+                    // reported, so what another client set is
+                    // echoed faithfully too.
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { autoDeleteDialogOpen = true }
+                                .padding(
+                                    horizontal = 20.dp, vertical = 12.dp
+                                ),
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                ClockIcon,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme
+                                    .primary,
+                                modifier = Modifier.size(21.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                "消息自动删除",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                ProfileStore.autoDeleteLabel(
+                                    p.autoDeleteSeconds
+                                ),
+                                color = Color.Gray, fontSize = 14.sp
+                            )
+                            Icon(
+                                Icons.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = Color.Gray,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        if (autoDeleteNotice != null) {
+                            Text(
+                                autoDeleteNotice!!,
+                                color = Color.Gray, fontSize = 12.5.sp,
+                                modifier = Modifier.padding(
+                                    start = 20.dp, end = 20.dp,
+                                    bottom = 8.dp
+                                )
+                            )
+                        }
+                    }
                 }
             }
             if (p.userId != 0L) {
@@ -767,6 +831,30 @@ fun ProfileScreen(
                                 Text("群权限与慢速模式")
                             }
                         }
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
+            if (p.canGetStatistics) {
+                // Statistics entry (v0.9.13, T2): shown only
+                // when the chat's FullInfo says statistics can
+                // be received for it (an admin-scale supergroup
+                // or channel); the page itself translates a
+                // server refusal into plain language.
+                item(key = "stats") {
+                    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                        TextButton(onClick = { onOpenStats() }) {
+                            Icon(
+                                PollIcon, contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text("查看统计")
+                        }
+                        Text(
+                            "成员、消息、浏览这些数字，和官方客户端里看到的是同一份服务器统计。",
+                            fontSize = 12.sp, color = Color.Gray
+                        )
                         Spacer(Modifier.height(16.dp))
                     }
                 }
@@ -1167,6 +1255,74 @@ fun ProfileScreen(
             dismissButton = {
                 TextButton(onClick = {
                     themeDialogOpen = false
+                }) { Text("取消") }
+            }
+        )
+    }
+    // Auto-delete dialog (v0.9.13, T3): the regular-chat
+    // presets; a current value outside the presets (set
+    // from another client) is listed first so it stays
+    // visible and selectable-as-is.
+    if (autoDeleteDialogOpen) {
+        val current = profile?.autoDeleteSeconds ?: 0
+        val presets = listOf(0, 86400, 604800, 2592000)
+        AlertDialog(
+            onDismissRequest = { autoDeleteDialogOpen = false },
+            title = { Text("消息自动删除") },
+            text = {
+                Column {
+                    Text(
+                        "打开后，这个对话里新发的消息过一段时间会被自动删掉，双方都删。群里改这一项需要管理员权限。",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    if (current !in presets) {
+                        Row(
+                            verticalAlignment =
+                                Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 9.dp)
+                        ) {
+                            RadioText(
+                                true,
+                                "当前：${ProfileStore.autoDeleteLabel(current)}" +
+                                    "（在别的客户端设的）"
+                            )
+                        }
+                    }
+                    for (option in presets) {
+                        Row(
+                            verticalAlignment =
+                                Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    autoDeleteDialogOpen = false
+                                    ProfileStore.setAutoDeleteTime(
+                                        chatId, option
+                                    ) { _, text ->
+                                        autoDeleteNotice = text
+                                    }
+                                }
+                                .padding(vertical = 9.dp)
+                        ) {
+                            RadioText(
+                                current == option,
+                                if (option == 0) {
+                                    "关闭"
+                                } else {
+                                    "${ProfileStore.autoDeleteLabel(option)}后删除"
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = {
+                    autoDeleteDialogOpen = false
                 }) { Text("取消") }
             }
         )

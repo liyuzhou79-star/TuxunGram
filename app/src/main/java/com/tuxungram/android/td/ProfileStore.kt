@@ -82,7 +82,11 @@ data class ProfileUi(
      *  the chat carries no emoji theme. Gift themes set
      *  [themeIsGift] instead — they are not picked here. */
     val themeName: String = "",
-    val themeIsGift: Boolean = false
+    val themeIsGift: Boolean = false,
+    /** supergroupFullInfo.can_get_statistics (v0.9.13, T2):
+     *  TDLib's own signal that getChatStatistics can answer
+     *  for this chat; gates the profile page's 统计 entry. */
+    val canGetStatistics: Boolean = false
 )
 
 /**
@@ -112,6 +116,7 @@ object ProfileStore {
     private var currentIsSupergroup = false
     private var currentThemeName = ""
     private var currentThemeIsGift = false
+    private var currentCanStats = false
     private var supergroupId = 0L
     private var memberOffset = 0
     private var membersLoading = false
@@ -140,6 +145,7 @@ object ProfileStore {
         currentIsSupergroup = false
         currentThemeName = ""
         currentThemeIsGift = false
+        currentCanStats = false
         supergroupId = 0L
         memberOffset = 0
         membersLoading = false
@@ -227,7 +233,8 @@ object ProfileStore {
             slowModeDelay = currentSlowMode,
             isSupergroup = currentIsSupergroup,
             themeName = currentThemeName,
-            themeIsGift = currentThemeIsGift
+            themeIsGift = currentThemeIsGift,
+            canGetStatistics = currentCanStats
         )
     }
 
@@ -324,6 +331,7 @@ object ProfileStore {
             currentInviteLink = full.optJSONObject("invite_link")
                 ?.optString("invite_link") ?: ""
             currentIsSupergroup = true
+            currentCanStats = full.optBoolean("can_get_statistics")
             currentSlowMode = full.optInt("slow_mode_delay")
             val memberCount = full.optInt("member_count")
             val adminCount = full.optInt("administrator_count")
@@ -387,6 +395,67 @@ object ProfileStore {
                 membersExhausted = added == 0 ||
                     memberSnapshot().size >= total
             )
+        }
+    }
+
+    /** Change the chat's message auto-delete time
+     *  (setChatMessageAutoDeleteTime, v0.9.13 T3 — the same
+     *  call secret chats use for their self-destruct timer,
+     *  here for every chat type). On success the profile is
+     *  reloaded so the row echoes the value the server
+     *  actually holds (chat.message_auto_delete_time), never
+     *  just the value that was asked for. A refusal — in a
+     *  group this needs administrator rights — is translated
+     *  into plain language. */
+    fun setAutoDeleteTime(
+        chatId: Long,
+        seconds: Int,
+        onDone: (Boolean, String) -> Unit
+    ) {
+        val query = TdClient.request("setChatMessageAutoDeleteTime").apply {
+            put("chat_id", chatId)
+            put("message_auto_delete_time", seconds)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                val message = response.optString("message")
+                onDone(
+                    false,
+                    when {
+                        message.contains("ADMIN", ignoreCase = true) ||
+                            message.contains("rights", ignoreCase = true) ->
+                            "你没有改这个设置的权限（群里要管理员）。"
+                        else ->
+                            "没改上，再试一次。（错误码 ${response.optInt("code")}）"
+                    }
+                )
+            } else {
+                onDone(
+                    true,
+                    if (seconds == 0) {
+                        "自动删除已关闭。"
+                    } else {
+                        "已设为 ${autoDeleteLabel(seconds)}后自动删除。"
+                    }
+                )
+                load(chatId)
+            }
+        }
+    }
+
+    /** Label for an auto-delete duration (v0.9.13, T3): the
+     *  regular-chat presets plus a plain fallback for values
+     *  another client may have set. */
+    fun autoDeleteLabel(seconds: Int): String = when (seconds) {
+        0 -> "关闭"
+        86400 -> "1 天"
+        604800 -> "1 周"
+        2592000 -> "1 个月"
+        else -> when {
+            seconds % 86400 == 0 -> "${seconds / 86400} 天"
+            seconds % 3600 == 0 -> "${seconds / 3600} 小时"
+            seconds % 60 == 0 -> "${seconds / 60} 分钟"
+            else -> "$seconds 秒"
         }
     }
 

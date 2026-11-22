@@ -486,6 +486,10 @@ private sealed interface Route {
         override val depth = 2
     }
 
+    data class Stats(val chatId: Long) : Route {
+        override val depth = 2
+    }
+
     data class Thread(val chatId: Long, val postId: Long) : Route {
         override val depth = 2
     }
@@ -558,6 +562,9 @@ private fun ReadyHost() {
     // Group settings page (v0.9.5, O2): opened from a group
     // profile's 管理 section; Back returns to that profile.
     var groupSettingsChatId by remember { mutableStateOf<Long?>(null) }
+    // Statistics page (v0.9.13, T2): opened from a group or
+    // channel profile; Back returns to that profile.
+    var statsChatId by remember { mutableStateOf<Long?>(null) }
     // Rich-text mention taps (v0.9.2, L1): a mentionName carries
     // the user id (resolve via createPrivateChat), a plain
     // @mention carries the username (resolve via
@@ -659,6 +666,8 @@ private fun ReadyHost() {
         showContacts -> Route.ContactsOverlay
         groupSettingsChatId != null ->
             Route.GroupSettings(groupSettingsChatId!!)
+        statsChatId != null ->
+            Route.Stats(statsChatId!!)
         sharedMediaChatId != null ->
             Route.SharedMedia(sharedMediaChatId!!)
         membersChatId != null -> Route.Members(membersChatId!!)
@@ -775,6 +784,10 @@ private fun ReadyHost() {
                     chatId = r.chatId,
                     onBack = { groupSettingsChatId = null }
                 )
+                is Route.Stats -> StatsScreen(
+                    chatId = r.chatId,
+                    onBack = { statsChatId = null }
+                )
                 is Route.SharedMedia -> SharedMediaScreen(
                     chatId = r.chatId,
                     onBack = { sharedMediaChatId = null }
@@ -794,7 +807,8 @@ private fun ReadyHost() {
                     onOpenSharedMedia = { sharedMediaChatId = r.chatId },
                     onOpenGroupSettings = {
                         groupSettingsChatId = r.chatId
-                    }
+                    },
+                    onOpenStats = { statsChatId = r.chatId }
                 )
                 is Route.Create -> CreateChatScreen(
                     onBack = { showCreate = false },
