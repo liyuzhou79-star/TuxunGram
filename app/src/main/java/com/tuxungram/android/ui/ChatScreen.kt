@@ -118,6 +118,9 @@ import com.tuxungram.android.td.SecretChatStore
 import com.tuxungram.android.td.StickerSetStore
 import com.tuxungram.android.td.TrendingSetUi
 import com.tuxungram.android.td.SendModifiers
+import com.tuxungram.android.td.SuggestStore
+import com.tuxungram.android.td.SuggestUser
+import com.tuxungram.android.td.TextEntityUi
 import com.tuxungram.android.td.AvatarStore
 import com.tuxungram.android.td.BotStore
 import com.tuxungram.android.td.InlineResultUi
@@ -159,6 +162,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import java.io.File
@@ -230,6 +234,19 @@ fun dayKey(dateSeconds: Int): Int {
         cal.get(java.util.Calendar.DAY_OF_YEAR)
 }
 
+/** A username-less mention inserted from the @ panel
+ *  (v0.9.15, V6): the display name sits at [start, start +
+ *  length) in the raw input and becomes a
+ *  textEntityTypeMentionName entity for [userId] at send
+ *  time (remapped through the markdown parser). Dropped as
+ *  soon as the input no longer matches at that range. */
+data class ForcedMention(
+    val start: Int,
+    val length: Int,
+    val name: String,
+    val userId: Long
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(
@@ -280,6 +297,80 @@ fun ChatScreen(
     // In-app video player target (v0.9.1, J3).
     var videoItem by remember { mutableStateOf<MsgItem?>(null) }
     var input by remember { mutableStateOf("") }
+    // @ / # input suggestions (v0.9.15, V6): the fragment at
+    // the END of the input drives SuggestStore (the input is
+    // a plain string with no cursor tracking, so detection is
+    // end-of-input only). Members without a username are
+    // inserted as their display name plus a forced
+    // mentionName entity, validated against the input on
+    // every change and remapped by the markdown parser at
+    // send time.
+    var suggestKind by remember { mutableStateOf("") }
+    var suggestFragment by remember { mutableStateOf("") }
+    var forcedMentions by remember {
+        mutableStateOf<List<ForcedMention>>(emptyList())
+    }
+    val mentionResults by SuggestStore.mentionResults.collectAsState()
+    val hashtagResults by SuggestStore.hashtagResults.collectAsState()
+    val suggestActive = when (suggestKind) {
+        "mention" -> mentionResults.isNotEmpty()
+        "hashtag" -> hashtagResults.isNotEmpty()
+        else -> false
+    }
+
+    /** Forced mention entities for [raw] (the untrimmed
+     *  input), shifted into the trimmed send text's
+     *  coordinates. */
+    fun mentionExtrasFor(raw: String): List<TextEntityUi> {
+        val shift = raw.length - raw.trimStart().length
+        return forcedMentions
+            .filter { it.start >= shift }
+            .map {
+                TextEntityUi(
+                    offset = it.start - shift,
+                    length = it.length,
+                    kind = "mentionName",
+                    userId = it.userId
+                )
+            }
+    }
+
+    LaunchedEffect(input, chatId) {
+        // A forced mention survives only while its name still
+        // sits at its recorded range.
+        if (forcedMentions.isNotEmpty()) {
+            forcedMentions = forcedMentions.filter { fm ->
+                fm.start >= 0 &&
+                    fm.start + fm.length <= input.length &&
+                    input.regionMatches(fm.start, fm.name, 0, fm.length)
+            }
+        }
+        val mentionMatch =
+            Regex("(?:^|\\s)@([A-Za-z0-9_]{0,32})$").find(input)
+        val hashtagMatch =
+            Regex("(?:^|\\s)#([\\p{L}\\p{N}_]{0,64})$").find(input)
+        when {
+            mentionMatch != null && chat?.isGroup == true -> {
+                suggestKind = "mention"
+                suggestFragment = mentionMatch.groupValues[1]
+                delay(300)
+                SuggestStore.searchMentions(
+                    chatId, suggestFragment
+                )
+            }
+            hashtagMatch != null -> {
+                suggestKind = "hashtag"
+                suggestFragment = hashtagMatch.groupValues[1]
+                delay(300)
+                SuggestStore.searchHashtags(suggestFragment)
+            }
+            else -> {
+                suggestKind = ""
+                suggestFragment = ""
+                SuggestStore.clear()
+            }
+        }
+    }
     // Send-button long-press menu (v0.9.3, M5): silent and
     // scheduled sending.
     var sendMenuOpen by remember { mutableStateOf(false) }
@@ -1948,7 +2039,8 @@ fun ChatScreen(
                     }
                 }
                 AnimatedVisibility(
-                    visible = slashMatches.isNotEmpty() && !inlineActive,
+                    visible = slashMatches.isNotEmpty() && !inlineActive &&
+                        suggestKind.isEmpty(),
                     enter = expandVertically(
                         Motion.tween(180),
                         expandFrom = Alignment.Bottom
@@ -2004,13 +2096,136 @@ fun ChatScreen(
                         }
                     }
                 }
+                // @ / # suggestion panel (v0.9.15, V6): the
+                // same above-input slot as the inline and slash
+                // panels; all of them plus this reply keyboard
+                // stay mutually exclusive.
+                if (suggestActive && slashMatches.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 216.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        if (suggestKind == "mention") {
+                            for (user in mentionResults) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            val base = input.dropLast(
+                                                suggestFragment.length + 1
+                                            )
+                                            if (user.username
+                                                    .isNotEmpty()
+                                            ) {
+                                                input = base + "@" +
+                                                    user.username + " "
+                                            } else if (user.name
+                                                    .isNotEmpty()
+                                            ) {
+                                                forcedMentions =
+                                                    forcedMentions +
+                                                    ForcedMention(
+                                                        start =
+                                                            base.length,
+                                                        length =
+                                                            user.name
+                                                                .length,
+                                                        name = user.name,
+                                                        userId =
+                                                            user.userId
+                                                    )
+                                                input = base +
+                                                    user.name + " "
+                                            }
+                                            suggestKind = ""
+                                            SuggestStore.clear()
+                                        }
+                                        .padding(
+                                            horizontal = 8.dp,
+                                            vertical = 8.dp
+                                        ),
+                                    verticalAlignment =
+                                        Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .background(
+                                                Color(0xFF5B7C99),
+                                                CircleShape
+                                            ),
+                                        contentAlignment =
+                                            Alignment.Center
+                                    ) {
+                                        Text(
+                                            user.name.trim()
+                                                .firstOrNull()
+                                                ?.toString() ?: "?",
+                                            color = Color.White,
+                                            fontSize = 14.sp,
+                                            fontWeight =
+                                                FontWeight.Bold
+                                        )
+                                    }
+                                    Spacer(Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            user.name,
+                                            fontSize = 14.sp,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            if (user.username
+                                                    .isNotEmpty()
+                                            ) {
+                                                "@${user.username}"
+                                            } else {
+                                                "没有用户名，将以名字提及"
+                                            },
+                                            color = Color.Gray,
+                                            fontSize = 12.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            for (tag in hashtagResults) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            input = input.dropLast(
+                                                suggestFragment.length +
+                                                    1
+                                            ) + "#" + tag + " "
+                                            suggestKind = ""
+                                            SuggestStore.clear()
+                                        }
+                                        .padding(
+                                            horizontal = 8.dp,
+                                            vertical = 10.dp
+                                        ),
+                                    verticalAlignment =
+                                        Alignment.CenterVertically
+                                ) {
+                                    Text("#$tag", fontSize = 14.sp)
+                                }
+                            }
+                        }
+                    }
+                }
                 // Reply keyboard grid: rows straight from the
                 // markup; a text button sends its label as a
                 // message, other button types render disabled.
                 AnimatedVisibility(
                     visible = kb is ReplyKb.Shown &&
                         kbDismissedSource != kb.sourceMessageId &&
-                        !inlineActive && slashMatches.isEmpty(),
+                        !inlineActive && slashMatches.isEmpty() &&
+                        !suggestActive,
                     enter = expandVertically(
                         Motion.tween(200),
                         expandFrom = Alignment.Bottom
@@ -2389,7 +2604,12 @@ fun ChatScreen(
                                     val text = input.trim()
                                     if (text.isNotEmpty()) {
                                         MessageStore.clearSendError()
-                                        MessageStore.sendText(text)
+                                        MessageStore.sendText(
+                                            text,
+                                            SendModifiers(),
+                                            mentionExtrasFor(input)
+                                        )
+                                        forcedMentions = emptyList()
                                         input = ""
                                     }
                                 },
@@ -2415,7 +2635,11 @@ fun ChatScreen(
                                     val text = input.trim()
                                     if (text.isNotEmpty()) {
                                         MessageStore.clearSendError()
-                                        MessageStore.sendText(text, mods)
+                                        MessageStore.sendText(
+                                            text, mods,
+                                            mentionExtrasFor(input)
+                                        )
+                                        forcedMentions = emptyList()
                                         input = ""
                                     }
                                 },
@@ -2429,8 +2653,10 @@ fun ChatScreen(
                                                 text,
                                                 SendModifiers(
                                                     scheduleAtSec = sec
-                                                )
+                                                ),
+                                                mentionExtrasFor(input)
                                             )
+                                            forcedMentions = emptyList()
                                             input = ""
                                         }
                                     }
