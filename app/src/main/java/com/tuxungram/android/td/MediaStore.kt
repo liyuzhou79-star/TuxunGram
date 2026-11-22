@@ -33,7 +33,18 @@ data class MediaEntry(
     val previewPath: String?,
     val width: Int,
     val height: Int,
-    val durationSec: Int
+    val durationSec: Int,
+    /** Sticker format (v0.9.32, Y1): "webp" (static,
+     *  bitmap-decodable), "tgs" (animated) or "webm"
+     *  (video), from sticker.format. Empty for animations.
+     *  The photo editor bakes a placed sticker from its
+     *  file when webp, and from [thumbFileId] otherwise. */
+    val format: String = "",
+    /** The sticker's static thumbnail file (sticker
+     *  .thumbnail), for formats whose own file no bitmap
+     *  decoder can read. 0 when the sticker has none. */
+    val thumbFileId: Int = 0,
+    val thumbPath: String? = null
 )
 
 /**
@@ -295,8 +306,18 @@ object MediaStore {
     private fun withPaths(list: List<MediaEntry>): List<MediaEntry> =
         list.map { entry ->
             val path = pathByFileId[entry.previewFileId]
-            if (path != null && entry.previewPath == null) {
-                entry.copy(previewPath = path)
+            val thumbPath = if (entry.thumbFileId != 0) {
+                pathByFileId[entry.thumbFileId]
+            } else {
+                null
+            }
+            if ((path != null && entry.previewPath == null) ||
+                (thumbPath != null && entry.thumbPath == null)
+            ) {
+                entry.copy(
+                    previewPath = path ?: entry.previewPath,
+                    thumbPath = thumbPath ?: entry.thumbPath
+                )
             } else {
                 entry
             }
@@ -329,6 +350,31 @@ object MediaStore {
             } else {
                 ensurePreview(fileId)
             }
+            // Format + static thumbnail (Y1): a webp sticker
+            // file decodes directly; tgs/webm files do not,
+            // so the editor needs the thumbnail's file too.
+            val format = when (
+                sticker.optJSONObject("format")?.optString("@type")
+            ) {
+                "stickerFormatTgs" -> "tgs"
+                "stickerFormatWebm" -> "webm"
+                else -> "webp"
+            }
+            val thumbFile = sticker.optJSONObject("thumbnail")
+                ?.optJSONObject("file")
+            val thumbFileId = thumbFile?.optInt("id", 0) ?: 0
+            if (thumbFileId != 0) {
+                val thumbLocal = thumbFile?.optJSONObject("local")
+                if (thumbLocal?.optBoolean(
+                        "is_downloading_completed"
+                    ) == true
+                ) {
+                    pathByFileId[thumbFileId] =
+                        thumbLocal.optString("path")
+                } else {
+                    ensurePreview(thumbFileId)
+                }
+            }
             out.add(
                 MediaEntry(
                     isAnimation = false,
@@ -338,7 +384,10 @@ object MediaStore {
                     previewPath = pathByFileId[fileId],
                     width = sticker.optInt("width"),
                     height = sticker.optInt("height"),
-                    durationSec = 0
+                    durationSec = 0,
+                    format = format,
+                    thumbFileId = thumbFileId,
+                    thumbPath = pathByFileId[thumbFileId]
                 )
             )
         }

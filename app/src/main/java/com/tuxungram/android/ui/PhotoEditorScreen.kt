@@ -16,7 +16,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -40,7 +46,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +63,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -67,6 +76,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tuxungram.android.td.MediaEntry
+import com.tuxungram.android.td.MediaStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -99,6 +110,26 @@ private data class TextData(
     val sizeFrac: Float
 )
 
+/** One placed sticker (v0.9.32, Y1). [x]/[y] are the
+ *  sticker CENTER in normalized image coordinates,
+ *  [scaleFrac] its width as a fraction of the image
+ *  width, [rotation] its clockwise tilt in degrees —
+ *  the same normalized scheme as strokes and texts, so
+ *  preview and export share the geometry. [fileId] is
+ *  the image to bake: the sticker file itself for webp
+ *  stickers, the static thumbnail for tgs/webm ones
+ *  (their own files are not bitmaps). [aspect] is the
+ *  sticker's width/height. */
+private data class PlacedSticker(
+    val id: Int,
+    val fileId: Int,
+    val aspect: Float,
+    val x: Float,
+    val y: Float,
+    val scaleFrac: Float,
+    val rotation: Float
+)
+
 /** One row of the 调色 panel (v0.9.31, X1): label, current
  *  value, slider range, and the state writer. */
 private data class AdjustSlider(
@@ -117,7 +148,7 @@ private data class CropRect(
     }
 }
 
-private enum class EditMode { CROP, DRAW, TEXT, ADJUST }
+private enum class EditMode { CROP, DRAW, TEXT, ADJUST, STICKER }
 
 /** The two tools sharing the draw gesture layer (v0.9.31,
  *  X1): the doodle pen paints colored strokes; the mosaic
@@ -197,8 +228,14 @@ private fun applyExifOrientation(path: String, bmp: Bitmap): Bitmap {
  * crop -> grade -> mosaic -> strokes -> texts onto a
  * fresh bitmap and saves a JPEG into the cache; the
  * caller then sends that file through the normal photo
- * path. Videos never come here, and sticker overlays are
- * deliberately not part of this basic edition.
+ * path. Videos never come here. v0.9.32 (Y1) adds
+ * sticker overlays: picked from the installed sets via
+ * MediaStore's catalogs, dragged / pinch-scaled /
+ * pinch-rotated on the canvas, and baked between the
+ * strokes and the texts (the export order is fixed:
+ * crop -> grade -> mosaic -> strokes -> stickers ->
+ * texts). Animated (tgs) and video (webm) stickers bake
+ * from their static thumbnail, like the brief requires.
  */
 @Composable
 fun PhotoEditorScreen(
@@ -279,6 +316,65 @@ fun PhotoEditorScreen(
     var texts by remember { mutableStateOf<List<TextData>>(emptyList()) }
     var selectedTextId by remember { mutableStateOf<Int?>(null) }
     var nextTextId by remember { mutableStateOf(1) }
+    // Placed stickers (v0.9.32, Y1): the picker reads
+    // MediaStore's catalogs (the chat panel's store);
+    // stickerPaths seeds the bake file's local path at
+    // pick time, and liveStickerPath() also resolves
+    // through the catalog flows as downloads land.
+    var placedStickers by remember {
+        mutableStateOf<List<PlacedSticker>>(emptyList())
+    }
+    var selectedStickerId by remember { mutableStateOf<Int?>(null) }
+    var nextStickerId by remember { mutableStateOf(1) }
+    val stickerPaths = remember { mutableStateMapOf<Int, String>() }
+    val recentStickers by MediaStore.recentStickers.collectAsState()
+    val favoriteStickers by MediaStore.favoriteStickers.collectAsState()
+    val stickerSets by MediaStore.stickerSets.collectAsState()
+    val setStickers by MediaStore.setStickers.collectAsState()
+    // null = recent, -1 = favorites, otherwise a set id.
+    var pickerSet by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(mode) {
+        if (mode == EditMode.STICKER) MediaStore.load()
+    }
+
+    /** The bake file of a catalog entry: the sticker file
+     *  itself for webp stickers (bitmap-decodable), the
+     *  static thumbnail for tgs/webm ones. */
+    fun bakeFileOf(entry: MediaEntry): Pair<Int, String?> {
+        val isWebp = entry.format == "webp" || entry.format.isEmpty()
+        return if (isWebp) {
+            entry.fileId to entry.previewPath
+        } else {
+            entry.thumbFileId to entry.thumbPath
+        }
+    }
+
+    fun liveStickerPath(fileId: Int): String? {
+        stickerPaths[fileId]?.let { return it }
+        val all = recentStickers + favoriteStickers + setStickers
+        for (entry in all) {
+            val (bakeId, known) = bakeFileOf(entry)
+            if (bakeId == fileId && known != null) return known
+        }
+        return null
+    }
+
+    fun placeSticker(entry: MediaEntry) {
+        val (bakeId, known) = bakeFileOf(entry)
+        if (bakeId == 0) return
+        if (known != null) stickerPaths[bakeId] = known
+        val aspect = if (entry.width > 0 && entry.height > 0) {
+            entry.width.toFloat() / entry.height.toFloat()
+        } else {
+            1f
+        }
+        val id = nextStickerId++
+        placedStickers = placedStickers + PlacedSticker(
+            id = id, fileId = bakeId, aspect = aspect,
+            x = 0.5f, y = 0.5f, scaleFrac = 0.35f, rotation = 0f
+        )
+        selectedStickerId = id
+    }
     // Text dialog: -1 = new label, otherwise the label id
     // being edited; null = closed.
     var textDialogFor by remember { mutableStateOf<Int?>(null) }
@@ -289,6 +385,7 @@ fun PhotoEditorScreen(
 
     val dirty = rotation != 0 || crop != CropRect.FULL ||
         strokes.isNotEmpty() || texts.isNotEmpty() ||
+        placedStickers.isNotEmpty() ||
         mosaicStrokes.isNotEmpty() || filterKey != "none" ||
         brightness != 0f || contrast != 1f || saturation != 1f
 
@@ -315,6 +412,25 @@ fun PhotoEditorScreen(
         }
         texts = texts.map {
             it.copy(x = 1f - it.y, y = it.x)
+        }
+        // Stickers follow the content like texts; their
+        // width fraction is re-based on the NEW image
+        // width (the old height), and their tilt gains the
+        // same 90 degrees.
+        val preRotation = base
+        placedStickers = placedStickers.map {
+            it.copy(
+                x = 1f - it.y, y = it.x,
+                rotation = it.rotation + 90f,
+                scaleFrac = if (preRotation != null &&
+                    preRotation.height > 0
+                ) {
+                    it.scaleFrac * preRotation.width.toFloat() /
+                        preRotation.height.toFloat()
+                } else {
+                    it.scaleFrac
+                }
+            )
         }
         rotation = (rotation + 1) % 4
     }
@@ -357,22 +473,44 @@ fun PhotoEditorScreen(
             onDone(path)
             return
         }
+        // Resolve every placed sticker's bake file BEFORE
+        // leaving the composition: a sticker whose image
+        // has not downloaded yet must not silently vanish
+        // from the export — the export simply waits (the
+        // user stays in the editor and can retry).
+        val resolvedPaths = HashMap<Int, String>()
+        for (sticker in placedStickers) {
+            val p = liveStickerPath(sticker.fileId) ?: return
+            resolvedPaths[sticker.fileId] = p
+        }
         exporting = true
         scope.launch {
             val out = withContext(Dispatchers.Default) {
                 runCatching {
-                    exportEdited(
-                        bmp, crop, strokes, texts,
-                        editorColorMatrix(
-                            filterKey, brightness, contrast,
-                            saturation
-                        ),
-                        mosaicStrokes,
-                        File(
-                            context.cacheDir,
-                            "edit_${System.currentTimeMillis()}.jpg"
+                    val stickerBitmaps = HashMap<Int, Bitmap>()
+                    for ((fileId, p) in resolvedPaths) {
+                        BitmapFactory.decodeFile(p)?.let {
+                            stickerBitmaps[fileId] = it
+                        }
+                    }
+                    if (stickerBitmaps.size < resolvedPaths.size) {
+                        null
+                    } else {
+                        exportEdited(
+                            bmp, crop, strokes, texts,
+                            editorColorMatrix(
+                                filterKey, brightness, contrast,
+                                saturation
+                            ),
+                            mosaicStrokes,
+                            placedStickers,
+                            stickerBitmaps,
+                            File(
+                                context.cacheDir,
+                                "edit_${System.currentTimeMillis()}.jpg"
+                            )
                         )
-                    )
+                    }
                 }.getOrNull()
             }
             exporting = false
@@ -553,6 +691,71 @@ fun PhotoEditorScreen(
                             }
                         }
                     }
+                    // Placed stickers (Y1): between the
+                    // doodles and the text labels, matching
+                    // the fixed export order. Their own
+                    // gestures live in the STICKER overlay
+                    // at the end of this Box.
+                    for (sticker in placedStickers) {
+                        val sPath = liveStickerPath(sticker.fileId)
+                        val sBitmap by produceState<Bitmap?>(
+                            initialValue = null, sPath
+                        ) {
+                            value = if (sPath == null) {
+                                null
+                            } else {
+                                withContext(Dispatchers.IO) {
+                                    decodeCached(sPath)
+                                }
+                            }
+                        }
+                        val sb = sBitmap ?: continue
+                        val wPx = sticker.scaleFrac *
+                            containerSize.width
+                        val hPx = if (sticker.aspect > 0f) {
+                            wPx / sticker.aspect
+                        } else {
+                            wPx
+                        }
+                        Image(
+                            bitmap = sb.asImageBitmap(),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .offset {
+                                    IntOffset(
+                                        (sticker.x *
+                                            containerSize.width -
+                                            wPx / 2f).roundToInt(),
+                                        (sticker.y *
+                                            containerSize.height -
+                                            hPx / 2f).roundToInt()
+                                    )
+                                }
+                                .size(
+                                    with(density) { wPx.toDp() },
+                                    with(density) { hPx.toDp() }
+                                )
+                                .graphicsLayer {
+                                    rotationZ = sticker.rotation
+                                }
+                                .then(
+                                    if (selectedStickerId ==
+                                        sticker.id &&
+                                        mode == EditMode.STICKER
+                                    ) {
+                                        Modifier.border(
+                                            1.5.dp,
+                                            MaterialTheme.colorScheme
+                                                .primary,
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                        )
+                    }
                     // Text labels.
                     for (label in texts) {
                         val labelSize = labelSizes[label.id]
@@ -712,6 +915,11 @@ fun PhotoEditorScreen(
                                     // gestures; sliders live in
                                     // its control row.
                                     EditMode.ADJUST -> Unit
+                                    // Sticker gestures live
+                                    // in the dedicated overlay
+                                    // composed after this
+                                    // layer (below).
+                                    EditMode.STICKER -> Unit
                                     EditMode.CROP -> {
                                         var dragCorner = -1
                                         var moveStart: Offset? = null
@@ -816,6 +1024,96 @@ fun PhotoEditorScreen(
                             }
                     )
                     }
+                    // Sticker gesture overlay (Y1): composed
+                    // only in STICKER mode, above every
+                    // other layer. Tap selects the topmost
+                    // sticker under the point (or deselects
+                    // on empty canvas); transform gestures
+                    // move / pinch-scale / pinch-rotate the
+                    // selected one.
+                    if (mode == EditMode.STICKER) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(
+                                    containerSize, placedStickers
+                                ) {
+                                    val w = containerSize.width
+                                        .coerceAtLeast(1)
+                                    val h = containerSize.height
+                                        .coerceAtLeast(1)
+                                    detectTapGestures(
+                                        onTap = { pos ->
+                                            val nx = pos.x / w
+                                            val ny = pos.y / h
+                                            var hit: Int? = null
+                                            for (st in placedStickers) {
+                                                val swN = st.scaleFrac
+                                                val shN = if (
+                                                    st.aspect > 0f
+                                                ) {
+                                                    swN *
+                                                        (w.toFloat() / h) /
+                                                        st.aspect
+                                                } else {
+                                                    swN
+                                                }
+                                                if (abs(nx - st.x) <=
+                                                    swN / 2f &&
+                                                    abs(ny - st.y) <=
+                                                    shN / 2f
+                                                ) {
+                                                    hit = st.id
+                                                }
+                                            }
+                                            selectedStickerId = hit
+                                        }
+                                    )
+                                }
+                                .pointerInput(
+                                    containerSize, selectedStickerId
+                                ) {
+                                    val w = containerSize.width
+                                        .coerceAtLeast(1)
+                                    val h = containerSize.height
+                                        .coerceAtLeast(1)
+                                    detectTransformGestures {
+                                            _, pan, zoom, rot ->
+                                        val sel = selectedStickerId
+                                            ?: return@detectTransformGestures
+                                        placedStickers =
+                                            placedStickers.map {
+                                                if (it.id == sel) {
+                                                    it.copy(
+                                                        x = (it.x +
+                                                            pan.x / w)
+                                                            .coerceIn(
+                                                                0f, 1f
+                                                            ),
+                                                        y = (it.y +
+                                                            pan.y / h)
+                                                            .coerceIn(
+                                                                0f, 1f
+                                                            ),
+                                                        scaleFrac =
+                                                            (it.scaleFrac *
+                                                                zoom)
+                                                                .coerceIn(
+                                                                    0.05f,
+                                                                    1.6f
+                                                                ),
+                                                        rotation =
+                                                            it.rotation +
+                                                                rot
+                                                    )
+                                                } else {
+                                                    it
+                                                }
+                                            }
+                                    }
+                                }
+                        )
+                    }
                 }
             }
         }
@@ -830,7 +1128,8 @@ fun PhotoEditorScreen(
                 EditMode.CROP to "裁剪",
                 EditMode.DRAW to "涂鸦",
                 EditMode.TEXT to "文字",
-                EditMode.ADJUST to "调色"
+                EditMode.ADJUST to "调色",
+                EditMode.STICKER to "贴纸"
             )) {
                 Box(
                     modifier = Modifier
@@ -1213,6 +1512,116 @@ fun PhotoEditorScreen(
                     )
                 }
             }
+            EditMode.STICKER -> Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = 10.dp)
+            ) {
+                // Sticker picker (Y1): the chat panel's
+                // catalogs — recent, favorites and every
+                // installed set. Tapping one places it in
+                // the middle of the photo.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { pickerSet = null }) {
+                            Text(
+                                "最近",
+                                fontWeight = if (pickerSet == null) {
+                                    FontWeight.SemiBold
+                                } else {
+                                    FontWeight.Normal
+                                }
+                            )
+                        }
+                        TextButton(onClick = { pickerSet = -1L }) {
+                            Text(
+                                "收藏",
+                                fontWeight = if (pickerSet == -1L) {
+                                    FontWeight.SemiBold
+                                } else {
+                                    FontWeight.Normal
+                                }
+                            )
+                        }
+                        for (set in stickerSets) {
+                            TextButton(onClick = {
+                                pickerSet = set.id
+                                MediaStore.loadSet(set.id)
+                            }) {
+                                Text(
+                                    set.title,
+                                    maxLines = 1,
+                                    fontWeight = if (
+                                        pickerSet == set.id
+                                    ) {
+                                        FontWeight.SemiBold
+                                    } else {
+                                        FontWeight.Normal
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    val selSticker = placedStickers.firstOrNull {
+                        it.id == selectedStickerId
+                    }
+                    if (selSticker != null) {
+                        TextButton(onClick = {
+                            placedStickers = placedStickers.filter {
+                                it.id != selSticker.id
+                            }
+                            selectedStickerId = null
+                        }) {
+                            Text(
+                                "删除选中的贴纸",
+                                color = Color(0xFFC62828)
+                            )
+                        }
+                    }
+                }
+                val pickerEntries = when (pickerSet) {
+                    null -> recentStickers
+                    -1L -> favoriteStickers
+                    else -> setStickers
+                }
+                if (pickerEntries.isEmpty()) {
+                    Text(
+                        "这个分类里还没有贴纸，去聊天里用过贴纸后这里就会有。",
+                        fontSize = 12.5.sp, color = Color.Gray,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(5),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp)
+                    ) {
+                        items(pickerEntries, key = { it.fileId }) {
+                                entry ->
+                            StickerPickerCell(entry) {
+                                placeSticker(entry)
+                            }
+                        }
+                    }
+                }
+                Text(
+                    "点贴纸放上照片；点已放的贴纸选中它，拖动移动、双指缩放和旋转。",
+                    fontSize = 12.5.sp, color = Color.Gray,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
     }
 
@@ -1266,6 +1675,55 @@ fun PhotoEditorScreen(
                 }
             }
         )
+    }
+}
+
+/** One cell of the editor's sticker picker (Y1): the
+ *  sticker's own image when it is a static webp, its
+ *  static thumbnail for animated/video stickers, and
+ *  the emoji as the loading fallback — the same display
+ *  rule the bake uses. */
+@Composable
+private fun StickerPickerCell(
+    entry: MediaEntry,
+    onClick: () -> Unit
+) {
+    val isWebp = entry.format == "webp" || entry.format.isEmpty()
+    val path = if (isWebp) {
+        entry.previewPath
+    } else {
+        entry.thumbPath ?: entry.previewPath
+    }
+    val bitmap by produceState<Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { decodeCached(path) }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(56.dp)
+            .clickable { onClick() }
+            .padding(5.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = entry.emoji,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Text(
+                entry.emoji.ifEmpty { "…" },
+                fontSize = 26.sp
+            )
+        }
     }
 }
 
@@ -1471,9 +1929,10 @@ private fun applyMosaicInPlace(
     AndroidCanvas(img).drawBitmap(tmp, 0f, 0f, null)
 }
 
-/** Render the edit onto a fresh bitmap: crop the rotated
- *  base, apply the color grade, stamp the mosaic, paint
- *  the strokes, paint the texts, save JPEG. Returns the
+/** Render the edit onto a fresh bitmap in the FIXED
+ *  order: crop the rotated base, apply the color grade,
+ *  stamp the mosaic, paint the strokes, bake the placed
+ *  stickers, paint the texts, save JPEG. Returns the
  *  output path, or null on any failure (the caller then
  *  keeps the user in the editor). */
 private fun exportEdited(
@@ -1483,6 +1942,8 @@ private fun exportEdited(
     texts: List<TextData>,
     matrix: ColorMatrix,
     mosaicStrokes: List<StrokeData>,
+    stickers: List<PlacedSticker>,
+    stickerBitmaps: Map<Int, Bitmap>,
     outFile: File
 ): String? {
     val w = base.width
@@ -1531,6 +1992,29 @@ private fun exportEdited(
             }
             canvas.drawPath(path, paint)
         }
+    }
+    // Placed stickers (Y1), baked after the strokes and
+    // before the texts — the same order the preview
+    // composes. Each sticker is centred on its normalized
+    // point, scaled to scaleFrac of the full image width
+    // and rotated around its own centre.
+    for (sticker in stickers) {
+        val sb = stickerBitmaps[sticker.fileId] ?: continue
+        if (sb.width <= 0 || sb.height <= 0) continue
+        val targetW = sticker.scaleFrac * w
+        val scale = targetW / sb.width.toFloat()
+        val m = Matrix()
+        m.postTranslate(-sb.width / 2f, -sb.height / 2f)
+        m.postScale(scale, scale)
+        m.postRotate(sticker.rotation)
+        m.postTranslate(sticker.x * w - l, sticker.y * h - t)
+        canvas.drawBitmap(
+            sb, m,
+            Paint().apply {
+                isAntiAlias = true
+                isFilterBitmap = true
+            }
+        )
     }
     for (label in texts) {
         val paint = Paint().apply {
