@@ -51,6 +51,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
@@ -109,6 +110,7 @@ import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
+import com.tuxungram.android.td.LocalLabels
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
@@ -287,6 +289,7 @@ fun ChatListScreen(
     onOpenSettings: () -> Unit,
     onOpenChatLocated: (Long, Long) -> Unit,
     onOpenArchive: () -> Unit,
+    onOpenSavedTopics: () -> Unit,
     onOpenCreate: (String) -> Unit,
     onOpenDrawer: () -> Unit,
     onOpenStory: (Long) -> Unit,
@@ -330,7 +333,19 @@ fun ChatListScreen(
     // Search lives on its own full-screen page since v0.9.19
     // (Z4); this screen only ever shows the plain list now.
     val baseList = if (selectedFolder == null) chats else folderChats
-    val shown = baseList
+    // Local label filter (v0.9.25, R5): a purely local lens —
+    // picking a label narrows the list to chats carrying it
+    // on THIS phone. Labels never reach the server.
+    val localLabels by LocalLabels.labels.collectAsState()
+    val labelAssignments by LocalLabels.assignments.collectAsState()
+    var activeLabelId by remember { mutableStateOf<Long?>(null) }
+    val activeLabel = localLabels.firstOrNull { it.id == activeLabelId }
+    val shown = if (activeLabelId != null) {
+        val withLabel = LocalLabels.chatsWith(activeLabelId!!)
+        baseList.filter { it.id in withLabel }
+    } else {
+        baseList
+    }
 
     LaunchedEffect(listState, shown.size, folderLoaded, selectedFolder) {
         snapshotFlow {
@@ -512,6 +527,67 @@ fun ChatListScreen(
                 onDismiss = { folderEditTarget = null }
             )
         }
+        // Local label filter chips (v0.9.25, R5): shown only
+        // when the user has made at least one label. The row
+        // title states the active filter so a narrowed list
+        // never looks like lost chats.
+        if (localLabels.isNotEmpty() && selectedFolder == null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    if (activeLabel != null) {
+                        "本地标签「${activeLabel.name}」"
+                    } else {
+                        "本地标签"
+                    },
+                    fontSize = 12.sp, color = Color.Gray
+                )
+                Spacer(Modifier.width(8.dp))
+                for (label in localLabels) {
+                    val selected = activeLabelId == label.id
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .background(
+                                if (selected) {
+                                    MaterialTheme.colorScheme
+                                        .primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme
+                                        .surfaceVariant
+                                },
+                                RoundedCornerShape(14.dp)
+                            )
+                            .clickable {
+                                activeLabelId =
+                                    if (selected) null else label.id
+                            }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .background(
+                                    Color(
+                                        LocalLabels.PALETTE[
+                                            label.colorIndex
+                                        ]
+                                    ),
+                                    CircleShape
+                                )
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text(label.name, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
         // First-sync banner: while TDLib is still pulling the
         // account's chats in, say so plainly — a half-filled list
         // must not look like chats were lost.
@@ -563,21 +639,55 @@ fun ChatListScreen(
             }
         }
         if (pendingStoryPhoto != null) {
+            // Publish privacy (v0.9.25, R3): who can see the
+            // story is chosen here and passed to postStory's
+            // privacy_settings; the default stays everyone.
+            var storyPrivacy by remember(pendingStoryPhoto) {
+                mutableStateOf("everyone")
+            }
+            val privacyOptions = listOf(
+                "everyone" to "所有人",
+                "contacts" to "我的联系人",
+                "close_friends" to "亲密朋友"
+            )
             AlertDialog(
                 onDismissRequest = { pendingStoryPhoto = null },
                 title = { Text("发布动态？") },
                 text = {
-                    Text(
-                        "这张照片会发到你的动态，所有人可见，" +
-                            "24 小时后自动归档。"
-                    )
+                    Column {
+                        Text(
+                            "这张照片会发到你的动态，" +
+                                "24 小时后自动归档。谁能看："
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        for ((value, label) in privacyOptions) {
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        storyPrivacy = value
+                                    }
+                                    .padding(vertical = 2.dp)
+                            ) {
+                                RadioButton(
+                                    selected = storyPrivacy == value,
+                                    onClick = { storyPrivacy = value }
+                                )
+                                Text(label, fontSize = 14.sp)
+                            }
+                        }
+                    }
                 },
                 confirmButton = {
                     Button(onClick = {
                         val path = pendingStoryPhoto
                         pendingStoryPhoto = null
                         if (path != null) {
-                            StoryStore.postPhotoStory(path)
+                            StoryStore.postPhotoStory(
+                                path, storyPrivacy
+                            )
                         }
                     }) { Text("发布") }
                 },
@@ -707,6 +817,26 @@ fun ChatListScreen(
                     if (chatId != null) onOpenChat(chatId)
                 }
             })
+            // Saved Messages topics (v0.9.25, R1): the topics
+            // Telegram auto-creates inside Saved Messages.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenSavedTopics() }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "收藏话题",
+                    fontSize = 14.sp,
+                    color = OfficialTheme.current().accentText
+                )
+                Text(
+                    "按来源自动归类的收藏",
+                    fontSize = 12.sp, color = Color.Gray,
+                    modifier = Modifier.padding(start = 10.dp)
+                )
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1098,6 +1228,7 @@ private fun SwipeActionCell(
 @Composable
 fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
     var menuOpen by remember { mutableStateOf(false) }
+    var labelDialogOpen by remember { mutableStateOf(false) }
     // Official list layout (v0.9.17, X3; metrics
     // re-measured v0.9.22, S2): 52 dp avatar,
     // official placeholder gradient (avatar_background*),
@@ -1363,8 +1494,129 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     ChatStore.archive(chat)
                 }
             )
+            DropdownMenuItem(
+                text = { Text("标签（本地）") },
+                onClick = {
+                    menuOpen = false
+                    labelDialogOpen = true
+                }
+            )
+        }
+        if (labelDialogOpen) {
+            LabelPickerDialog(
+                chatId = chat.id,
+                onDismiss = { labelDialogOpen = false }
+            )
         }
     }
+}
+
+/** Local label picker (v0.9.25, R5): checkboxes for every
+ *  label plus create/delete. Everything here is local-only —
+ *  the dialog says so in plain words, because Telegram's own
+ *  chat labels are a server Business feature this does NOT
+ *  touch. */
+@Composable
+fun LabelPickerDialog(chatId: Long, onDismiss: () -> Unit) {
+    val labels by LocalLabels.labels.collectAsState()
+    val assignments by LocalLabels.assignments.collectAsState()
+    var newName by remember { mutableStateOf("") }
+    var newColor by remember { mutableStateOf(5) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("本地标签") },
+        text = {
+            Column {
+                Text(
+                    "标签只存在这台手机上，仅本机可见，" +
+                        "不会同步到其他设备，也不是 Telegram " +
+                        "的商务标签。",
+                    fontSize = 12.sp, color = Color.Gray
+                )
+                Spacer(Modifier.height(8.dp))
+                if (labels.isEmpty()) {
+                    Text(
+                        "还没有标签，在下面建一个。",
+                        fontSize = 13.sp, color = Color.Gray
+                    )
+                }
+                for (label in labels) {
+                    val checked = LocalLabels.has(chatId, label.id)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                LocalLabels.toggle(chatId, label.id)
+                            }
+                            .padding(vertical = 2.dp)
+                    ) {
+                        Checkbox(
+                            checked = checked,
+                            onCheckedChange = {
+                                LocalLabels.toggle(chatId, label.id)
+                            }
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(
+                                    Color(
+                                        LocalLabels.PALETTE[
+                                            label.colorIndex
+                                        ]
+                                    ),
+                                    CircleShape
+                                )
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            label.name, fontSize = 14.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = {
+                            LocalLabels.delete(label.id)
+                        }) {
+                            Text("删除", fontSize = 12.sp)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("新标签名，如：重要") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for ((index, argb) in
+                        LocalLabels.PALETTE.withIndex()) {
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 6.dp)
+                                .size(if (newColor == index) 22.dp else 18.dp)
+                                .background(Color(argb), CircleShape)
+                                .clickable { newColor = index }
+                        )
+                    }
+                }
+                TextButton(
+                    enabled = newName.isNotBlank(),
+                    onClick = {
+                        LocalLabels.create(newName, newColor)
+                        newName = ""
+                    }
+                ) { Text("新建标签") }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("完成") }
+        }
+    )
 }
 
 

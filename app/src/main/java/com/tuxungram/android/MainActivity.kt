@@ -133,6 +133,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 import com.tuxungram.android.ui.ArchiveScreen
+import com.tuxungram.android.ui.SavedTopicsScreen
 import com.tuxungram.android.ui.BlockedScreen
 import com.tuxungram.android.ui.DownloadsScreen
 import com.tuxungram.android.ui.EventLogScreen
@@ -520,6 +521,10 @@ private sealed interface Route {
         override val depth = 1
     }
 
+    data object SavedTopics : Route {
+        override val depth = 1
+    }
+
     data object Search : Route {
         override val depth = 1
     }
@@ -623,6 +628,7 @@ private fun ReadyHost() {
     var showDownloads by remember { mutableStateOf(false) }
     var showNetworkStats by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
+    var showSavedTopics by remember { mutableStateOf(false) }
     // Full-screen search page (v0.9.19, Z4): opened from the
     // chat list's search entry, results open chats from here.
     var showSearch by remember { mutableStateOf(false) }
@@ -751,6 +757,7 @@ private fun ReadyHost() {
         showDownloads -> Route.Downloads
         showNetworkStats -> Route.NetworkStats
         showArchive -> Route.Archive
+        showSavedTopics -> Route.SavedTopics
         showSearch -> Route.Search
         groupSettingsChatId != null ->
             Route.GroupSettings(groupSettingsChatId!!)
@@ -847,6 +854,9 @@ private fun ReadyHost() {
                 )
                 is Route.NetworkStats -> NetworkStatsScreen(
                     onBack = { showNetworkStats = false }
+                )
+                is Route.SavedTopics -> SavedTopicsScreen(
+                    onBack = { showSavedTopics = false }
                 )
                 is Route.Archive -> ArchiveScreen(
                     onBack = { showArchive = false },
@@ -1018,6 +1028,7 @@ private fun ReadyHost() {
                                 openChatId = cid
                             },
                             onOpenArchive = { showArchive = true },
+                            onOpenSavedTopics = { showSavedTopics = true },
                             onOpenCreate = { mode ->
                                 createMode = mode
                                 showCreate = true
