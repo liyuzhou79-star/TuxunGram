@@ -172,6 +172,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenSessions: () -> Unit = {},
     onOpenStickerSets: () -> Unit = {},
+    onOpenDownloads: () -> Unit = {},
     onOpenEditProfile: () -> Unit = {},
     onOpenBlocked: () -> Unit = {},
     onOpenChangelog: () -> Unit = {},
@@ -1417,6 +1418,19 @@ fun SettingsScreen(
                 title = "下载的文件",
                 subtitle = "${formatBytes(storageInfo.filesBytes)}，共 ${storageInfo.fileCount} 个"
             )
+        }
+        Button(
+            onClick = onOpenDownloads,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp)
+        ) {
+            Icon(
+                DownloadIcon, contentDescription = null,
+                modifier = Modifier.size(19.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("下载管理（进行中 / 已完成）")
         }
         var confirmClear by remember { mutableStateOf(false) }
         var clearedTip by remember { mutableStateOf<String?>(null) }

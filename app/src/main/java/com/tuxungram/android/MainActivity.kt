@@ -126,6 +126,7 @@ import kotlinx.coroutines.delay
 
 import com.tuxungram.android.ui.ArchiveScreen
 import com.tuxungram.android.ui.BlockedScreen
+import com.tuxungram.android.ui.DownloadsScreen
 import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.GuideScreen
 import com.tuxungram.android.ui.WhatsNewScreen
@@ -445,6 +446,10 @@ private sealed interface Route {
         override val depth = 1
     }
 
+    data object Downloads : Route {
+        override val depth = 1
+    }
+
     data object SettingsOverlay : Route {
         override val depth = 1
     }
@@ -540,6 +545,7 @@ private fun ReadyHost() {
     var showBlocked by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
     var showStickerSets by remember { mutableStateOf(false) }
+    var showDownloads by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
     var showContacts by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }
@@ -647,6 +653,7 @@ private fun ReadyHost() {
         showBlocked -> Route.Blocked
         showSessions -> Route.Sessions
         showStickerSets -> Route.StickerSets
+        showDownloads -> Route.Downloads
         showSettings -> Route.SettingsOverlay
         showArchive -> Route.Archive
         showContacts -> Route.ContactsOverlay
@@ -716,6 +723,9 @@ private fun ReadyHost() {
                 is Route.StickerSets -> StickerSetsScreen(
                     onBack = { showStickerSets = false }
                 )
+                is Route.Downloads -> DownloadsScreen(
+                    onBack = { showDownloads = false }
+                )
                 is Route.SettingsOverlay -> SettingsScreen(
             onBack = { showSettings = false },
             onOpenSessions = {
@@ -725,6 +735,10 @@ private fun ReadyHost() {
             onOpenStickerSets = {
                 showSettings = false
                 showStickerSets = true
+            },
+            onOpenDownloads = {
+                showSettings = false
+                showDownloads = true
             },
             onOpenEditProfile = {
                 showSettings = false
@@ -821,6 +835,7 @@ private fun ReadyHost() {
                             onBack = { homeTab = 0 },
                             onOpenSessions = { showSessions = true },
                             onOpenStickerSets = { showStickerSets = true },
+                            onOpenDownloads = { showDownloads = true },
                             onOpenEditProfile = { showEditProfile = true },
                             onOpenBlocked = { showBlocked = true },
                             onOpenChangelog = { showChangelog = true },

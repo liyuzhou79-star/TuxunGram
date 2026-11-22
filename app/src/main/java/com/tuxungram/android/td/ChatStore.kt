@@ -139,6 +139,9 @@ object ChatStore {
         if (attached) return
         attached = true
         AvatarStore.attach()
+        // Download manager (v0.9.12, S5) keeps raw file state
+        // from the same update stream.
+        DownloadStore.attach()
         // A path landing in the resolver (download finished, or
         // an already-downloaded file answered) republishes the
         // list with avatars filled in — no other update needed.
