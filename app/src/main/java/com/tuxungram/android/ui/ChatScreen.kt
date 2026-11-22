@@ -1511,7 +1511,10 @@ fun MessageBubble(
                 }
                 when (msg.kind) {
                     MsgKind.TEXT -> {
-                        Text(msg.text, fontSize = 15.sp)
+                        RichMessageText(
+                            msg,
+                            onBotCommand = { MessageStore.sendText(it) }
+                        )
                         if (msg.lpTitle.isNotEmpty() || msg.lpSiteName.isNotEmpty()) {
                             Spacer(Modifier.height(6.dp))
                             LinkPreviewCard(msg)
@@ -1522,7 +1525,10 @@ fun MessageBubble(
                         AnimationBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            Text(msg.text, fontSize = 15.sp)
+                            RichMessageText(
+                                msg,
+                                onBotCommand = { MessageStore.sendText(it) }
+                            )
                         }
                     }
                     MsgKind.POLL -> {
@@ -1537,14 +1543,20 @@ fun MessageBubble(
                         PhotoBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            Text(msg.text, fontSize = 15.sp)
+                            RichMessageText(
+                                msg,
+                                onBotCommand = { MessageStore.sendText(it) }
+                            )
                         }
                     }
                     MsgKind.DOCUMENT, MsgKind.VIDEO, MsgKind.VOICE -> {
                         FileBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            Text(msg.text, fontSize = 15.sp)
+                            RichMessageText(
+                                msg,
+                                onBotCommand = { MessageStore.sendText(it) }
+                            )
                         }
                     }
                     MsgKind.OTHER -> Text(

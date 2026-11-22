@@ -409,7 +409,8 @@ fun ForumTopicView(
                         onVotePoll = { m, ids ->
                             ForumStore.setPollAnswer(m, ids)
                         },
-                        onOpenVideo = { m -> videoItem = m }
+                        onOpenVideo = { m -> videoItem = m },
+                        onBotCommand = { ForumStore.sendText(it) }
                     )
                 }
             }

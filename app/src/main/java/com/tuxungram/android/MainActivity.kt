@@ -96,9 +96,11 @@ import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import com.tuxungram.android.td.ContactsStore
 import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
+import com.tuxungram.android.td.TdClient
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import java.io.File
@@ -303,6 +305,33 @@ private fun ReadyHost() {
     var showArchive by remember { mutableStateOf(false) }
     var showContacts by remember { mutableStateOf(false) }
     var profileChatId by remember { mutableStateOf<Long?>(null) }
+    // Rich-text mention taps (v0.9.2, L1): a mentionName carries
+    // the user id (resolve via createPrivateChat), a plain
+    // @mention carries the username (resolve via
+    // searchPublicChat, verified in td_api.tl). Both land on
+    // the profile page.
+    val pendingProfileUser by DeepLink.pendingProfileUser.collectAsState()
+    LaunchedEffect(pendingProfileUser) {
+        val uid = pendingProfileUser ?: return@LaunchedEffect
+        DeepLink.pendingProfileUser.value = null
+        ContactsStore.openPrivateChat(uid) { cid ->
+            if (cid != null) profileChatId = cid
+        }
+    }
+    val pendingProfileName by DeepLink.pendingProfileName.collectAsState()
+    LaunchedEffect(pendingProfileName) {
+        val name = pendingProfileName ?: return@LaunchedEffect
+        DeepLink.pendingProfileName.value = null
+        val query = TdClient.request("searchPublicChat").apply {
+            put("username", name)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (!TdClient.isError(response)) {
+                val cid = response.optLong("id")
+                if (cid != 0L) profileChatId = cid
+            }
+        }
+    }
     var showCreate by remember { mutableStateOf(false) }
     var storyChatId by remember { mutableStateOf<Long?>(null) }
     // Forward flow: (fromChatId, messageIds) plus where to return

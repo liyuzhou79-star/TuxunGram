@@ -57,12 +57,32 @@ data class InlineBtn(
     val userId: Long = 0L
 )
 
+/** One formatting entity of a message text / caption, flattened
+ *  from formattedText.entities (v0.9.2, L1). [offset]/[length]
+ *  are UTF-16 code units per td_api.tl, which is exactly how
+ *  Kotlin String indices count, so the UI builder can use them
+ *  verbatim. [kind] is a short internal tag: bold, italic,
+ *  underline, strike, code, pre, quote, spoiler, url, textUrl,
+ *  mention, mentionName, hashtag, cashtag, botCommand, email,
+ *  phone, customEmoji, plain (recognized but rendered as-is). */
+data class TextEntityUi(
+    val offset: Int,
+    val length: Int,
+    val kind: String,
+    val url: String = "",
+    val userId: Long = 0L,
+    val customEmojiId: Long = 0L
+)
+
 data class MsgItem(
     val id: Long,
     val outgoing: Boolean,
     val dateSeconds: Int,
     val kind: MsgKind,
     val text: String,
+    // Formatting entities for [text] (message text or caption),
+    // v0.9.2 L1. Empty for plain unformatted text.
+    val entities: List<TextEntityUi> = emptyList(),
     val senderName: String,
     val senderUserId: Long,
     val photoFileId: Int,
@@ -949,6 +969,68 @@ object MessageStore {
         }
     }
 
+    /** Flatten a formattedText object's entities (v0.9.2, L1).
+     *  The full textEntityType set was verified against
+     *  td_api.tl; types with no distinct rendering here map to
+     *  "plain" and stay visible as ordinary text. Shared by the
+     *  main chat, thread and forum stores through parseMessage. */
+    fun entitiesOf(formatted: JSONObject?): List<TextEntityUi> {
+        val arr = formatted?.optJSONArray("entities") ?: return emptyList()
+        val out = ArrayList<TextEntityUi>()
+        for (i in 0 until arr.length()) {
+            val e = arr.optJSONObject(i) ?: continue
+            val type = e.optJSONObject("type") ?: continue
+            val offset = e.optInt("offset", -1)
+            val length = e.optInt("length", 0)
+            if (offset < 0 || length <= 0) continue
+            val kind = when (type.optString("@type")) {
+                "textEntityTypeBold" -> "bold"
+                "textEntityTypeItalic" -> "italic"
+                "textEntityTypeUnderline" -> "underline"
+                "textEntityTypeStrikethrough" -> "strike"
+                "textEntityTypeCode" -> "code"
+                "textEntityTypePre", "textEntityTypePreCode" -> "pre"
+                "textEntityTypeBlockQuote",
+                "textEntityTypeExpandableBlockQuote" -> "quote"
+                "textEntityTypeSpoiler" -> "spoiler"
+                "textEntityTypeUrl" -> "url"
+                "textEntityTypeTextUrl" -> "textUrl"
+                "textEntityTypeMention" -> "mention"
+                "textEntityTypeMentionName" -> "mentionName"
+                "textEntityTypeHashtag" -> "hashtag"
+                "textEntityTypeCashtag" -> "cashtag"
+                "textEntityTypeBotCommand" -> "botCommand"
+                "textEntityTypeEmailAddress" -> "email"
+                "textEntityTypePhoneNumber" -> "phone"
+                "textEntityTypeCustomEmoji" -> "customEmoji"
+                else -> "plain"
+            }
+            out.add(
+                TextEntityUi(
+                    offset = offset,
+                    length = length,
+                    kind = kind,
+                    url = if (kind == "textUrl") {
+                        type.optString("url")
+                    } else {
+                        ""
+                    },
+                    userId = if (kind == "mentionName") {
+                        type.optLong("user_id")
+                    } else {
+                        0L
+                    },
+                    customEmojiId = if (kind == "customEmoji") {
+                        type.optLong("custom_emoji_id")
+                    } else {
+                        0L
+                    }
+                )
+            )
+        }
+        return out
+    }
+
     fun parseMessage(msg: JSONObject): MsgItem {
         val base = MsgItem(
             id = msg.optLong("id"),
@@ -994,6 +1076,7 @@ object MessageStore {
                 base.copy(
                     kind = MsgKind.TEXT,
                     text = content.optJSONObject("text")?.optString("text") ?: "",
+                    entities = entitiesOf(content.optJSONObject("text")),
                     lpSiteName = lp?.optString("site_name") ?: "",
                     lpTitle = lp?.optString("title") ?: "",
                     lpDescription = lp?.optJSONObject("description")
@@ -1030,6 +1113,7 @@ object MessageStore {
                 base.copy(
                     kind = MsgKind.ANIMATION,
                     text = content.optJSONObject("caption")?.optString("text") ?: "",
+                    entities = entitiesOf(content.optJSONObject("caption")),
                     fileId = fileId,
                     filePath = downloadedPath(file),
                     fileName = animation?.optString("file_name") ?: "",
@@ -1067,6 +1151,7 @@ object MessageStore {
                 base.copy(
                     kind = MsgKind.PHOTO,
                     text = content.optJSONObject("caption")?.optString("text") ?: "",
+                    entities = entitiesOf(content.optJSONObject("caption")),
                     photoFileId = fileId,
                     photoPath = if (downloaded) local?.optString("path") else null,
                     photoWidth = size?.optInt("width", 0) ?: 0,
@@ -1079,6 +1164,7 @@ object MessageStore {
                 base.copy(
                     kind = MsgKind.DOCUMENT,
                     text = content.optJSONObject("caption")?.optString("text") ?: "",
+                    entities = entitiesOf(content.optJSONObject("caption")),
                     fileId = file?.optInt("id", 0) ?: 0,
                     filePath = downloadedPath(file),
                     fileName = doc?.optString("file_name") ?: "",
@@ -1092,6 +1178,7 @@ object MessageStore {
                 base.copy(
                     kind = MsgKind.VIDEO,
                     text = content.optJSONObject("caption")?.optString("text") ?: "",
+                    entities = entitiesOf(content.optJSONObject("caption")),
                     fileId = file?.optInt("id", 0) ?: 0,
                     filePath = downloadedPath(file),
                     fileName = video?.optString("file_name") ?: "",
@@ -1106,6 +1193,7 @@ object MessageStore {
                 base.copy(
                     kind = MsgKind.VOICE,
                     text = content.optJSONObject("caption")?.optString("text") ?: "",
+                    entities = entitiesOf(content.optJSONObject("caption")),
                     fileId = file?.optInt("id", 0) ?: 0,
                     filePath = downloadedPath(file),
                     fileName = "语音消息",

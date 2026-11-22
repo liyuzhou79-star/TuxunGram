@@ -85,7 +85,8 @@ fun SimpleMessageBubble(
     onDownloadFile: (MsgItem) -> Unit,
     onToggleReaction: (MsgItem, String) -> Unit,
     onVotePoll: (MsgItem, List<Int>) -> Unit,
-    onOpenVideo: (MsgItem) -> Unit
+    onOpenVideo: (MsgItem) -> Unit,
+    onBotCommand: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -166,7 +167,7 @@ fun SimpleMessageBubble(
                 }
                 when (msg.kind) {
                     MsgKind.TEXT -> {
-                        Text(msg.text, fontSize = 15.sp)
+                        RichMessageText(msg, onBotCommand = onBotCommand)
                         if (msg.lpTitle.isNotEmpty() ||
                             msg.lpSiteName.isNotEmpty()
                         ) {
@@ -179,7 +180,7 @@ fun SimpleMessageBubble(
                         AnimationBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            Text(msg.text, fontSize = 15.sp)
+                            RichMessageText(msg, onBotCommand = onBotCommand)
                         }
                     }
                     MsgKind.POLL -> {
@@ -194,14 +195,14 @@ fun SimpleMessageBubble(
                         PhotoBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            Text(msg.text, fontSize = 15.sp)
+                            RichMessageText(msg, onBotCommand = onBotCommand)
                         }
                     }
                     MsgKind.DOCUMENT, MsgKind.VIDEO, MsgKind.VOICE -> {
                         FileBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            Text(msg.text, fontSize = 15.sp)
+                            RichMessageText(msg, onBotCommand = onBotCommand)
                         }
                     }
                     MsgKind.OTHER -> Text(
@@ -687,7 +688,8 @@ fun ThreadScreen(
                         onVotePoll = { m, ids ->
                             ThreadStore.setPollAnswer(m, ids)
                         },
-                        onOpenVideo = { m -> videoItem = m }
+                        onOpenVideo = { m -> videoItem = m },
+                        onBotCommand = { ThreadStore.sendText(it) }
                     )
                 }
             }

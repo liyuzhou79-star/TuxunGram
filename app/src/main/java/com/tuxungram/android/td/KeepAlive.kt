@@ -28,6 +28,16 @@ import org.json.JSONObject
  *  consumes it and opens the chat. */
 object DeepLink {
     val pendingChat = MutableStateFlow<Long?>(null)
+
+    /** A mentionName tap in rich text (v0.9.2, L1): the user id
+     *  whose profile page should open. ReadyHost resolves it
+     *  through createPrivateChat, the same route contacts use. */
+    val pendingProfileUser = MutableStateFlow<Long?>(null)
+
+    /** A plain @mention tap (v0.9.2, L1): the username (without
+     *  the @) whose profile page should open, resolved through
+     *  searchPublicChat. */
+    val pendingProfileName = MutableStateFlow<String?>(null)
 }
 
 /**
