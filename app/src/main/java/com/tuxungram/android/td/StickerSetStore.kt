@@ -192,6 +192,28 @@ object StickerSetStore {
         }
     }
 
+    /** Install a set whose id is already known (v0.9.4, N5:
+     *  the trending preview's add button) — the same
+     *  changeStickerSet call addByInput ends with, minus the
+     *  name resolution. The result goes to the callback so
+     *  the caller can update its own button state; the panel
+     *  chips and trending row refresh either way. */
+    fun installById(setId: Long, onDone: (Boolean) -> Unit) {
+        val install = TdClient.request("changeStickerSet").apply {
+            put("set_id", setId)
+            put("is_installed", true)
+            put("is_archived", false)
+        }
+        TdRepository.sendRaw(install) { done ->
+            val ok = !TdClient.isError(done)
+            if (ok) {
+                MediaStore.refreshInstalledSets()
+                MediaStore.loadTrending()
+            }
+            onDone(ok)
+        }
+    }
+
     private fun extractSetName(raw: String): String {
         val trimmed = raw.trim()
         val marker = "addstickers/"

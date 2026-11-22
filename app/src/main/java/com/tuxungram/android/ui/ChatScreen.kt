@@ -100,6 +100,8 @@ import com.tuxungram.android.td.PollUi
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.SecretChatStore
+import com.tuxungram.android.td.StickerSetStore
+import com.tuxungram.android.td.TrendingSetUi
 import com.tuxungram.android.td.SendModifiers
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.ThreadStore
@@ -3048,10 +3050,26 @@ private fun MediaPanel(
     val animations by MediaStore.savedAnimations.collectAsState()
     val sets by MediaStore.stickerSets.collectAsState()
     val setStickers by MediaStore.setStickers.collectAsState()
+    // Sticker discovery (v0.9.4, N5): trending sets row,
+    // emoji search, and a whole-set preview dialog.
+    val trending by MediaStore.trendingSets.collectAsState()
+    val searchResults by MediaStore.searchResults.collectAsState()
+    val previewStickers by MediaStore.previewStickers.collectAsState()
+    var searchText by remember { mutableStateOf("") }
+    var searchActive by remember { mutableStateOf(false) }
+    var previewSet by remember { mutableStateOf<TrendingSetUi?>(null) }
+    var previewAdded by remember { mutableStateOf(false) }
+    LaunchedEffect(previewSet) {
+        val set = previewSet
+        if (set != null) {
+            previewAdded = false
+            MediaStore.loadPreviewSet(set.id)
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(268.dp)
+            .height(288.dp)
     ) {
         Row(modifier = Modifier.padding(horizontal = 8.dp)) {
             for ((index, label) in listOf("表情", "贴纸", "GIF").withIndex()) {
@@ -3080,6 +3098,59 @@ private fun MediaPanel(
                 }
             }
             1 -> Column(modifier = Modifier.fillMaxSize()) {
+                // Emoji search (N5): type an emoji, get the
+                // matching stickers from Telegram's catalog,
+                // tap one to send it directly.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = searchText,
+                        onValueChange = { searchText = it },
+                        placeholder = { Text("输入 emoji 搜贴纸，如 😂") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        if (searchText.isNotBlank()) {
+                            searchActive = true
+                            MediaStore.searchByEmoji(searchText)
+                        }
+                    }) {
+                        Text("搜索")
+                    }
+                    if (searchActive) {
+                        TextButton(onClick = {
+                            searchActive = false
+                            searchText = ""
+                            MediaStore.clearSearch()
+                        }) {
+                            Text("清除")
+                        }
+                    }
+                }
+                if (searchActive) {
+                    if (searchResults.isEmpty()) {
+                        Text(
+                            "没搜到贴纸，换个 emoji 再试试。",
+                            color = Color.Gray, fontSize = 13.sp,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(4),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            gridItems(
+                                searchResults, key = { it.fileId }
+                            ) { entry ->
+                                MediaPickerCell(entry) { onSendEntry(entry) }
+                            }
+                        }
+                    }
+                    return@Column
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3101,6 +3172,30 @@ private fun MediaPanel(
                                 if (setSel == set.id) "● ${set.title}"
                                 else set.title
                             )
+                        }
+                    }
+                }
+                if (setSel == null && trending.isNotEmpty()) {
+                    // Trending discovery row (N5): horizontal
+                    // covers; tapping one previews the whole
+                    // set with a one-tap add.
+                    Text(
+                        "热门贴纸包",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(
+                            start = 16.dp, top = 2.dp
+                        )
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        for (set in trending) {
+                            TrendingSetCell(set) { previewSet = set }
+                            Spacer(Modifier.width(6.dp))
                         }
                     }
                 }
@@ -3145,6 +3240,113 @@ private fun MediaPanel(
                 }
             }
         }
+    }
+    // Trending set preview (v0.9.4, N5): the whole set in a
+    // grid — tap a sticker to send it — plus a one-tap add
+    // that installs the set through the G3 route.
+    val preview = previewSet
+    if (preview != null) {
+        AlertDialog(
+            onDismissRequest = { previewSet = null },
+            title = { Text(preview.title) },
+            text = {
+                Column {
+                    if (preview.isInstalled || previewAdded) {
+                        Text(
+                            "已在你的贴纸里",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 14.sp
+                        )
+                    } else {
+                        Button(onClick = {
+                            StickerSetStore.installById(preview.id) { ok ->
+                                if (ok) previewAdded = true
+                            }
+                        }) {
+                            Text("添加这个贴纸包（${preview.count} 张）")
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    if (previewStickers.isEmpty()) {
+                        Text(
+                            "正在加载这一包贴纸…",
+                            color = Color.Gray, fontSize = 13.sp
+                        )
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(4),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(264.dp)
+                        ) {
+                            gridItems(
+                                previewStickers, key = { it.fileId }
+                            ) { entry ->
+                                MediaPickerCell(entry) {
+                                    onSendEntry(entry)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { previewSet = null }) {
+                    Text("关闭")
+                }
+            }
+        )
+    }
+}
+
+/** One trending set cover in the discovery row (v0.9.4,
+ *  N5): cover sticker (or the title's first character while
+ *  it downloads) plus the set title underneath. */
+@Composable
+private fun TrendingSetCell(set: TrendingSetUi, onClick: () -> Unit) {
+    val path = set.thumbPath
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, path
+    ) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { decodeCached(path) }
+        }
+    }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(60.dp)
+            .clickable { onClick() }
+            .padding(vertical = 2.dp)
+    ) {
+        Box(
+            modifier = Modifier.size(48.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            val bmp = bitmap
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = set.title,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Text(
+                    set.title.take(1).ifEmpty { "?" },
+                    fontSize = 22.sp, color = Color.Gray
+                )
+            }
+        }
+        Text(
+            set.title,
+            fontSize = 10.sp,
+            maxLines = 1,
+            color = Color.Gray
+        )
     }
 }
 

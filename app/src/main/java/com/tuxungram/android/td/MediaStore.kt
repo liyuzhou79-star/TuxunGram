@@ -12,6 +12,17 @@ data class StickerSetUi(
     val title: String
 )
 
+/** One trending sticker set for the discovery row
+ *  (getTrendingStickerSets, v0.9.4 N5). */
+data class TrendingSetUi(
+    val id: Long,
+    val title: String,
+    val count: Int,
+    val isInstalled: Boolean,
+    val thumbFileId: Int,
+    val thumbPath: String?
+)
+
 /** One entry of the sticker / GIF picker: a sticker or a saved
  *  animation already known to TDLib, sendable by file id. */
 data class MediaEntry(
@@ -49,6 +60,21 @@ object MediaStore {
     /** Stickers of the set the panel is currently browsing. */
     private val _setStickers = MutableStateFlow<List<MediaEntry>>(emptyList())
     val setStickers: StateFlow<List<MediaEntry>> = _setStickers
+
+    /** Trending sets for the discovery row (v0.9.4, N5). */
+    private val _trendingSets = MutableStateFlow<List<TrendingSetUi>>(emptyList())
+    val trendingSets: StateFlow<List<TrendingSetUi>> = _trendingSets
+
+    /** Stickers of the trending set open in the preview
+     *  dialog — a separate flow from setStickers so previewing
+     *  never disturbs the set the panel is browsing. */
+    private val _previewStickers = MutableStateFlow<List<MediaEntry>>(emptyList())
+    val previewStickers: StateFlow<List<MediaEntry>> = _previewStickers
+
+    /** Emoji-search results for the panel's search box
+     *  (searchStickers, v0.9.4 N5). */
+    private val _searchResults = MutableStateFlow<List<MediaEntry>>(emptyList())
+    val searchResults: StateFlow<List<MediaEntry>> = _searchResults
 
     private val pathByFileId = ConcurrentHashMap<Int, String>()
     private val downloadPending = ConcurrentHashMap.newKeySet<Int>()
@@ -97,6 +123,104 @@ object MediaStore {
             }
         }
         fetchInstalledSets()
+        loadTrending()
+    }
+
+    /** Trending sticker sets (getTrendingStickerSets,
+     *  verified in td_api.tl) for the panel's discovery row;
+     *  covers download through the same updateFile machinery
+     *  as every other preview. */
+    fun loadTrending() {
+        attach()
+        TdRepository.sendRaw(TdClient.request("getTrendingStickerSets").apply {
+            put(
+                "sticker_type",
+                JSONObject().put("@type", "stickerTypeRegular")
+            )
+            put("offset", 0)
+            put("limit", 20)
+        }) { response ->
+            if (TdClient.isError(response)) return@sendRaw
+            val arr = response.optJSONArray("sets") ?: return@sendRaw
+            val out = ArrayList<TrendingSetUi>()
+            for (i in 0 until arr.length()) {
+                val set = arr.optJSONObject(i) ?: continue
+                var thumbFile = set.optJSONObject("thumbnail")
+                    ?.optJSONObject("file")
+                if (thumbFile == null) {
+                    val covers = set.optJSONArray("covers")
+                    if (covers != null && covers.length() > 0) {
+                        thumbFile = covers.optJSONObject(0)
+                            ?.optJSONObject("sticker")
+                    }
+                }
+                val fileId = thumbFile?.optInt("id", 0) ?: 0
+                val local = thumbFile?.optJSONObject("local")
+                if (local?.optBoolean("is_downloading_completed") == true) {
+                    pathByFileId[fileId] = local.optString("path")
+                } else if (fileId != 0) {
+                    ensurePreview(fileId)
+                }
+                out.add(
+                    TrendingSetUi(
+                        id = set.optLong("id"),
+                        title = set.optString("title"),
+                        count = set.optInt("size"),
+                        isInstalled = set.optBoolean("is_installed"),
+                        thumbFileId = fileId,
+                        thumbPath = pathByFileId[fileId]
+                    )
+                )
+            }
+            _trendingSets.value = out
+        }
+    }
+
+    /** Load a trending set's stickers into the preview flow
+     *  (getStickerSet — the same call the installed-set
+     *  browsing uses, on its own flow). */
+    fun loadPreviewSet(setId: Long) {
+        attach()
+        _previewStickers.value = emptyList()
+        TdRepository.sendRaw(TdClient.request("getStickerSet").apply {
+            put("set_id", setId)
+        }) { response ->
+            if (!TdClient.isError(response)) {
+                _previewStickers.value = parseStickers(response)
+            }
+        }
+    }
+
+    /** Search stickers by emoji (searchStickers, verified in
+     *  td_api.tl). The result parses exactly like the
+     *  recent/favorite lists, so results can be sent by file
+     *  id straight from the grid. */
+    fun searchByEmoji(emojis: String) {
+        attach()
+        val query = emojis.trim()
+        if (query.isEmpty()) {
+            _searchResults.value = emptyList()
+            return
+        }
+        TdRepository.sendRaw(TdClient.request("searchStickers").apply {
+            put(
+                "sticker_type",
+                JSONObject().put("@type", "stickerTypeRegular")
+            )
+            put("emojis", query)
+            put("query", "")
+            put("input_language_codes", org.json.JSONArray())
+            put("offset", 0)
+            put("limit", 50)
+        }) { response ->
+            if (!TdClient.isError(response)) {
+                _searchResults.value = parseStickers(response)
+            }
+        }
+    }
+
+    fun clearSearch() {
+        _searchResults.value = emptyList()
     }
 
     /** Re-fetch the installed-set chips — the sticker-set
@@ -153,6 +277,16 @@ object MediaStore {
         _favoriteStickers.value = withPaths(_favoriteStickers.value)
         _savedAnimations.value = withPaths(_savedAnimations.value)
         _setStickers.value = withPaths(_setStickers.value)
+        _previewStickers.value = withPaths(_previewStickers.value)
+        _searchResults.value = withPaths(_searchResults.value)
+        _trendingSets.value = _trendingSets.value.map { set ->
+            val path = pathByFileId[set.thumbFileId]
+            if (path != null && set.thumbPath == null) {
+                set.copy(thumbPath = path)
+            } else {
+                set
+            }
+        }
     }
 
     private fun withPaths(list: List<MediaEntry>): List<MediaEntry> =
