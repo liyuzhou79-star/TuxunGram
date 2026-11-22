@@ -97,6 +97,59 @@ fun MediaViewerScreen(
     }
     val contextItems by MediaContextStore.items.collectAsState()
     val exhausted by MediaContextStore.exhausted.collectAsState()
+    MediaPager(
+        contextItems = contextItems,
+        exhausted = exhausted,
+        anchor = anchor,
+        albumGroup = albumGroup,
+        onLoadMore = { MediaContextStore.loadMore() },
+        onClose = onClose,
+        onPlayVideo = onPlayVideo
+    )
+}
+
+/** The same cross-message viewer fed from an explicit
+ *  item list instead of a chat-wide search (v0.9.32, Y6):
+ *  topic pages and comment threads open media with the
+ *  context limited to THEIR loaded window — the host
+ *  passes its messages' media items, whether older pages
+ *  remain, and its own load-older callback, which the
+ *  pager calls near the oldest end exactly like the chat
+ *  version calls the store. */
+@Composable
+fun MediaViewerListScreen(
+    items: List<MsgItem>,
+    anchor: MsgItem,
+    albumGroup: List<MsgItem>,
+    exhausted: Boolean,
+    onLoadMore: () -> Unit,
+    onClose: () -> Unit,
+    onPlayVideo: (MsgItem) -> Unit
+) {
+    MediaPager(
+        contextItems = items,
+        exhausted = exhausted,
+        anchor = anchor,
+        albumGroup = albumGroup,
+        onLoadMore = onLoadMore,
+        onClose = onClose,
+        onPlayVideo = onPlayVideo
+    )
+}
+
+/** The shared pager body: album group first (in id
+ *  order), then the rest of the context; paging near the
+ *  oldest end asks the source for more. */
+@Composable
+private fun MediaPager(
+    contextItems: List<MsgItem>,
+    exhausted: Boolean,
+    anchor: MsgItem,
+    albumGroup: List<MsgItem>,
+    onLoadMore: () -> Unit,
+    onClose: () -> Unit,
+    onPlayVideo: (MsgItem) -> Unit
+) {
     val display = remember(contextItems, albumGroup) {
         val groupIds = albumGroup.map { it.id }.toSet()
         val group = albumGroup.sortedBy { it.id }
@@ -137,7 +190,7 @@ fun MediaViewerScreen(
     // Near the oldest loaded end: pull the next page.
     LaunchedEffect(pagerState.currentPage, display.size) {
         if (pagerState.currentPage <= 5) {
-            MediaContextStore.loadMore()
+            onLoadMore()
         }
     }
     // The current page's zoom level gates pager swiping (a

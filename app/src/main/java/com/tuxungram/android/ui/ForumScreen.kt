@@ -532,6 +532,9 @@ fun ForumTopicView(
     var attachMenuOpen by remember { mutableStateOf(false) }
     // In-app video player target (v0.9.1, J3).
     var videoItem by remember { mutableStateOf<MsgItem?>(null) }
+    // Cross-message media viewer anchor (v0.9.32, Y6).
+    var mediaViewer by remember { mutableStateOf<MsgItem?>(null) }
+    val forumAllLoaded by ForumStore.allLoadedFlow.collectAsState()
 
     DisposableEffect(chatId, topic.topicId) {
         ForumStore.openTopic(chatId, topic.topicId)
@@ -604,6 +607,37 @@ fun ForumTopicView(
                     }
                 }
             )
+        }
+        // Media viewer (v0.9.32, Y6): the context is this
+        // topic's loaded window only; paging to the oldest
+        // end pulls the topic's own older pages.
+        val viewerAnchor = mediaViewer
+        if (viewerAnchor != null) {
+            val mediaItems = messages.filter {
+                it.kind == MsgKind.PHOTO || it.kind == MsgKind.VIDEO
+            }
+            val album = if (viewerAnchor.mediaAlbumId != 0L) {
+                messages.filter {
+                    it.mediaAlbumId == viewerAnchor.mediaAlbumId
+                }
+            } else {
+                emptyList()
+            }
+            MediaViewerListScreen(
+                items = mediaItems,
+                anchor = viewerAnchor,
+                albumGroup = album,
+                exhausted = forumAllLoaded,
+                onLoadMore = {
+                    if (!forumAllLoaded) ForumStore.loadOlder()
+                },
+                onClose = { mediaViewer = null },
+                onPlayVideo = { item ->
+                    mediaViewer = null
+                    videoItem = item
+                }
+            )
+            return@Column
         }
         val vItem = videoItem
         if (vItem?.filePath != null) {
@@ -681,6 +715,7 @@ fun ForumTopicView(
                             ForumStore.setPollAnswer(m, ids)
                         },
                         onOpenVideo = { m -> videoItem = m },
+                        onOpenMedia = { m -> mediaViewer = m },
                         onBotCommand = { ForumStore.sendText(it) },
                         onToggleChecklistTask = { m, task ->
                             ForumStore.markChecklistTask(m, task)

@@ -124,6 +124,11 @@ fun SimpleMessageBubble(
     onToggleReaction: (MsgItem, String) -> Unit,
     onVotePoll: (MsgItem, List<Int>) -> Unit,
     onOpenVideo: (MsgItem) -> Unit,
+    // Cross-message media viewer (v0.9.32, Y6): photos
+    // and videos open it, scoped to the hosting thread /
+    // topic. The default keeps any other caller on the
+    // old behaviour.
+    onOpenMedia: (MsgItem) -> Unit = {},
     onBotCommand: (String) -> Unit = {},
     // Checklist toggling (v0.9.30, W4): the hosting store
     // (thread / forum topic) marks tasks against its own
@@ -209,11 +214,14 @@ fun SimpleMessageBubble(
                 modifier = threadBubbleBg
                     .combinedClickable(
                         onClick = {
-                            if (msg.kind == MsgKind.VIDEO &&
-                                msg.filePath != null
+                            if (msg.kind == MsgKind.PHOTO ||
+                                msg.kind == MsgKind.VIDEO
                             ) {
-                                // In-app player (v0.9.1, J3).
-                                onOpenVideo(msg)
+                                // Cross-message viewer
+                                // (v0.9.32, Y6); its own
+                                // play button reaches the
+                                // in-app player.
+                                onOpenMedia(msg)
                             } else if (msg.kind == MsgKind.VIDEO_NOTE) {
                                 if (msg.filePath != null) {
                                     onOpenVideo(msg)
@@ -820,6 +828,9 @@ fun ThreadScreen(
     var attachMenuOpen by remember { mutableStateOf(false) }
     // In-app video player target (v0.9.1, J3).
     var videoItem by remember { mutableStateOf<MsgItem?>(null) }
+    // Cross-message media viewer anchor (v0.9.32, Y6).
+    var mediaViewer by remember { mutableStateOf<MsgItem?>(null) }
+    val threadAllLoaded by ThreadStore.allLoadedFlow.collectAsState()
 
     DisposableEffect(sourceChatId, postId) {
         ThreadStore.open(sourceChatId, postId)
@@ -897,6 +908,37 @@ fun ThreadScreen(
                     }
                 }
             )
+        }
+        // Media viewer (v0.9.32, Y6): the context is this
+        // thread's loaded window only; paging to the
+        // oldest end pulls the thread's own older pages.
+        val viewerAnchor = mediaViewer
+        if (viewerAnchor != null) {
+            val mediaItems = messages.filter {
+                it.kind == MsgKind.PHOTO || it.kind == MsgKind.VIDEO
+            }
+            val album = if (viewerAnchor.mediaAlbumId != 0L) {
+                messages.filter {
+                    it.mediaAlbumId == viewerAnchor.mediaAlbumId
+                }
+            } else {
+                emptyList()
+            }
+            MediaViewerListScreen(
+                items = mediaItems,
+                anchor = viewerAnchor,
+                albumGroup = album,
+                exhausted = threadAllLoaded,
+                onLoadMore = {
+                    if (!threadAllLoaded) ThreadStore.loadOlder()
+                },
+                onClose = { mediaViewer = null },
+                onPlayVideo = { item ->
+                    mediaViewer = null
+                    videoItem = item
+                }
+            )
+            return@Column
         }
         val vItem = videoItem
         if (vItem?.filePath != null) {
@@ -983,6 +1025,7 @@ fun ThreadScreen(
                             ThreadStore.setPollAnswer(m, ids)
                         },
                         onOpenVideo = { m -> videoItem = m },
+                        onOpenMedia = { m -> mediaViewer = m },
                         onBotCommand = { ThreadStore.sendText(it) },
                         onToggleChecklistTask = { m, task ->
                             ThreadStore.markChecklistTask(m, task)

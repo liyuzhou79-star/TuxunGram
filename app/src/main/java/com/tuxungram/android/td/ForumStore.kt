@@ -441,7 +441,13 @@ object ForumStore {
     private val byId = ConcurrentHashMap<Long, MsgItem>()
 
     @Volatile
-    private var allLoaded = false
+    // Exhaustion of the loaded window, exposed as a
+    // flow since v0.9.32 (Y6) for the media viewer.
+    private val _allLoaded = MutableStateFlow(false)
+    val allLoadedFlow: StateFlow<Boolean> = _allLoaded
+    private var allLoaded: Boolean
+        get() = _allLoaded.value
+        set(value) { _allLoaded.value = value }
 
     @Volatile
     private var loading = false
