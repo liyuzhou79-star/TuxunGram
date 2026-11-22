@@ -107,6 +107,14 @@ data class ProfileUi(
      *  infoLines remains the header's compact summary. */
     val username: String = "",
     val phone: String = "",
+    /** userFullInfo.birthdate formatted for display
+     *  (v0.9.33, Z4); empty when the server hands out no
+     *  birthdate — the row simply never shows, nothing is
+     *  invented. */
+    val birthday: String = "",
+    /** user.is_contact (v0.9.33, Z4): the 删除联系人 entry
+     *  only exists while this is true. */
+    val isContact: Boolean = false,
     val commonGroups: Int = 0,
     val memberCount: Int = 0,
     val adminCount: Int = 0
@@ -146,6 +154,8 @@ object ProfileStore {
     private var currentCanHideMembers = false
     private var currentUsername = ""
     private var currentPhone = ""
+    private var currentBirthday = ""
+    private var currentIsContact = false
     private var currentCommonGroups = 0
     private var currentMemberCount = 0
     private var currentAdminCount = 0
@@ -184,6 +194,8 @@ object ProfileStore {
         currentCanHideMembers = false
         currentUsername = ""
         currentPhone = ""
+        currentBirthday = ""
+        currentIsContact = false
         currentCommonGroups = 0
         currentMemberCount = 0
         currentAdminCount = 0
@@ -283,6 +295,8 @@ object ProfileStore {
             canHideMembers = currentCanHideMembers,
             username = currentUsername,
             phone = currentPhone,
+            birthday = currentBirthday,
+            isContact = currentIsContact,
             commonGroups = currentCommonGroups,
             memberCount = currentMemberCount,
             adminCount = currentAdminCount
@@ -324,6 +338,7 @@ object ProfileStore {
                 // server shares it (contacts); absent stays
                 // empty and the info row simply never shows.
                 currentPhone = user.optString("phone_number")
+                currentIsContact = user.optBoolean("is_contact")
             }
             done()
         }
@@ -337,8 +352,44 @@ object ProfileStore {
                 currentBlocked =
                     full.optJSONObject("block_list")?.optString("@type") ==
                     "blockListMain"
+                // Birthdate (v0.9.33, Z4): userFullInfo
+                // .birthdate {day, month, year}; year 0 means
+                // the year is hidden. Absent object = no row.
+                val bd = full.optJSONObject("birthdate")
+                currentBirthday = if (bd == null) {
+                    ""
+                } else {
+                    val day = bd.optInt("day")
+                    val month = bd.optInt("month")
+                    val year = bd.optInt("year")
+                    when {
+                        day <= 0 || month <= 0 -> ""
+                        year > 0 -> "$year 年 $month 月 $day 日"
+                        else -> "$month 月 $day 日"
+                    }
+                }
             }
             done()
+        }
+    }
+
+    /** Remove a user from my contacts (v0.9.33, Z4):
+     *  removeContacts — this tl's name for what other
+     *  clients call deleteContacts. It drops the address-
+     *  book entry only; the chat and its history stay. */
+    fun removeContact(userId: Long, onDone: (String?) -> Unit) {
+        val query = TdClient.request("removeContacts").apply {
+            put(
+                "user_ids",
+                org.json.JSONArray().apply { put(userId) }
+            )
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                onDone("删除失败，再试一次。（错误码 ${response.optInt("code")}）")
+            } else {
+                onDone(null)
+            }
         }
     }
 

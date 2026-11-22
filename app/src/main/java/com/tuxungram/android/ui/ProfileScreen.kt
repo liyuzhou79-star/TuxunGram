@@ -27,6 +27,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
@@ -169,6 +170,8 @@ fun ProfileScreen(
     val me by MeStore.me.collectAsState()
     var blockConfirm by remember { mutableStateOf(false) }
     var blockNotice by remember { mutableStateOf<String?>(null) }
+    var deleteContactConfirm by remember { mutableStateOf(false) }
+    var contactNotice by remember { mutableStateOf<String?>(null) }
     // Profile photo wall + viewer (v0.9.12, S3).
     val profilePhotos by ProfilePhotosStore.state.collectAsState()
     val wallNotice by ProfilePhotosStore.notice.collectAsState()
@@ -484,6 +487,7 @@ fun ProfileScreen(
             item(key = "div_actions") { ProfileDivider() }
             val hasInfoRows = p.phone.isNotEmpty() ||
                 p.username.isNotEmpty() ||
+                p.birthday.isNotEmpty() ||
                 p.description.isNotEmpty() ||
                 p.commonGroups > 0 ||
                 p.memberCount > 0 ||
@@ -523,6 +527,16 @@ fun ProfileScreen(
                                 label = "用户名",
                                 value = "@${p.username}",
                                 valueAccent = true
+                            )
+                        }
+                        if (p.userId != 0L && p.birthday.isNotEmpty()) {
+                            // Birthday (v0.9.33, Z4): shown
+                            // only when userFullInfo actually
+                            // carries a birthdate.
+                            ProfileInfoRow(
+                                icon = Icons.Filled.DateRange,
+                                label = "生日",
+                                value = p.birthday
                             )
                         }
                         if (p.memberCount > 0) {
@@ -962,6 +976,42 @@ fun ProfileScreen(
                         if (blockNotice != null) {
                             Text(
                                 blockNotice!!,
+                                fontSize = 13.sp, color = Color.Gray,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
+            if (p.userId != 0L && p.userId != me.id && p.isContact) {
+                // Delete contact (v0.9.33, Z4): removes the
+                // address-book entry only — the section says
+                // so in plain words before the confirm dialog
+                // repeats it.
+                item(key = "delete_contact") {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        TextButton(onClick = {
+                            deleteContactConfirm = true
+                        }) {
+                            Text(
+                                "删除联系人",
+                                color = Color(0xFFC62828)
+                            )
+                        }
+                        Text(
+                            "删的是通讯录里的这条联系人记录，" +
+                                "你们的聊天和聊天记录都还在。",
+                            fontSize = 12.sp, color = Color.Gray
+                        )
+                        if (contactNotice != null) {
+                            Text(
+                                contactNotice!!,
                                 fontSize = 13.sp, color = Color.Gray,
                                 modifier = Modifier.padding(top = 4.dp)
                             )
@@ -2087,6 +2137,31 @@ fun ProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { blockConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+    if (deleteContactConfirm && current != null && current.userId != 0L) {
+        AlertDialog(
+            onDismissRequest = { deleteContactConfirm = false },
+            title = { Text("删除联系人 ${current.title}？") },
+            text = {
+                Text("只删通讯录里的这条联系人记录。你们的聊天、聊天记录都不会删，对方也不会收到通知。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteContactConfirm = false
+                    ProfileStore.removeContact(current.userId) { error ->
+                        contactNotice = error ?: "已删除联系人。"
+                        if (error == null) ProfileStore.load(chatId)
+                    }
+                }) {
+                    Text("删除", color = Color(0xFFC62828))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteContactConfirm = false }) {
                     Text("取消")
                 }
             }

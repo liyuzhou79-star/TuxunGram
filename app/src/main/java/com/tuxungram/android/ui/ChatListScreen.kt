@@ -1435,6 +1435,7 @@ private fun SwipeActionCell(
 fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
     var menuOpen by remember { mutableStateOf(false) }
     var labelDialogOpen by remember { mutableStateOf(false) }
+    var folderDialogOpen by remember { mutableStateOf(false) }
     // Label dots data (v0.9.28, U4): the color indexes of
     // this chat's local labels, resolved only when the
     // Appearance switch for them is on.
@@ -1731,11 +1732,27 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                 }
             )
             DropdownMenuItem(
+                leadingIcon = {
+                    Icon(FolderIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                },
+                text = { Text("添加到文件夹") },
+                onClick = {
+                    menuOpen = false
+                    folderDialogOpen = true
+                }
+            )
+            DropdownMenuItem(
                 text = { Text("标签（本地）") },
                 onClick = {
                     menuOpen = false
                     labelDialogOpen = true
                 }
+            )
+        }
+        if (folderDialogOpen) {
+            FolderPickerDialog(
+                chatId = chat.id,
+                onDismiss = { folderDialogOpen = false }
             )
         }
         if (labelDialogOpen) {
@@ -1745,6 +1762,120 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
             )
         }
     }
+}
+
+/** Folder picker (v0.9.33, Z3): which chat folders this
+ *  chat belongs to, as checkboxes. Membership comes from
+ *  getChatListsToAddChat — a folder the chat can still be
+ *  added to is one it is not in yet — so the initial state
+ *  is the server's, never a guess; if that load fails the
+ *  boxes stay disabled behind an honest error line. Adding
+ *  goes through addChatToList; removing mirrors it through
+ *  FolderStore.removeChatFromFolder (this tl has no
+ *  removeChatFromList). Both directions are server state,
+ *  so other devices see the same folders. */
+@Composable
+fun FolderPickerDialog(chatId: Long, onDismiss: () -> Unit) {
+    val folders by ChatStore.folders.collectAsState()
+    // folderId -> member; null while the state is unknown.
+    var membership by remember(chatId) {
+        mutableStateOf<Map<Int, Boolean>?>(null)
+    }
+    var loadFailed by remember(chatId) { mutableStateOf(false) }
+    var notice by remember(chatId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(chatId) {
+        FolderStore.loadAddableFolders(chatId) { addable ->
+            if (addable == null) {
+                loadFailed = true
+            } else {
+                membership = folders.associate { tab ->
+                    tab.id to (tab.id !in addable)
+                }
+            }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("添加到文件夹") },
+        text = {
+            Column {
+                when {
+                    folders.isEmpty() -> Text(
+                        "还没有文件夹。在主页顶部的文件夹条" +
+                            "末尾点「+」就能新建一个，建好后回到" +
+                            "这里把对话加进去。",
+                        fontSize = 13.sp, color = Color.Gray
+                    )
+                    loadFailed -> Text(
+                        "文件夹状态没加载出来，先关掉重开试试。",
+                        fontSize = 13.sp, color = Color.Gray
+                    )
+                    membership == null -> Text(
+                        "正在加载…",
+                        fontSize = 13.sp, color = Color.Gray
+                    )
+                    else -> folders.forEach { tab ->
+                        val member = membership?.get(tab.id) == true
+                        Row(
+                            verticalAlignment =
+                                Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val target = !member
+                                    membership =
+                                        (membership ?: emptyMap()) +
+                                            (tab.id to target)
+                                    val done: (String?) -> Unit =
+                                        { error ->
+                                            if (error != null) {
+                                                membership =
+                                                    (membership
+                                                        ?: emptyMap()) +
+                                                        (tab.id to member)
+                                                notice = error
+                                            } else {
+                                                notice = null
+                                            }
+                                        }
+                                    if (target) {
+                                        FolderStore.addChatToFolder(
+                                            chatId, tab.id, done
+                                        )
+                                    } else {
+                                        FolderStore
+                                            .removeChatFromFolder(
+                                                chatId, tab.id, done
+                                            )
+                                    }
+                                }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Checkbox(
+                                checked = member,
+                                onCheckedChange = null
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                tab.name.ifEmpty { "文件夹" },
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+                if (notice != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        notice!!,
+                        fontSize = 12.sp, color = Color(0xFFC62828)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("完成") }
+        }
+    )
 }
 
 /** Local label picker (v0.9.25, R5): checkboxes for every

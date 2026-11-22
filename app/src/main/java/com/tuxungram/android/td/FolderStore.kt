@@ -107,6 +107,139 @@ object FolderStore {
         }
     }
 
+    /** Folder ids this chat can still be ADDED to
+     *  (getChatListsToAddChat, v0.9.33 Z3): TDLib returns the
+     *  main/archive counterpart plus every folder list the
+     *  chat is NOT already a member of, so a folder missing
+     *  from the result is one the chat is already in. A null
+     *  result means the load failed — the picker must not
+     *  guess membership from it. */
+    fun loadAddableFolders(
+        chatId: Long,
+        onResult: (Set<Int>?) -> Unit
+    ) {
+        val query = TdClient.request("getChatListsToAddChat").apply {
+            put("chat_id", chatId)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                onResult(null)
+                return@sendRaw
+            }
+            val arr = response.optJSONArray("chat_lists")
+            val out = HashSet<Int>()
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val list = arr.optJSONObject(i) ?: continue
+                    if (list.optString("@type") == "chatListFolder") {
+                        out.add(list.optInt("chat_folder_id"))
+                    }
+                }
+            }
+            onResult(out)
+        }
+    }
+
+    /** Add one chat to one folder (addChatToList with a
+     *  chatListFolder; TDLib edits the folder's filter on the
+     *  server, so every device sees the same membership). */
+    fun addChatToFolder(
+        chatId: Long,
+        folderId: Int,
+        onDone: (String?) -> Unit
+    ) {
+        val query = TdClient.request("addChatToList").apply {
+            put("chat_id", chatId)
+            put(
+                "chat_list",
+                JSONObject().apply {
+                    put("@type", "chatListFolder")
+                    put("chat_folder_id", folderId)
+                }
+            )
+        }
+        TdRepository.sendRaw(query) { response ->
+            onDone(
+                if (TdClient.isError(response)) {
+                    errorText(response)
+                } else {
+                    null
+                }
+            )
+        }
+    }
+
+    /** Remove one chat from one folder (v0.9.33, Z3). This
+     *  tl has NO removeChatFromList — removal is the exact
+     *  mirror of what TDLib's own add_dialog does server-side
+     *  (DialogFilter::include_dialog appends to included and
+     *  erases from excluded): fetch the full folder, drop the
+     *  chat from included/pinned, put it in excluded so a
+     *  rule-matched membership is cancelled too, and save the
+     *  whole folder back with editChatFolder. Every other
+     *  field rides along untouched, like save() above. */
+    fun removeChatFromFolder(
+        chatId: Long,
+        folderId: Int,
+        onDone: (String?) -> Unit
+    ) {
+        val fetch = TdClient.request("getChatFolder").apply {
+            put("chat_folder_id", folderId)
+        }
+        TdRepository.sendRaw(fetch) { folder ->
+            if (TdClient.isError(folder)) {
+                onDone(errorText(folder))
+                return@sendRaw
+            }
+            fun without(
+                key: String,
+                drop: Long,
+                add: Boolean
+            ): JSONArray {
+                val src = folder.optJSONArray(key)
+                val out = JSONArray()
+                var seen = false
+                if (src != null) {
+                    for (i in 0 until src.length()) {
+                        val v = src.optLong(i)
+                        if (v == drop) {
+                            seen = true
+                        } else {
+                            out.put(v)
+                        }
+                    }
+                }
+                if (add && !seen) out.put(drop)
+                return out
+            }
+            folder.put(
+                "included_chat_ids",
+                without("included_chat_ids", chatId, add = false)
+            )
+            folder.put(
+                "pinned_chat_ids",
+                without("pinned_chat_ids", chatId, add = false)
+            )
+            folder.put(
+                "excluded_chat_ids",
+                without("excluded_chat_ids", chatId, add = true)
+            )
+            val query = TdClient.request("editChatFolder").apply {
+                put("chat_folder_id", folderId)
+                put("folder", folder)
+            }
+            TdRepository.sendRaw(query) { response ->
+                onDone(
+                    if (TdClient.isError(response)) {
+                        errorText(response)
+                    } else {
+                        null
+                    }
+                )
+            }
+        }
+    }
+
     fun delete(folderId: Int, onDone: (String?) -> Unit) {
         val query = TdClient.request("deleteChatFolder").apply {
             put("chat_folder_id", folderId)
