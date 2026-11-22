@@ -213,6 +213,8 @@ fun SimpleMessageBubble(
                             RichMessageText(msg, onBotCommand = onBotCommand)
                         }
                     }
+                    MsgKind.LOCATION -> LocationBubbleContent(msg)
+                    MsgKind.CONTACT -> ContactBubbleContent(msg)
                     MsgKind.OTHER -> Text(
                         "[消息]",
                         color = Color.Gray,
