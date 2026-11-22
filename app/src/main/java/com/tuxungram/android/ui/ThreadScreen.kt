@@ -307,7 +307,15 @@ fun SimpleMessageBubble(
                         if (poll != null) {
                             SimplePollContent(msg, poll, onVotePoll)
                         } else {
-                            Text("[投票]", color = Color.Gray, fontSize = 14.sp)
+                            Text(
+                                "[投票]",
+                                color = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                fontSize = 14.sp
+                            )
                         }
                     }
                     MsgKind.PHOTO -> {
@@ -350,7 +358,11 @@ fun SimpleMessageBubble(
                     MsgKind.GAME -> GameBubbleContent(msg)
                     MsgKind.OTHER -> Text(
                         "[消息]",
-                        color = Color.Gray,
+                        color = if (outgoing) {
+                            palette.outTime
+                        } else {
+                            palette.inTime
+                        },
                         fontSize = 14.sp
                     )
                 }
@@ -406,7 +418,12 @@ fun SimpleMessageBubble(
                     when (msg.sendingState) {
                         "pending" -> Text(
                             "  发送中…",
-                            color = Color.Gray,
+                            // Footer palette (v0.9.18, Y5).
+                            color = if (outgoing) {
+                                palette.outTime
+                            } else {
+                                palette.inTime
+                            },
                             fontSize = 11.sp
                         )
                         "failed" -> Text(
@@ -522,9 +539,16 @@ fun SimplePollContent(
     }
     val voted = poll.options.any { it.chosen }
     val showResults = voted || poll.isClosed
+    // Sub-bubble palette (v0.9.18, Y5), outgoing-aware —
+    // mirrors the main chat's poll bubble.
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
+    val subText = if (outgoing) palette.outTime else palette.inTime
     Column(modifier = Modifier.width(240.dp)) {
         Text(
             poll.question,
+            color = mainText,
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold
         )
@@ -536,7 +560,7 @@ fun SimplePollContent(
                 poll.isAnonymous -> "匿名投票"
                 else -> "公开投票"
             } + if (poll.allowsMultiple) " · 可多选" else "",
-            color = Color.Gray, fontSize = 12.sp
+            color = subText, fontSize = 12.sp
         )
         Spacer(Modifier.height(6.dp))
         poll.options.forEachIndexed { index, option ->
@@ -545,7 +569,14 @@ fun SimplePollContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 3.dp)
-                    .background(Color(0x0D000000), RoundedCornerShape(8.dp))
+                    .background(
+                        if (outgoing) {
+                            Color.White.copy(alpha = 0.14f)
+                        } else {
+                            Color.Black.copy(alpha = 0.05f)
+                        },
+                        RoundedCornerShape(8.dp)
+                    )
                     .clickable(enabled = !poll.isClosed) {
                         if (poll.allowsMultiple) {
                             selected = if (index in selected) {
@@ -572,9 +603,15 @@ fun SimplePollContent(
                                 if (option.chosen ||
                                     (poll.isQuiz && option.isCorrect)
                                 ) {
-                                    MaterialTheme.colorScheme.primaryContainer
+                                    if (outgoing) {
+                                        Color.White.copy(alpha = 0.32f)
+                                    } else {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    }
+                                } else if (outgoing) {
+                                    Color.White.copy(alpha = 0.16f)
                                 } else {
-                                    Color(0x14000000)
+                                    Color.Black.copy(alpha = 0.08f)
                                 },
                                 RoundedCornerShape(8.dp)
                             )
@@ -583,13 +620,14 @@ fun SimplePollContent(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         option.text,
+                        color = mainText,
                         fontSize = 14.sp,
                         modifier = Modifier.weight(1f)
                     )
                     if (showResults) {
                         Text(
                             "$pct%",
-                            color = Color.Gray,
+                            color = subText,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -597,7 +635,11 @@ fun SimplePollContent(
                         Icon(
                             Icons.Filled.Check,
                             contentDescription = "已选",
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = if (outgoing) {
+                                Color.White
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
                             modifier = Modifier.size(17.dp)
                         )
                     }
@@ -616,11 +658,11 @@ fun SimplePollContent(
         Spacer(Modifier.height(4.dp))
         Text(
             "共 ${poll.totalVoters} 人参与",
-            color = Color.Gray, fontSize = 12.sp
+            color = subText, fontSize = 12.sp
         )
         if (poll.isQuiz && voted && poll.explanation.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
-            Text(poll.explanation, color = Color.Gray, fontSize = 12.sp)
+            Text(poll.explanation, color = subText, fontSize = 12.sp)
         }
     }
 }

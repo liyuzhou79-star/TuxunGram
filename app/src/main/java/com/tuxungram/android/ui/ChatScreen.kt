@@ -3981,7 +3981,15 @@ fun MessageBubble(
                         if (poll != null) {
                             PollBubbleContent(msg, poll)
                         } else {
-                            Text("[投票]", color = Color.Gray, fontSize = 14.sp)
+                            Text(
+                                "[投票]",
+                                color = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                fontSize = 14.sp
+                            )
                         }
                     }
                     MsgKind.PHOTO -> {
@@ -4039,7 +4047,11 @@ fun MessageBubble(
                     MsgKind.GAME -> GameBubbleContent(msg)
                     MsgKind.OTHER -> Text(
                         "[消息]",
-                        color = Color.Gray,
+                        color = if (outgoing) {
+                            palette.outTime
+                        } else {
+                            palette.inTime
+                        },
                         fontSize = 14.sp
                     )
                 }
@@ -4117,7 +4129,13 @@ fun MessageBubble(
                     when (msg.sendingState) {
                         "pending" -> Text(
                             "  发送中…",
-                            color = Color.Gray,
+                            // Footer palette (v0.9.18, Y5): the
+                            // pending note takes the time color.
+                            color = if (outgoing) {
+                                palette.outTime
+                            } else {
+                                palette.inTime
+                            },
                             fontSize = 11.sp
                         )
                         "failed" -> Text(
@@ -4150,10 +4168,17 @@ fun MessageBubble(
                 // bubble stays in the chat with its send time
                 // written under it, as TDLib returns it.
                 if (msg.scheduledAtSec > 0 || msg.scheduledWhenOnline) {
+                    // Scheduled label palette (v0.9.18, Y5):
+                    // the time color, like the footer next to it.
+                    val schedColor = if (outgoing) {
+                        palette.outTime
+                    } else {
+                        palette.inTime
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             ClockIcon, contentDescription = null,
-                            tint = Color.Gray, modifier = Modifier.size(12.dp)
+                            tint = schedColor, modifier = Modifier.size(12.dp)
                         )
                         Spacer(Modifier.width(3.dp))
                         Text(
@@ -4162,7 +4187,7 @@ fun MessageBubble(
                             } else {
                                 "定时 · 对方上线时发送"
                             },
-                            color = Color.Gray,
+                            color = schedColor,
                             fontSize = 11.sp
                         )
                     }
@@ -4878,7 +4903,8 @@ fun AlbumCell(
         modifier = Modifier
             .size(114.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFFE0E0E0))
+            // Placeholder palette (v0.9.18, Y5).
+            .background(OfficialTheme.current().inBubble)
             .clickable {
                 when {
                     item.kind == MsgKind.PHOTO -> onOpenPhoto(item)
@@ -4933,12 +4959,18 @@ fun AlbumCell(
 fun TranslationArea(chatId: Long, msg: MsgItem) {
     val translations by MessageStore.translations.collectAsState()
     val translating by MessageStore.translating.collectAsState()
+    // Sub-bubble palette (v0.9.18, Y5), outgoing-aware —
+    // the legacy gray-blue label color is gone.
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
+    val subText = if (outgoing) palette.outTime else palette.inTime
     val key = chatId to msg.id
     val t = translations[key]
     if (key in translating) {
         Text(
             "正在翻译…",
-            color = Color.Gray,
+            color = subText,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp)
         )
@@ -4948,12 +4980,22 @@ fun TranslationArea(chatId: Long, msg: MsgItem) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(1.dp)
-                    .background(Color(0x22000000))
+                    .background(
+                        if (outgoing) {
+                            Color.White.copy(alpha = 0.25f)
+                        } else {
+                            Color.Black.copy(alpha = 0.13f)
+                        }
+                    )
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "译文 · ${t.langLabel}",
-                    color = Color(0xFF5B7C99),
+                    color = if (outgoing) {
+                        palette.outText
+                    } else {
+                        palette.accentText
+                    },
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
@@ -4964,7 +5006,7 @@ fun TranslationArea(chatId: Long, msg: MsgItem) {
                     Text("收起", fontSize = 11.sp)
                 }
             }
-            Text(t.text, fontSize = 14.sp)
+            Text(t.text, color = mainText, fontSize = 14.sp)
         }
     }
 }
@@ -5162,6 +5204,13 @@ fun readPickedContact(
 @Composable
 fun LocationBubbleContent(msg: MsgItem) {
     val context = LocalContext.current
+    // Sub-bubble palette (v0.9.18, Y5), outgoing-aware; the
+    // map tile takes the neutral in-bubble color instead of
+    // the hardcoded light green that broke the night theme.
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
+    val subText = if (outgoing) palette.outTime else palette.inTime
     Column(
         modifier = Modifier
             .width(208.dp)
@@ -5184,20 +5233,26 @@ fun LocationBubbleContent(msg: MsgItem) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(104.dp)
-                .background(Color(0xFFD9EAD3), RoundedCornerShape(8.dp)),
+                .background(palette.inBubble, RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center
         ) {
             Text("📍", fontSize = 36.sp)
         }
         Spacer(Modifier.height(5.dp))
-        Text("位置", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "位置",
+            color = mainText,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold
+        )
         Text(
             "${formatCoord(msg.latitude)}, ${formatCoord(msg.longitude)}",
-            color = Color.Gray, fontSize = 12.sp
+            color = subText, fontSize = 12.sp
         )
         Text(
             "点开在地图里看",
-            color = MaterialTheme.colorScheme.primary, fontSize = 12.sp
+            color = if (outgoing) palette.outText else palette.accentText,
+            fontSize = 12.sp
         )
     }
 }
@@ -5209,13 +5264,28 @@ fun LocationBubbleContent(msg: MsgItem) {
 @Composable
 fun ContactBubbleContent(msg: MsgItem) {
     val context = LocalContext.current
+    // Sub-bubble palette (v0.9.18, Y5): the avatar disc
+    // takes the official name color of the contact's user
+    // (accent when the card carries no user id); name and
+    // phone follow the bubble's text / time colors.
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
+    val subText = if (outgoing) palette.outTime else palette.inTime
     Column(modifier = Modifier.width(208.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
                     .size(40.dp)
                     .background(
-                        MaterialTheme.colorScheme.primary, CircleShape
+                        if (msg.contactUserId != 0L) {
+                            OfficialTheme.nameColor(
+                                msg.contactUserId, OfficialTheme.dark
+                            )
+                        } else {
+                            palette.accent
+                        },
+                        CircleShape
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -5230,11 +5300,12 @@ fun ContactBubbleContent(msg: MsgItem) {
             Column {
                 Text(
                     msg.contactName.ifEmpty { "联系人" },
+                    color = mainText,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1
                 )
-                Text(msg.contactPhone, color = Color.Gray, fontSize = 13.sp)
+                Text(msg.contactPhone, color = subText, fontSize = 13.sp)
             }
         }
         Row {
@@ -5290,6 +5361,13 @@ fun openFileWithSystem(context: android.content.Context, path: String, mime: Str
 
 @Composable
 fun FileBubbleContent(msg: MsgItem) {
+    // Sub-bubble palette (v0.9.18, Y5): colors come from
+    // the official palette, outgoing-aware — the legacy
+    // gray-blue tile and bare grays are gone.
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
+    val subText = if (outgoing) palette.outTime else palette.inTime
     val tag = when (msg.kind) {
         MsgKind.VIDEO -> "▶"
         MsgKind.VOICE -> "语音"
@@ -5312,7 +5390,14 @@ fun FileBubbleContent(msg: MsgItem) {
         Box(
             modifier = Modifier
                 .size(42.dp)
-                .background(Color(0xFF5B7C99), RoundedCornerShape(8.dp)),
+                .background(
+                    if (outgoing) {
+                        Color.White.copy(alpha = 0.22f)
+                    } else {
+                        palette.accent
+                    },
+                    RoundedCornerShape(8.dp)
+                ),
             contentAlignment = Alignment.Center
         ) {
             Text(tag, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -5321,11 +5406,12 @@ fun FileBubbleContent(msg: MsgItem) {
         Column {
             Text(
                 msg.fileName.ifEmpty { "文件" },
+                color = mainText,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2
             )
-            Text(meta, color = Color.Gray, fontSize = 12.sp)
+            Text(meta, color = subText, fontSize = 12.sp)
         }
     }
 }
@@ -5360,10 +5446,15 @@ fun PhotoBubbleContent(msg: MsgItem) {
         Box(
             modifier = Modifier
                 .size(width = 220.dp, height = heightDp.dp)
-                .background(Color(0xFFE0E0E0)),
+                // Placeholder palette (v0.9.18, Y5).
+                .background(OfficialTheme.current().inBubble),
             contentAlignment = Alignment.Center
         ) {
-            Text("图片加载中…", color = Color.Gray, fontSize = 13.sp)
+            Text(
+                "图片加载中…",
+                color = OfficialTheme.current().textSecondary,
+                fontSize = 13.sp
+            )
         }
     }
 }
@@ -5403,7 +5494,12 @@ fun VideoNoteBubbleContent(msg: MsgItem) {
         modifier = Modifier
             .size(200.dp)
             .clip(CircleShape)
-            .background(Color(0xFF37474F)),
+            // Placeholder disc (v0.9.18, Y5): the neutral
+            // secondary color instead of the legacy blue-gray;
+            // the center / duration overlays stay translucent
+            // black — media overlays read the same on both
+            // themes.
+            .background(OfficialTheme.current().textSecondary),
         contentAlignment = Alignment.Center
     ) {
         val bmp = bitmap
@@ -5487,7 +5583,12 @@ fun DiceBubbleContent(msg: MsgItem) {
                 "…"
             },
             fontSize = 13.sp,
-            color = Color.Gray,
+            // Sub-bubble palette (v0.9.18, Y5).
+            color = if (msg.outgoing) {
+                OfficialTheme.current().outTime
+            } else {
+                OfficialTheme.current().inTime
+            },
             modifier = Modifier.padding(top = 2.dp)
         )
     }
@@ -5525,8 +5626,15 @@ fun GameBubbleContent(msg: MsgItem) {
             )
             Spacer(Modifier.height(6.dp))
         }
+        // Sub-bubble palette (v0.9.18, Y5), outgoing-aware.
+        val gamePalette = OfficialTheme.current()
         Text(
             msg.gameTitle.ifEmpty { "游戏" },
+            color = if (msg.outgoing) {
+                gamePalette.outText
+            } else {
+                gamePalette.inText
+            },
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold
         )
@@ -5534,7 +5642,11 @@ fun GameBubbleContent(msg: MsgItem) {
             Text(
                 msg.gameDescription,
                 fontSize = 12.sp,
-                color = Color.Gray,
+                color = if (msg.outgoing) {
+                    gamePalette.outText.copy(alpha = 0.8f)
+                } else {
+                    gamePalette.textSecondary
+                },
                 maxLines = 3,
                 modifier = Modifier.padding(top = 2.dp)
             )
@@ -5781,12 +5893,14 @@ fun AnimationBubbleContent(msg: MsgItem) {
             Box(
                 modifier = Modifier
                     .size(width = 220.dp, height = heightDp.dp)
-                    .background(Color(0xFFE0E0E0)),
+                    // Placeholder palette (v0.9.18, Y5).
+                    .background(OfficialTheme.current().inBubble),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     if (msg.filePath == null) "动图下载中…" else "动图",
-                    color = Color.Gray, fontSize = 13.sp
+                    color = OfficialTheme.current().textSecondary,
+                    fontSize = 13.sp
                 )
             }
         }
@@ -5817,8 +5931,18 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
     }
     val voted = poll.options.any { it.chosen }
     val showResults = voted || poll.isClosed
+    // Sub-bubble palette (v0.9.18, Y5), outgoing-aware.
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
+    val subText = if (outgoing) palette.outTime else palette.inTime
     Column(modifier = Modifier.width(240.dp)) {
-        Text(poll.question, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            poll.question,
+            color = mainText,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold
+        )
         Spacer(Modifier.height(2.dp))
         Text(
             when {
@@ -5827,7 +5951,7 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
                 poll.isAnonymous -> "匿名投票"
                 else -> "公开投票"
             } + if (poll.allowsMultiple) " · 可多选" else "",
-            color = Color.Gray, fontSize = 12.sp
+            color = subText, fontSize = 12.sp
         )
         Spacer(Modifier.height(6.dp))
         poll.options.forEachIndexed { index, option ->
@@ -5836,7 +5960,14 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 3.dp)
-                    .background(Color(0x0D000000), RoundedCornerShape(8.dp))
+                    .background(
+                        if (outgoing) {
+                            Color.White.copy(alpha = 0.14f)
+                        } else {
+                            Color.Black.copy(alpha = 0.05f)
+                        },
+                        RoundedCornerShape(8.dp)
+                    )
                     .clickable(enabled = !poll.isClosed) {
                         if (poll.allowsMultiple) {
                             selected = if (index in selected) {
@@ -5861,9 +5992,15 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
                             .height(30.dp)
                             .background(
                                 if (option.chosen || (poll.isQuiz && option.isCorrect)) {
-                                    MaterialTheme.colorScheme.primaryContainer
+                                    if (outgoing) {
+                                        Color.White.copy(alpha = 0.32f)
+                                    } else {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    }
+                                } else if (outgoing) {
+                                    Color.White.copy(alpha = 0.16f)
                                 } else {
-                                    Color(0x14000000)
+                                    Color.Black.copy(alpha = 0.08f)
                                 },
                                 RoundedCornerShape(8.dp)
                             )
@@ -5872,20 +6009,25 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         option.text,
+                        color = mainText,
                         fontSize = 14.sp,
                         modifier = Modifier.weight(1f)
                     )
                     if (showResults) {
                         Text(
                             "$pct%",
-                            color = Color.Gray,
+                            color = subText,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     } else if (index in selected && poll.allowsMultiple) {
                         Icon(
                             Icons.Filled.Check, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = if (outgoing) {
+                                Color.White
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -5907,11 +6049,11 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
         Spacer(Modifier.height(4.dp))
         Text(
             "共 ${poll.totalVoters} 人参与",
-            color = Color.Gray, fontSize = 12.sp
+            color = subText, fontSize = 12.sp
         )
         if (poll.isQuiz && voted && poll.explanation.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
-            Text(poll.explanation, color = Color.Gray, fontSize = 12.sp)
+            Text(poll.explanation, color = subText, fontSize = 12.sp)
         }
     }
 }
@@ -5922,6 +6064,14 @@ private fun PollBubbleContent(msg: MsgItem, poll: PollUi) {
 @Composable
 fun LinkPreviewCard(msg: MsgItem) {
     val context = LocalContext.current
+    // Sub-bubble palette (v0.9.18, Y5), outgoing-aware, in
+    // both themes: the card wash is an alpha overlay on the
+    // bubble color, the site name takes the accent text
+    // color (white on outgoing), the description the
+    // secondary text color.
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
     val photoPath = msg.lpPhotoPath
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, photoPath
@@ -5935,7 +6085,14 @@ fun LinkPreviewCard(msg: MsgItem) {
     Column(
         modifier = Modifier
             .width(240.dp)
-            .background(Color(0x0D000000), RoundedCornerShape(8.dp))
+            .background(
+                if (outgoing) {
+                    Color.White.copy(alpha = 0.14f)
+                } else {
+                    Color.Black.copy(alpha = 0.05f)
+                },
+                RoundedCornerShape(8.dp)
+            )
             .clickable {
                 try {
                     com.tuxungram.android.td.LinkRouter
@@ -5949,16 +6106,35 @@ fun LinkPreviewCard(msg: MsgItem) {
         if (msg.lpSiteName.isNotEmpty()) {
             Text(
                 msg.lpSiteName,
-                color = MaterialTheme.colorScheme.primary,
+                color = if (outgoing) {
+                    palette.outText
+                } else {
+                    palette.accentText
+                },
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
             )
         }
         if (msg.lpTitle.isNotEmpty()) {
-            Text(msg.lpTitle, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            Text(
+                msg.lpTitle,
+                color = mainText,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2
+            )
         }
         if (msg.lpDescription.isNotEmpty()) {
-            Text(msg.lpDescription, color = Color.Gray, fontSize = 12.sp, maxLines = 3)
+            Text(
+                msg.lpDescription,
+                color = if (outgoing) {
+                    palette.outText.copy(alpha = 0.8f)
+                } else {
+                    palette.textSecondary
+                },
+                fontSize = 12.sp,
+                maxLines = 3
+            )
         }
         val bmp = bitmap
         if (bmp != null) {
@@ -6518,6 +6694,10 @@ fun VoiceBubbleContent(msg: MsgItem) {
     val durationMs by VoicePlayer.durationMs.collectAsState()
     val speed by UiSettings.voiceSpeed.collectAsState()
     val active = activePath == path
+    // Sub-bubble palette (v0.9.18, Y5), outgoing-aware.
+    val palette = OfficialTheme.current()
+    val mainText = if (msg.outgoing) palette.outText else palette.inText
+    val subText = if (msg.outgoing) palette.outTime else palette.inTime
     val totalMs = if (active && durationMs > 0) {
         durationMs
     } else {
@@ -6532,7 +6712,14 @@ fun VoiceBubbleContent(msg: MsgItem) {
         Box(
             modifier = Modifier
                 .size(42.dp)
-                .background(Color(0xFF5B7C99), CircleShape)
+                .background(
+                    if (msg.outgoing) {
+                        Color.White.copy(alpha = 0.22f)
+                    } else {
+                        palette.accent
+                    },
+                    CircleShape
+                )
                 .clickable { VoicePlayer.toggle(path) },
             contentAlignment = Alignment.Center
         ) {
@@ -6546,7 +6733,8 @@ fun VoiceBubbleContent(msg: MsgItem) {
             WaveformBars(
                 waveform = msg.waveform,
                 fraction = fraction,
-                seekable = active
+                seekable = active,
+                outgoing = msg.outgoing
             ) { f -> VoicePlayer.seekToFraction(f) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -6556,20 +6744,26 @@ fun VoiceBubbleContent(msg: MsgItem) {
                     } else {
                         formatDuration(msg.durationSec)
                     },
-                    color = Color.Gray, fontSize = 12.sp
+                    color = subText, fontSize = 12.sp
                 )
                 if (active) {
                     Spacer(Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
                             .background(
-                                Color(0x14000000), RoundedCornerShape(8.dp)
+                                if (msg.outgoing) {
+                                    Color.White.copy(alpha = 0.20f)
+                                } else {
+                                    Color.Black.copy(alpha = 0.07f)
+                                },
+                                RoundedCornerShape(8.dp)
                             )
                             .clickable { VoicePlayer.cycleSpeed() }
                             .padding(horizontal = 7.dp, vertical = 2.dp)
                     ) {
                         Text(
                             "${trimSpeed(speed)}x",
+                            color = mainText,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -6595,8 +6789,13 @@ private fun WaveformBars(
     waveform: List<Int>,
     fraction: Float,
     seekable: Boolean,
+    outgoing: Boolean,
     onSeek: (Float) -> Unit
 ) {
+    // Bar colors (v0.9.18, Y5): played = accent (incoming)
+    // or white (outgoing); unplayed = the time color at low
+    // alpha — the legacy gray-blue / gray pair is gone.
+    val palette = OfficialTheme.current()
     val bars = 36
     val heights = remember(waveform) {
         if (waveform.isEmpty()) {
@@ -6634,7 +6833,13 @@ private fun WaveformBars(
                     .width(3.dp)
                     .height((30 * h).dp)
                     .background(
-                        if (played) Color(0xFF5B7C99) else Color(0xFFBDBDBD),
+                        if (played) {
+                            if (outgoing) Color.White else palette.accent
+                        } else if (outgoing) {
+                            Color.White.copy(alpha = 0.35f)
+                        } else {
+                            palette.inTime.copy(alpha = 0.45f)
+                        },
                         RoundedCornerShape(2.dp)
                     )
             )
