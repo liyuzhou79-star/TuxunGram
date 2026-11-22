@@ -79,6 +79,20 @@ object TdRepository {
      *  used by stores that treat some errors as signals (e.g.
      *  loadChats answering 404 when the list is exhausted). */
     fun sendRaw(query: JSONObject, callback: (JSONObject) -> Unit) {
+        // Send sound (v0.9.29, V1): every user-initiated send
+        // in the app — main chat, topics, threads, albums,
+        // forwards, resends — funnels through this one method
+        // on the foreground client, so the official "message
+        // sent" tone hooks in here exactly once. SoundFx
+        // itself checks the user's switch and that the app is
+        // in the foreground (a notification quick reply sent
+        // from the background stays silent). Background
+        // accounts use their own TdClient instances and never
+        // pass through here.
+        when (query.optString("@type")) {
+            "sendMessage", "sendMessageAlbum",
+            "forwardMessages", "resendMessages" -> SoundFx.send()
+        }
         client?.send(query, callback)
     }
 

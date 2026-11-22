@@ -123,6 +123,7 @@ import com.tuxungram.android.td.InlineBtn
 import com.tuxungram.android.td.MediaEntry
 import com.tuxungram.android.td.MediaStore
 import com.tuxungram.android.td.MessageStore
+import com.tuxungram.android.td.SoundFx
 import com.tuxungram.android.td.AnimEffect
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
@@ -790,6 +791,10 @@ fun ChatScreen(
         if (voiceRecorder.start(context)) {
             recording = true
             recordSeconds = 0
+            // Recording cues (v0.9.29, V1): one beep as the
+            // mic goes live, one when it stops (the two stop
+            // buttons below), like the official client.
+            SoundFx.recordStart()
         }
     }
     val micPermission = rememberLauncherForActivityResult(
@@ -2886,12 +2891,14 @@ fun ChatScreen(
                     TextButton(onClick = {
                         voiceRecorder.cancel()
                         recording = false
+                        SoundFx.recordStop()
                     }) {
                         Text("取消")
                     }
                     Button(onClick = {
                         val result = voiceRecorder.stop()
                         recording = false
+                        SoundFx.recordStop()
                         if (result != null) {
                             MessageStore.clearSendError()
                             MessageStore.sendVoiceNote(

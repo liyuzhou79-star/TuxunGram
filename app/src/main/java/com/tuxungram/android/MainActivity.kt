@@ -115,6 +115,7 @@ import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.MessageStore
+import com.tuxungram.android.td.SoundFx
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.ContactsStore
@@ -284,9 +285,13 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         AppLock.onForeground()
+        // In-app sounds (v0.9.29, V1) only play while the
+        // user is actually in the app.
+        SoundFx.appInForeground = true
     }
 
     override fun onStop() {
+        SoundFx.appInForeground = false
         AppLock.onBackground()
         super.onStop()
     }

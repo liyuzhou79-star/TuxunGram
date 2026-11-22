@@ -26,6 +26,7 @@ object UiSettings {
     private const val KEY_FONT_SIZE = "font_size"
     private const val KEY_DUCK_BAR = "duck_bar"
     private const val KEY_LABEL_DOTS = "label_dots"
+    private const val KEY_SOUND_FX = "sound_fx"
     private const val KEY_VOICE_SPEED = "voice_speed"
     private const val KEY_SEEN_VERSION = "seen_version"
 
@@ -85,6 +86,12 @@ object UiSettings {
 
     private val _keepAlive = MutableStateFlow(true)
     val keepAlive: StateFlow<Boolean> = _keepAlive
+
+    /** In-app message sounds (v0.9.29, V1): the send /
+     *  arrival / recording tones SoundFx plays, on by
+     *  default like in the official client. */
+    private val _soundFx = MutableStateFlow(true)
+    val soundFx: StateFlow<Boolean> = _soundFx
 
     private val _themeMode = MutableStateFlow(THEME_SYSTEM)
     val themeMode: StateFlow<Int> = _themeMode
@@ -159,6 +166,7 @@ object UiSettings {
         val saved = prefs.getInt(KEY_UNREAD_CAP, 999)
         _unreadCap.value = if (saved in UNREAD_CAPS) saved else 999
         _keepAlive.value = prefs.getBoolean(KEY_KEEP_ALIVE, true)
+        _soundFx.value = prefs.getBoolean(KEY_SOUND_FX, true)
         val mode = prefs.getInt(KEY_THEME_MODE, THEME_SYSTEM)
         _themeMode.value =
             if (mode in THEME_SYSTEM..THEME_DARK) mode else THEME_SYSTEM
@@ -327,6 +335,11 @@ object UiSettings {
         val editor = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
         block(editor)
         editor.apply()
+    }
+
+    fun setSoundFx(on: Boolean) {
+        _soundFx.value = on
+        persist { it.putBoolean(KEY_SOUND_FX, on) }
     }
 
     fun setKeepAlive(on: Boolean) {

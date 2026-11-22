@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -1571,6 +1572,32 @@ fun SettingsScreen(
             "一句实话：有些手机系统管后台管得严（比如魅族），光在这里打开还不够——请再去系统设置里给 TuxunGram 开「自启动」，电池用量选「不限制」，不然把 App 从最近任务里划掉后，系统可能还是会把它冻住，通知就迟到甚至收不到。这一层是系统说了算，App 里改不了。",
             color = Color.Gray, fontSize = 13.sp
         )
+        Spacer(Modifier.height(10.dp))
+        // In-app message sounds (v0.9.29, V1): the send /
+        // arrival / recording tones, timed like the official
+        // client's. Synthesized locally; muted chats stay
+        // silent; the volume follows the system notification
+        // stream.
+        val soundFx by UiSettings.soundFx.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.VolumeUp, contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(23.dp)
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("音效")
+                Text(
+                    "发送消息、打开着的对话收到新消息、录语音时播放短提示音；静音的对话不响",
+                    color = Color.Gray, fontSize = 12.sp
+                )
+            }
+            Switch(
+                checked = soundFx,
+                onCheckedChange = { UiSettings.setSoundFx(it) }
+            )
+        }
         }
         Spacer(Modifier.height(14.dp))
         SettingsGroup {

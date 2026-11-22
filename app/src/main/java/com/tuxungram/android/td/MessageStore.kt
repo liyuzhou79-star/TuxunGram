@@ -2368,7 +2368,23 @@ object MessageStore {
                 val item = parseMessage(msg)
                 byId[item.id] = item
                 publish()
-                if (!item.outgoing) markRead(currentChatId, item.id)
+                if (!item.outgoing) {
+                    markRead(currentChatId, item.id)
+                    // Arrival tone (v0.9.29, V1): only for a
+                    // genuinely new message in the chat that is
+                    // open — not for muted chats, and not for
+                    // old messages TDLib replays while syncing
+                    // (the 120 s freshness window matches the
+                    // entry animation's). SoundFx throttles
+                    // bursts and checks switch + foreground.
+                    val nowSec =
+                        (System.currentTimeMillis() / 1000).toInt()
+                    if (item.dateSeconds >= nowSec - 120 &&
+                        ChatStore.itemOf(currentChatId)?.isMuted != true
+                    ) {
+                        SoundFx.arrival()
+                    }
+                }
             }
             "updateMessageSendSucceeded" -> {
                 val msg = update.optJSONObject("message") ?: return
