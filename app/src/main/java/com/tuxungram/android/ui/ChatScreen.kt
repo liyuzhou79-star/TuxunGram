@@ -114,6 +114,9 @@ import com.tuxungram.android.td.SecretChatStore
 import com.tuxungram.android.td.StickerSetStore
 import com.tuxungram.android.td.TrendingSetUi
 import com.tuxungram.android.td.SendModifiers
+import com.tuxungram.android.td.BotStore
+import com.tuxungram.android.td.ReplyKb
+import com.tuxungram.android.td.TdClient
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.ThreadStore
 import com.tuxungram.android.td.UiSettings
@@ -276,6 +279,7 @@ fun ChatScreen(
     val latestInput by rememberUpdatedState(input)
     DisposableEffect(chatId) {
         MessageStore.open(chatId)
+        BotStore.ensure(chatId)
         // Admin capabilities for this chat (Batch 3, C4): drives
         // the "delete for everyone" entry on other people's
         // messages.
@@ -326,6 +330,14 @@ fun ChatScreen(
         }
     }
 
+    // Bot adaptation (v0.9.9, W2): the bot surface of this
+    // chat (slash commands / group bots) and the live reply
+    // keyboard state. kbDismissedSource hides a one-time
+    // keyboard locally after its first tap, until the bot
+    // sends a newer keyboard (a different source message).
+    val botUi by BotStore.state.collectAsState()
+    val replyKb by MessageStore.replyKb.collectAsState()
+    var kbDismissedSource by remember(chatId) { mutableStateOf(0L) }
     // Pinned bar state (v0.9.4, N3): tapping the bar cycles
     // through the pinned messages; 全部 opens the full list.
     val pinnedMessages by MessageStore.pinnedMessages.collectAsState()
@@ -1214,6 +1226,196 @@ fun ChatScreen(
                     }
                 }
             }
+            if (!recording) {
+                // Bot surfaces (v0.9.9, W2), directly above the
+                // input row: the /start button, the force-reply
+                // hint, the slash-command popup and the reply
+                // keyboard grid.
+                val bot = botUi?.takeIf { it.chatId == chatId }
+                val kb = replyKb
+                if (bot?.isBot == true &&
+                    messages.none { it.outgoing } &&
+                    (messages.isNotEmpty() || showEmptyHistory)
+                ) {
+                    Button(
+                        onClick = {
+                            // sendBotStartMessage (td_api.tl):
+                            // the canonical /start path; an empty
+                            // parameter is a plain start.
+                            val query = TdClient.request(
+                                "sendBotStartMessage"
+                            ).apply {
+                                put("bot_user_id", bot.botUserId)
+                                put("chat_id", chatId)
+                                put("parameter", "")
+                            }
+                            TdRepository.sendRaw(query) {}
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Icon(
+                            BotIcon, contentDescription = null,
+                            modifier = Modifier.size(19.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("开始")
+                    }
+                }
+                val forceHint = when (kb) {
+                    is ReplyKb.ForceReply -> kb.placeholder
+                    is ReplyKb.Shown ->
+                        if (kb.forceReply) kb.placeholder else null
+                    else -> null
+                }
+                if (forceHint != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme
+                                    .surfaceVariant
+                            )
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            ReplyIcon, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            forceHint.ifEmpty { "机器人要求回复一条消息" },
+                            fontSize = 13.sp,
+                            color = Color.Gray
+                        )
+                    }
+                }
+                // Slash popup: while the input is a bare /prefix
+                // (no space yet), list the matching commands of
+                // this chat's bot(s) above the input.
+                val slashItems = ArrayList<Triple<String, String, String>>()
+                if (bot?.isBot == true) {
+                    for (c in bot.commands) {
+                        slashItems.add(
+                            Triple(
+                                "/${c.command} ",
+                                "/${c.command}",
+                                c.description
+                            )
+                        )
+                    }
+                } else if (bot != null) {
+                    for (gb in bot.groupBots) {
+                        for (c in gb.commands) {
+                            val shown = if (gb.username.isEmpty()) {
+                                "/${c.command}"
+                            } else {
+                                "/${c.command}@${gb.username}"
+                            }
+                            slashItems.add(
+                                Triple("$shown ", shown, c.description)
+                            )
+                        }
+                    }
+                }
+                val slashQuery = input.trim()
+                val slashMatches = if (
+                    slashQuery.startsWith("/") &&
+                    !slashQuery.contains(" ") &&
+                    slashItems.isNotEmpty()
+                ) {
+                    slashItems.filter {
+                        it.second.startsWith(slashQuery)
+                    }.take(6)
+                } else {
+                    emptyList()
+                }
+                if (slashMatches.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme
+                                    .surfaceContainerLow
+                            )
+                    ) {
+                        for (item in slashMatches) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { input = item.first }
+                                    .padding(
+                                        horizontal = 14.dp,
+                                        vertical = 9.dp
+                                    ),
+                                verticalAlignment =
+                                    Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    BotIcon, contentDescription = null,
+                                    tint = MaterialTheme.colorScheme
+                                        .primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    item.second,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (item.third.isNotEmpty()) {
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        item.third,
+                                        fontSize = 12.5.sp,
+                                        color = Color.Gray,
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                // Reply keyboard grid: rows straight from the
+                // markup; a text button sends its label as a
+                // message, other button types render disabled.
+                if (kb is ReplyKb.Shown &&
+                    kbDismissedSource != kb.sourceMessageId
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                    ) {
+                        for (row in kb.rows) {
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                for (btn in row) {
+                                    Button(
+                                        enabled = btn.isText,
+                                        onClick = {
+                                            MessageStore.clearSendError()
+                                            MessageStore.sendText(btn.text)
+                                            if (kb.oneTime) {
+                                                kbDismissedSource =
+                                                    kb.sourceMessageId
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(3.dp)
+                                    ) {
+                                        Text(btn.text, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if (recording) {
                 Row(
                     modifier = Modifier
@@ -1389,10 +1591,34 @@ fun ChatScreen(
                         modifier = Modifier.size(24.dp)
                     )
                 }
+                if (botUi?.takeIf { it.chatId == chatId }
+                        ?.let { it.commands.isNotEmpty() || it.groupBots.isNotEmpty() } == true
+                ) {
+                    // Slash entry (W2): one tap puts a "/" in the
+                    // box, which raises the command popup.
+                    IconButton(onClick = { if (!input.startsWith("/")) input = "/$input" }) {
+                        Text(
+                            "/",
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Gray
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
-                    placeholder = { Text("消息") },
+                    placeholder = {
+                        Text(
+                            when (val kbNow = replyKb) {
+                                is ReplyKb.Shown ->
+                                    kbNow.placeholder.ifEmpty { "消息" }
+                                is ReplyKb.ForceReply ->
+                                    kbNow.placeholder.ifEmpty { "消息" }
+                                else -> "消息"
+                            }
+                        )
+                    },
                     modifier = Modifier.weight(1f),
                     maxLines = 4
                 )

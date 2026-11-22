@@ -55,6 +55,33 @@ data class ReactionChip(
  *  (switch-inline query), copy (copy-text), user, game, buy,
  *  disabled. [data] is the callback payload, base64 as TDLib's
  *  JSON interface ships bytes. */
+/** One button of a bot reply keyboard (v0.9.9, W2). Only
+ *  keyboardButtonTypeText buttons send their text when
+ *  tapped; the other types (request contact / location /
+ *  poll ...) render greyed and do nothing yet. */
+data class KbButton(val text: String, val isText: Boolean)
+
+/** Reply-keyboard state of the open chat (v0.9.9, W2),
+ *  driven by chat.reply_markup_message_id at open time and
+ *  updateChatReplyMarkup afterwards - the channel TDLib
+ *  itself designates for this (the replyMarkupRemoveKeyboard
+ *  note in td_api.tl says the keyboard never arrives inside
+ *  a message; the update carries it). The markup types are
+ *  this tl's replyMarkupShowKeyboard / replyMarkup
+ *  RemoveKeyboard / replyMarkupForceReply (lines 4343 /
+ *  4328 / 4333). */
+sealed interface ReplyKb {
+    object Hidden : ReplyKb
+    data class Shown(
+        val rows: List<List<KbButton>>,
+        val oneTime: Boolean,
+        val placeholder: String,
+        val forceReply: Boolean,
+        val sourceMessageId: Long
+    ) : ReplyKb
+    data class ForceReply(val placeholder: String) : ReplyKb
+}
+
 data class InlineBtn(
     val text: String,
     val kind: String,
@@ -246,6 +273,9 @@ object MessageStore {
      *  reloaded on open and after every pin/unpin. */
     private val _pinnedMessages = MutableStateFlow<List<MsgItem>>(emptyList())
     val pinnedMessages: StateFlow<List<MsgItem>> = _pinnedMessages
+
+    private val _replyKb = MutableStateFlow<ReplyKb>(ReplyKb.Hidden)
+    val replyKb: StateFlow<ReplyKb> = _replyKb
 
     fun loadPinned(chatId: Long) {
         val query = TdClient.request("searchChatMessages").apply {
@@ -552,6 +582,7 @@ object MessageStore {
         _searchResults.value = emptyList()
         _searchExhausted.value = true
         _pinnedMessages.value = emptyList()
+        _replyKb.value = ReplyKb.Hidden
         searchQuery = ""
         searchFromId = 0L
         _locateId.value = 0L
@@ -587,6 +618,26 @@ object MessageStore {
                     lastSavedDraft = text
                 }
                 _draftLoaded.value = true
+                // Reply keyboard seed (W2): the chat object
+                // names the message whose reply_markup is the
+                // live keyboard; fetch just that message.
+                val kbMessageId = response.optLong("reply_markup_message_id")
+                if (kbMessageId != 0L) {
+                    val kbQuery = TdClient.request("getMessage").apply {
+                        put("chat_id", chatId)
+                        put("message_id", kbMessageId)
+                    }
+                    TdRepository.sendRaw(kbQuery) { kbResponse ->
+                        if (currentChatId == chatId &&
+                            !TdClient.isError(kbResponse)
+                        ) {
+                            _replyKb.value = parseReplyKb(
+                                kbResponse.optJSONObject("reply_markup"),
+                                kbMessageId
+                            )
+                        }
+                    }
+                }
                 publish()
             }
         }
@@ -626,6 +677,7 @@ object MessageStore {
         }
         currentChatId = 0L
         byId.clear()
+        _replyKb.value = ReplyKb.Hidden
         _messages.value = emptyList()
         _pinnedMessages.value = emptyList()
     }
@@ -1238,6 +1290,22 @@ object MessageStore {
                     if (byId.remove(ids.optLong(i)) != null) changed = true
                 }
                 if (changed) publish()
+            }
+            "updateChatReplyMarkup" -> {
+                // The live reply keyboard changed (W2). A null
+                // reply_markup_message means the keyboard was
+                // removed (replyMarkupRemoveKeyboard arrives
+                // exactly this way, per the tl note).
+                if (update.optLong("chat_id") != currentChatId) return
+                val kbMsg = update.optJSONObject("reply_markup_message")
+                _replyKb.value = if (kbMsg == null) {
+                    ReplyKb.Hidden
+                } else {
+                    parseReplyKb(
+                        kbMsg.optJSONObject("reply_markup"),
+                        kbMsg.optLong("id")
+                    )
+                }
             }
             "updateChatReadOutbox" -> {
                 val chatId = update.optLong("chat_id")
@@ -2032,6 +2100,48 @@ object MessageStore {
      *  reply-markup keyboards / force-reply are input-area
      *  concepts this app does not render yet. Button types
      *  verified in td_api.tl (inlineKeyboardButtonType*). */
+    /** Parse a message's reply_markup into the chat-level
+     *  reply-keyboard state (W2). Inline keyboards return
+     *  Hidden here - they render on their own message. */
+    private fun parseReplyKb(markup: JSONObject?, sourceId: Long): ReplyKb {
+        if (markup == null) return ReplyKb.Hidden
+        return when (markup.optString("@type")) {
+            "replyMarkupShowKeyboard" -> {
+                val rowsArr = markup.optJSONArray("rows")
+                    ?: return ReplyKb.Hidden
+                val rows = ArrayList<List<KbButton>>()
+                for (r in 0 until rowsArr.length()) {
+                    val rowArr = rowsArr.optJSONArray(r) ?: continue
+                    val row = ArrayList<KbButton>()
+                    for (b in 0 until rowArr.length()) {
+                        val btn = rowArr.optJSONObject(b) ?: continue
+                        val text = btn.optString("text")
+                        if (text.isEmpty()) continue
+                        val type = btn.optJSONObject("type")
+                            ?.optString("@type") ?: ""
+                        row.add(KbButton(text, type == "keyboardButtonTypeText"))
+                    }
+                    if (row.isNotEmpty()) rows.add(row)
+                }
+                if (rows.isEmpty()) {
+                    ReplyKb.Hidden
+                } else {
+                    ReplyKb.Shown(
+                        rows = rows,
+                        oneTime = markup.optBoolean("one_time"),
+                        placeholder = markup.optString("input_field_placeholder"),
+                        forceReply = markup.optBoolean("force_reply"),
+                        sourceMessageId = sourceId
+                    )
+                }
+            }
+            "replyMarkupForceReply" -> ReplyKb.ForceReply(
+                markup.optString("input_field_placeholder")
+            )
+            else -> ReplyKb.Hidden
+        }
+    }
+
     private fun parseButtons(markup: JSONObject?): List<List<InlineBtn>> {
         if (markup == null) return emptyList()
         if (markup.optString("@type") != "replyMarkupInlineKeyboard") {
