@@ -645,6 +645,12 @@ object ThreadStore {
                         byId[id] = item.copy(photoPath = path)
                         changed = true
                     }
+                    // Paid media entries (v0.9.35, B1).
+                    val paidPatched = item.withPaidFile(fileId, path)
+                    if (paidPatched != null) {
+                        byId[id] = paidPatched
+                        changed = true
+                    }
                 }
                 if (changed) publish()
             }

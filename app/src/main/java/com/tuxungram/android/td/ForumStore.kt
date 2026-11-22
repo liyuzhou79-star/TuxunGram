@@ -167,6 +167,7 @@ object ForumStore {
                 when (parsed.kind) {
                     MsgKind.PHOTO -> "[图片]"
                     MsgKind.VIDEO -> "[视频]"
+                    MsgKind.PAID_MEDIA -> "[付费媒体]"
                     MsgKind.VOICE -> "[语音]"
                     MsgKind.DOCUMENT -> "[文件]"
                     MsgKind.STICKER -> "[贴纸]"
@@ -937,6 +938,12 @@ object ForumStore {
                     }
                     if (item.photoFileId == fileId && item.photoPath == null) {
                         byId[id] = item.copy(photoPath = path)
+                        changed = true
+                    }
+                    // Paid media entries (v0.9.35, B1).
+                    val paidPatched = item.withPaidFile(fileId, path)
+                    if (paidPatched != null) {
+                        byId[id] = paidPatched
                         changed = true
                     }
                 }

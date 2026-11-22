@@ -77,6 +77,8 @@ import com.tuxungram.android.td.ChecklistTaskUi
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.PollUi
+import com.tuxungram.android.td.asPaidPhotoItem
+import com.tuxungram.android.td.asPaidVideoItem
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.ThreadStore
 import java.io.File
@@ -350,6 +352,26 @@ fun SimpleMessageBubble(
                     }
                     MsgKind.PHOTO -> {
                         PhotoBubbleContent(msg)
+                        if (msg.text.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            RichMessageText(
+                            msg, onBotCommand = onBotCommand,
+                            color = if (outgoing) palette.outText else palette.inText,
+                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                        )
+                        }
+                    }
+                    MsgKind.PAID_MEDIA -> {
+                        // Paid media (v0.9.35, B1): purchased
+                        // entries open through the host's media
+                        // viewer (its item list includes the
+                        // re-shaped copies); locked entries get
+                        // the shared plain-words dialog.
+                        PaidMediaBubbleContent(
+                            msg,
+                            onOpenPhotoItem = { onOpenMedia(it) },
+                            onOpenVideoItem = { onOpenMedia(it) }
+                        )
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
@@ -914,8 +936,21 @@ fun ThreadScreen(
         // oldest end pulls the thread's own older pages.
         val viewerAnchor = mediaViewer
         if (viewerAnchor != null) {
-            val mediaItems = messages.filter {
-                it.kind == MsgKind.PHOTO || it.kind == MsgKind.VIDEO
+            // Purchased paid-media entries join the viewer
+            // as re-shaped copies (v0.9.35, B1); locked
+            // previews never enter it.
+            val mediaItems = messages.flatMap { m ->
+                when (m.kind) {
+                    MsgKind.PHOTO, MsgKind.VIDEO -> listOf(m)
+                    MsgKind.PAID_MEDIA -> m.paidMedia.mapNotNull { e ->
+                        when (e.kind) {
+                            "photo" -> m.asPaidPhotoItem(e)
+                            "video" -> m.asPaidVideoItem(e)
+                            else -> null
+                        }
+                    }
+                    else -> emptyList()
+                }
             }
             val album = if (viewerAnchor.mediaAlbumId != 0L) {
                 messages.filter {

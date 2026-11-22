@@ -1311,6 +1311,7 @@ object ChatStore {
                 content.optJSONObject("text")?.optString("text") ?: ""
             "messagePhoto" -> withCaption("[图片]")
             "messageVideo" -> withCaption("[视频]")
+            "messagePaidMedia" -> withCaption("[付费媒体]")
             "messageDocument" -> {
                 val name = content.optJSONObject("document")
                     ?.optString("file_name") ?: ""

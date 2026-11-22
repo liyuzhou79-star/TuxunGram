@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, ANIMATED_EMOJI, CHECKLIST, OTHER }
+enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, ANIMATED_EMOJI, CHECKLIST, PAID_MEDIA, OTHER }
 
 /** One poll option, flattened from pollOption. */
 data class PollOptionUi(
@@ -46,6 +46,91 @@ data class ChecklistTaskUi(
     val entities: List<TextEntityUi> = emptyList(),
     val completed: Boolean = false
 )
+
+/** One entry of a paid-media message (messagePaidMedia,
+ *  v0.9.35 B1; types verified in td_api.tl). [kind] is
+ *  "photo" / "video" when this account has access — TDLib
+ *  then ships the real files; "preview" when it has not —
+ *  TDLib ships only the dimensions and a minithumbnail, the
+ *  media itself stays locked server-side; "unsupported"
+ *  for paidMediaUnsupported. Photo/video entries ride
+ *  their own file fields (a paid message can hold several
+ *  entries, so the MsgItem-level photo/file fields stay
+ *  unused for this kind). */
+data class PaidMediaUi(
+    val kind: String,
+    val photoFileId: Int = 0,
+    val photoPath: String? = null,
+    val photoWidth: Int = 0,
+    val photoHeight: Int = 0,
+    val videoFileId: Int = 0,
+    val videoPath: String? = null,
+    val videoThumbFileId: Int = 0,
+    val videoThumbPath: String? = null,
+    val videoMime: String = "",
+    val videoSize: Long = 0L,
+    val miniThumbData: String = "",
+    val durationSec: Int = 0,
+    val width: Int = 0,
+    val height: Int = 0
+)
+
+/** A copy of this message re-shaped as a plain PHOTO item
+ *  around one purchased paid-media entry, so the existing
+ *  full-screen viewer can open it unchanged. */
+fun MsgItem.asPaidPhotoItem(entry: PaidMediaUi): MsgItem = copy(
+    kind = MsgKind.PHOTO,
+    text = "",
+    photoFileId = entry.photoFileId,
+    photoPath = entry.photoPath,
+    photoWidth = entry.photoWidth,
+    photoHeight = entry.photoHeight
+)
+
+/** Same re-shaping for a purchased paid-media video entry:
+ *  the media viewer's video page offers download/playback
+ *  from these fields exactly like a plain video message. */
+fun MsgItem.asPaidVideoItem(entry: PaidMediaUi): MsgItem = copy(
+    kind = MsgKind.VIDEO,
+    text = "",
+    fileId = entry.videoFileId,
+    filePath = entry.videoPath,
+    fileName = "付费视频",
+    fileMime = entry.videoMime.ifEmpty { "video/mp4" },
+    fileSize = entry.videoSize,
+    durationSec = entry.durationSec,
+    thumbFileId = entry.videoThumbFileId,
+    thumbPath = entry.videoThumbPath,
+    miniThumbData = entry.miniThumbData
+)
+
+/** Patch a downloaded file's path into this item's paid
+ *  entries (updateFile backfill, shared by the three
+ *  message stores). Returns the updated copy, or null when
+ *  no entry was waiting for [fileId]. */
+fun MsgItem.withPaidFile(fileId: Int, path: String): MsgItem? {
+    if (paidMedia.isEmpty()) return null
+    var changed = false
+    val updated = paidMedia.map { entry ->
+        when {
+            entry.photoFileId == fileId && entry.photoPath == null -> {
+                changed = true
+                entry.copy(photoPath = path)
+            }
+            entry.videoFileId == fileId && entry.videoPath == null -> {
+                changed = true
+                entry.copy(videoPath = path)
+            }
+            entry.videoThumbFileId == fileId &&
+                entry.videoThumbPath == null -> {
+                changed = true
+                entry.copy(videoThumbPath = path)
+            }
+            else -> entry
+        }
+    }
+    return if (changed) copy(paidMedia = updated) else null
+}
 
 /** One finished message translation (v0.9.5, O4): the
  *  translated text plus the target language's display name,
@@ -269,8 +354,22 @@ data class MsgItem(
     // sender edits the title/settings.
     val checklistCanAdd: Boolean = false,
     val checklistOthersCanAdd: Boolean = false,
-    val checklistOthersCanMark: Boolean = false
-)
+    val checklistOthersCanMark: Boolean = false,
+    // Paid media payload (PAID_MEDIA kind, v0.9.35 B1):
+    // the Telegram Stars price of the whole message and
+    // its media entries. [paidPurchased] is read off the
+    // entries themselves — TDLib ships real photo/video
+    // entries only to accounts that have access, and
+    // preview entries to everyone else; there is no
+    // separate flag to trust.
+    val paidStarCount: Long = 0L,
+    val paidMedia: List<PaidMediaUi> = emptyList()
+) {
+    val paidPurchased: Boolean
+        get() = paidMedia.any {
+            it.kind == "photo" || it.kind == "video"
+        }
+}
 
 /** A click effect for one animated-emoji message
  *  (v0.9.16, W4): clickAnimatedEmojiMessage answered with a
@@ -2727,6 +2826,15 @@ object MessageStore {
                             changed = true
                         }
                     }
+                    if (completed) {
+                        // Paid media entries (v0.9.35, B1)
+                        // ride their own file ids.
+                        val paidPatched = item.withPaidFile(fileId, path)
+                        if (paidPatched != null) {
+                            byId[id] = paidPatched
+                            changed = true
+                        }
+                    }
                 }
                 if (changed) publish()
             }
@@ -3289,7 +3397,104 @@ object MessageStore {
                     photoHeight = size?.optInt("height", 0) ?: 0
                 )
             }
+            "messagePaidMedia" -> {
+                // Paid media (v0.9.35, B1): TDLib ships real
+                // photo/video entries only to accounts that
+                // have access; everyone else gets preview
+                // entries (dimensions + minithumbnail only).
+                // The parse keeps both shapes faithfully —
+                // nothing here unlocks anything.
+                val mediaArr = content.optJSONArray("media")
+                val entries = ArrayList<PaidMediaUi>()
+                if (mediaArr != null) {
+                    for (i in 0 until mediaArr.length()) {
+                        val entry = mediaArr.optJSONObject(i)
+                            ?: continue
+                        entries.add(parsePaidMediaEntry(entry))
+                    }
+                }
+                base.copy(
+                    kind = MsgKind.PAID_MEDIA,
+                    text = content.optJSONObject("caption")
+                        ?.optString("text") ?: "",
+                    entities = entitiesOf(
+                        content.optJSONObject("caption")
+                    ),
+                    paidStarCount = content.optLong("star_count"),
+                    paidMedia = entries
+                )
+            }
             else -> base.copy(kind = MsgKind.OTHER, text = "")
+        }
+    }
+
+    /** One paidMedia entry of a messagePaidMedia (v0.9.35,
+     *  B1). Purchased photos download like plain photos;
+     *  purchased videos only fetch their still image (the
+     *  video file itself downloads on tap, same as plain
+     *  videos); previews carry no file at all. */
+    private fun parsePaidMediaEntry(entry: JSONObject): PaidMediaUi {
+        return when (entry.optString("@type")) {
+            "paidMediaPhoto" -> {
+                val photo = entry.optJSONObject("photo")
+                val size = pickPhotoSize(photo?.optJSONArray("sizes"))
+                val file = size?.optJSONObject("photo")
+                val fileId = file?.optInt("id", 0) ?: 0
+                val path = downloadedPath(file)
+                if (fileId != 0 && path == null) {
+                    requestDownload(fileId, 16)
+                }
+                PaidMediaUi(
+                    kind = "photo",
+                    photoFileId = fileId,
+                    photoPath = path,
+                    photoWidth = size?.optInt("width", 0) ?: 0,
+                    photoHeight = size?.optInt("height", 0) ?: 0
+                )
+            }
+            "paidMediaVideo" -> {
+                val video = entry.optJSONObject("video")
+                val file = video?.optJSONObject("video")
+                // Still image: the sender-provided cover
+                // photo when present, else the video's own
+                // thumbnail.
+                val coverSize = pickPhotoSize(
+                    entry.optJSONObject("cover")
+                        ?.optJSONArray("sizes")
+                )
+                val coverFile = coverSize?.optJSONObject("photo")
+                val thumbFile = video?.optJSONObject("thumbnail")
+                    ?.optJSONObject("file")
+                val stillFile = coverFile ?: thumbFile
+                val stillId = stillFile?.optInt("id", 0) ?: 0
+                val stillPath = downloadedPath(stillFile)
+                if (stillId != 0 && stillPath == null) {
+                    requestDownload(stillId, 1)
+                }
+                PaidMediaUi(
+                    kind = "video",
+                    videoFileId = file?.optInt("id", 0) ?: 0,
+                    videoPath = downloadedPath(file),
+                    videoThumbFileId = stillId,
+                    videoThumbPath = stillPath,
+                    videoMime = video?.optString("mime_type") ?: "",
+                    videoSize = fileSizeOf(file),
+                    miniThumbData = video?.optJSONObject("minithumbnail")
+                        ?.optString("data") ?: "",
+                    durationSec = video?.optInt("duration", 0) ?: 0,
+                    width = video?.optInt("width", 0) ?: 0,
+                    height = video?.optInt("height", 0) ?: 0
+                )
+            }
+            "paidMediaPreview" -> PaidMediaUi(
+                kind = "preview",
+                miniThumbData = entry.optJSONObject("minithumbnail")
+                    ?.optString("data") ?: "",
+                durationSec = entry.optInt("duration", 0),
+                width = entry.optInt("width", 0),
+                height = entry.optInt("height", 0)
+            )
+            else -> PaidMediaUi(kind = "unsupported")
         }
     }
 
@@ -4135,6 +4340,11 @@ object MessageStore {
                 if (name.isEmpty()) "[文件]" else "[文件] $name"
             }
             "messageVideo" -> "[视频]"
+            "messagePaidMedia" -> {
+                val caption = content.optJSONObject("caption")
+                    ?.optString("text") ?: ""
+                if (caption.isEmpty()) "[付费媒体]" else "[付费媒体] $caption"
+            }
             "messageVoiceNote" -> "[语音]"
             "messageAnimation" -> "[动图]"
             "messageSticker" -> "[贴纸]"

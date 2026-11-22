@@ -60,6 +60,8 @@ import com.tuxungram.android.td.ForumStore
 import com.tuxungram.android.td.ForumTopicUi
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import com.tuxungram.android.td.asPaidPhotoItem
+import com.tuxungram.android.td.asPaidVideoItem
 import java.io.File
 
 /**
@@ -614,8 +616,21 @@ fun ForumTopicView(
         // end pulls the topic's own older pages.
         val viewerAnchor = mediaViewer
         if (viewerAnchor != null) {
-            val mediaItems = messages.filter {
-                it.kind == MsgKind.PHOTO || it.kind == MsgKind.VIDEO
+            // Purchased paid-media entries join the viewer
+            // as re-shaped copies (v0.9.35, B1); locked
+            // previews never enter it.
+            val mediaItems = messages.flatMap { m ->
+                when (m.kind) {
+                    MsgKind.PHOTO, MsgKind.VIDEO -> listOf(m)
+                    MsgKind.PAID_MEDIA -> m.paidMedia.mapNotNull { e ->
+                        when (e.kind) {
+                            "photo" -> m.asPaidPhotoItem(e)
+                            "video" -> m.asPaidVideoItem(e)
+                            else -> null
+                        }
+                    }
+                    else -> emptyList()
+                }
             }
             val album = if (viewerAnchor.mediaAlbumId != 0L) {
                 messages.filter {

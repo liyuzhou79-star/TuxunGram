@@ -98,6 +98,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.layout.ContentScale
@@ -131,6 +132,9 @@ import com.tuxungram.android.td.SoundFx
 import com.tuxungram.android.td.AnimEffect
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
+import com.tuxungram.android.td.PaidMediaUi
+import com.tuxungram.android.td.asPaidPhotoItem
+import com.tuxungram.android.td.asPaidVideoItem
 import com.tuxungram.android.td.Notifier
 import com.tuxungram.android.td.PollUi
 import com.tuxungram.android.td.ProxyConfig
@@ -1617,6 +1621,7 @@ fun ChatScreen(
                                     when (hit.kind) {
                                         MsgKind.PHOTO -> "[图片]"
                                         MsgKind.VIDEO -> "[视频]"
+                                        MsgKind.PAID_MEDIA -> "[付费媒体]"
                                         MsgKind.VOICE -> "[语音]"
                                         MsgKind.DOCUMENT -> "[文件]"
                                         MsgKind.STICKER -> "[贴纸]"
@@ -2526,6 +2531,7 @@ fun ChatScreen(
                                     when (m.kind) {
                                         MsgKind.PHOTO -> "[图片]"
                                         MsgKind.VIDEO -> "[视频]"
+                                        MsgKind.PAID_MEDIA -> "[付费媒体]"
                                         MsgKind.VOICE -> "[语音]"
                                         MsgKind.DOCUMENT ->
                                             "[文件] ${m.fileName}"
@@ -5139,6 +5145,19 @@ fun MessageBubble(
                             )
                         }
                     }
+                    MsgKind.PAID_MEDIA -> {
+                        PaidMediaBubbleContent(msg, onOpenPhoto, onOpenVideo)
+                        if (msg.text.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            RichMessageText(
+                                msg,
+                                onBotCommand = { MessageStore.sendText(it) },
+                                highlightQuery = highlightQuery,
+                                color = if (outgoing) palette.outText else palette.inText,
+                                linkColor = if (outgoing) palette.outText else palette.linkIn
+                            )
+                        }
+                    }
                     MsgKind.DOCUMENT, MsgKind.VIDEO -> {
                         FileBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
@@ -6356,6 +6375,7 @@ fun messageSummaryText(msg: MsgItem): String =
         when (msg.kind) {
             MsgKind.PHOTO -> "[图片]"
             MsgKind.VIDEO -> "[视频]"
+            MsgKind.PAID_MEDIA -> "[付费媒体]"
             MsgKind.VOICE -> "[语音]"
             MsgKind.DOCUMENT -> "[文件] ${msg.fileName}"
             MsgKind.STICKER -> "[贴纸]"
@@ -6784,6 +6804,309 @@ fun PhotoBubbleContent(msg: MsgItem) {
     }
 }
 
+
+/** Paid media (v0.9.35, B1): a messagePaidMedia renders
+ *  as its thumbnail(s) with one Telegram Stars price pill
+ *  for the whole message. Purchased entries (TDLib shipped
+ *  the real photo/video) open exactly like plain media via
+ *  re-shaped copies; locked entries are previews only, and
+ *  tapping one explains in plain words that unlocking is
+ *  bought in the official apps — this app sells no Stars
+ *  and shows no fake buy button. */
+@Composable
+fun PaidMediaBubbleContent(
+    msg: MsgItem,
+    onOpenPhotoItem: (MsgItem) -> Unit,
+    onOpenVideoItem: (MsgItem) -> Unit
+) {
+    var lockedInfoOpen by remember { mutableStateOf(false) }
+    val entries = msg.paidMedia
+    Box {
+        if (entries.size <= 1) {
+            val entry = entries.firstOrNull()
+            if (entry != null) {
+                PaidMediaTile(
+                    msg = msg, entry = entry, width = 220.dp,
+                    square = false,
+                    onOpenPhotoItem = onOpenPhotoItem,
+                    onOpenVideoItem = onOpenVideoItem,
+                    onLockedTap = { lockedInfoOpen = true }
+                )
+            } else {
+                Text(
+                    "[付费媒体]",
+                    color = OfficialTheme.current().textSecondary,
+                    fontSize = 14.sp
+                )
+            }
+        } else {
+            Column {
+                val rows = entries.chunked(2)
+                for ((r, rowEntries) in rows.withIndex()) {
+                    if (r > 0) Spacer(Modifier.height(3.dp))
+                    Row {
+                        for ((c, entry) in rowEntries.withIndex()) {
+                            if (c > 0) Spacer(Modifier.width(3.dp))
+                            PaidMediaTile(
+                                msg = msg, entry = entry,
+                                width = 108.dp, square = true,
+                                onOpenPhotoItem = onOpenPhotoItem,
+                                onOpenVideoItem = onOpenVideoItem,
+                                onLockedTap = { lockedInfoOpen = true }
+                            )
+                        }
+                        if (rowEntries.size == 1) {
+                            Spacer(Modifier.width(3.dp))
+                            Spacer(Modifier.width(108.dp))
+                        }
+                    }
+                }
+            }
+        }
+        // One price pill for the whole message (top-start),
+        // with a lock while nothing in it is accessible.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(6.dp)
+                .background(
+                    Color(0x99000000), RoundedCornerShape(10.dp)
+                )
+                .padding(horizontal = 7.dp, vertical = 2.dp)
+        ) {
+            if (!msg.paidPurchased) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(11.dp)
+                )
+                Spacer(Modifier.width(3.dp))
+            }
+            Text(
+                "⭐ ${msg.paidStarCount}",
+                color = Color.White, fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+    if (lockedInfoOpen) {
+        AlertDialog(
+            onDismissRequest = { lockedInfoOpen = false },
+            title = { Text("这是付费内容") },
+            text = {
+                Text(
+                    "这条消息里的媒体要用 ${msg.paidStarCount} 颗 " +
+                        "Telegram 星星（Stars）解锁，购买要在官方 " +
+                        "Telegram 里完成。本 App 不卖星星、也没有" +
+                        "购买入口，不会让你在这里付钱；已经在别的" +
+                        "客户端买过的话，媒体会在这里直接显示出来。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { lockedInfoOpen = false }) {
+                    Text("知道了")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun PaidMediaTile(
+    msg: MsgItem,
+    entry: PaidMediaUi,
+    width: androidx.compose.ui.unit.Dp,
+    square: Boolean,
+    onOpenPhotoItem: (MsgItem) -> Unit,
+    onOpenVideoItem: (MsgItem) -> Unit,
+    onLockedTap: () -> Unit
+) {
+    val palette = OfficialTheme.current()
+    val ratio = when {
+        entry.photoWidth > 0 && entry.photoHeight > 0 ->
+            entry.photoHeight.toFloat() / entry.photoWidth
+        entry.width > 0 && entry.height > 0 ->
+            entry.height.toFloat() / entry.width
+        else -> 0.75f
+    }
+    val height = if (square) {
+        width
+    } else {
+        (width.value * ratio).coerceIn(110f, 300f).dp
+    }
+    Box(
+        modifier = Modifier
+            .size(width = width, height = height)
+            .clip(RoundedCornerShape(8.dp))
+            .background(palette.inBubble)
+            .clickable {
+                when (entry.kind) {
+                    "photo" -> onOpenPhotoItem(
+                        msg.asPaidPhotoItem(entry)
+                    )
+                    "video" -> onOpenVideoItem(
+                        msg.asPaidVideoItem(entry)
+                    )
+                    else -> onLockedTap()
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        when (entry.kind) {
+            "photo" -> {
+                val path = entry.photoPath
+                val bitmap by produceState<android.graphics.Bitmap?>(
+                    initialValue = null, path
+                ) {
+                    value = if (path == null) {
+                        null
+                    } else {
+                        withContext(Dispatchers.IO) {
+                            decodeCached(path)
+                        }
+                    }
+                }
+                val bmp = bitmap
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(
+                        "图片加载中…",
+                        color = palette.textSecondary,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+            "video" -> {
+                val thumb = entry.videoThumbPath
+                val mini = entry.miniThumbData
+                val bitmap by produceState<android.graphics.Bitmap?>(
+                    initialValue = null, thumb, mini
+                ) {
+                    value = when {
+                        thumb != null -> withContext(Dispatchers.IO) {
+                            decodeCached(thumb)
+                        }
+                        mini.isNotEmpty() -> withContext(Dispatchers.IO) {
+                            decodeMiniThumb(mini)
+                        }
+                        else -> null
+                    }
+                }
+                val bmp = bitmap
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x66000000)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                if (entry.durationSec > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(5.dp)
+                            .background(
+                                Color(0x66000000),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            formatDurationClock(entry.durationSec),
+                            color = Color.White, fontSize = 10.5.sp
+                        )
+                    }
+                }
+            }
+            "preview" -> {
+                val mini = entry.miniThumbData
+                val bitmap by produceState<android.graphics.Bitmap?>(
+                    initialValue = null, mini
+                ) {
+                    value = if (mini.isEmpty()) {
+                        null
+                    } else {
+                        withContext(Dispatchers.IO) {
+                            decodeMiniThumb(mini)
+                        }
+                    }
+                }
+                val bmp = bitmap
+                if (bmp != null) {
+                    // Blurred where the platform supports it
+                    // (API 31+); the dark veil below carries
+                    // the locked look on older systems.
+                    val blurMod = if (
+                        android.os.Build.VERSION.SDK_INT >=
+                        android.os.Build.VERSION_CODES.S
+                    ) {
+                        Modifier.blur(16.dp)
+                    } else {
+                        Modifier
+                    }
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .then(blurMod)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0x59000000)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment =
+                            Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            Icons.Filled.Lock,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "付费内容",
+                            color = Color.White, fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+            else -> Text(
+                "这类付费媒体暂时看不了",
+                color = palette.textSecondary, fontSize = 12.5.sp
+            )
+        }
+    }
+}
 
 /** Decode a minithumbnail's inline bytes (base64, as
  *  TDLib's JSON interface ships bytes fields). */
