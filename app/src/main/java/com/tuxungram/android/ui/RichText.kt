@@ -68,7 +68,11 @@ fun RichMessageText(
     // viewer's caption — regression fix R4, v0.9.6) render the
     // same built text but in their own color and line budget.
     color: Color = Color.Unspecified,
-    maxLines: Int = Int.MAX_VALUE
+    maxLines: Int = Int.MAX_VALUE,
+    // Link / mention / hashtag color override (v0.9.17, X2):
+    // bubbles whose background is the official out-blue need
+    // their links in the out-text color, not the accent.
+    linkColor: Color = Color.Unspecified
 ) {
     // Custom emoji (L2): kick off the sticker fetch for this
     // message's ids and watch the downloaded paths; the inline
@@ -85,11 +89,15 @@ fun RichMessageText(
         }
     }
     if (msg.entities.isEmpty()) {
-        Text(msg.text, fontSize = fontSize)
+        Text(msg.text, fontSize = fontSize, color = color)
         return
     }
     val context = LocalContext.current
-    val linkColor = MaterialTheme.colorScheme.primary
+    val effectiveLinkColor = if (linkColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        linkColor
+    }
     // Spoiler reveal state, scoped to this message instance:
     // entity offset -> revealed. Hidden spoilers render as a
     // solid mask; tapping one reveals it in place.
@@ -185,7 +193,7 @@ fun RichMessageText(
                         LinkAnnotation.Clickable(
                             tag = "spoiler:${entity.offset}",
                             styles = TextLinkStyles(
-                                style = SpanStyle(color = linkColor)
+                                style = SpanStyle(color = effectiveLinkColor)
                             )
                         ) {
                             revealed[entity.offset] = true
@@ -210,7 +218,7 @@ fun RichMessageText(
                         LinkAnnotation.Clickable(
                             tag = "url",
                             styles = TextLinkStyles(
-                                style = SpanStyle(color = linkColor)
+                                style = SpanStyle(color = effectiveLinkColor)
                             )
                         ) {
                             // Telegram links resolve in-app
@@ -228,7 +236,7 @@ fun RichMessageText(
                             LinkAnnotation.Clickable(
                                 tag = "user",
                                 styles = TextLinkStyles(
-                                    style = SpanStyle(color = linkColor)
+                                    style = SpanStyle(color = effectiveLinkColor)
                                 )
                             ) {
                                 DeepLink.pendingProfileUser.value =
@@ -245,7 +253,7 @@ fun RichMessageText(
                             LinkAnnotation.Clickable(
                                 tag = "mention",
                                 styles = TextLinkStyles(
-                                    style = SpanStyle(color = linkColor)
+                                    style = SpanStyle(color = effectiveLinkColor)
                                 )
                             ) {
                                 DeepLink.pendingProfileName.value = name
@@ -259,7 +267,7 @@ fun RichMessageText(
                         LinkAnnotation.Clickable(
                             tag = "cmd",
                             styles = TextLinkStyles(
-                                style = SpanStyle(color = linkColor)
+                                style = SpanStyle(color = effectiveLinkColor)
                             )
                         ) {
                             onBotCommand(rangeText)
@@ -272,7 +280,7 @@ fun RichMessageText(
                         LinkAnnotation.Clickable(
                             tag = "email",
                             styles = TextLinkStyles(
-                                style = SpanStyle(color = linkColor)
+                                style = SpanStyle(color = effectiveLinkColor)
                             )
                         ) {
                             openExternal(context, "mailto:$rangeText")
@@ -285,7 +293,7 @@ fun RichMessageText(
                         LinkAnnotation.Clickable(
                             tag = "tel",
                             styles = TextLinkStyles(
-                                style = SpanStyle(color = linkColor)
+                                style = SpanStyle(color = effectiveLinkColor)
                             )
                         ) {
                             openExternal(context, "tel:$rangeText")
@@ -294,7 +302,7 @@ fun RichMessageText(
                     )
                 }
                 "hashtag", "cashtag" -> addStyle(
-                    SpanStyle(color = linkColor), start, end
+                    SpanStyle(color = effectiveLinkColor), start, end
                 )
                 // customEmoji: rendered as an inline image
                 // through appendInlineContent above, no span

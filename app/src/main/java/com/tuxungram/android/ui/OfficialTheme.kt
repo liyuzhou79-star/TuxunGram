@@ -75,6 +75,8 @@ data class OfficialPalette(
     val inReplyName: Color,
     /** chat_outReplyLine. */
     val outReplyLine: Color,
+    /** chat_unreadMessagesStartBackground. */
+    val unreadDividerBg: Color,
     /** chats_unreadCounter. */
     val unreadBadge: Color,
     /** chats_unreadCounterMuted (night) / shared gray (day). */
@@ -193,6 +195,7 @@ object OfficialTheme {
         inReplyLine = Color(0xFF3E91E0), // chat_inReplyLine (day)
         inReplyName = Color(0xFF3186DF), // chat_inReplyNameText (day)
         outReplyLine = Color(0xFFFFFFFF), // chat_outReplyLine (day)
+        unreadDividerBg = Color(0xFF3499E6), // chat_unreadMessagesStartBackground (day)
         unreadBadge = Color(0xFF24AEF7), // chats_unreadCounter (day)
         unreadBadgeMuted = Color(0xFFB9B9B9), // shared gray (day fallback)
         onlineDot = Color(0xFF29A8E7), // chats_onlineCircle (day)
@@ -252,6 +255,7 @@ object OfficialTheme {
         inReplyLine = Color(0xFF79C4FC), // chat_inReplyLine (night)
         inReplyName = Color(0xFF79C4FC), // chat_inReplyNameText (night)
         outReplyLine = Color(0xFF7ECEFF), // chat_outReplyLine (night)
+        unreadDividerBg = Color(0xFF212122), // chat_unreadMessagesStartBackground (night)
         unreadBadge = Color(0xFF399EF3), // chats_unreadCounter (night)
         unreadBadgeMuted = Color(0xFF454545), // chats_unreadCounterMuted (night)
         onlineDot = Color(0xFF37A4F9), // chats_onlineCircle (night)

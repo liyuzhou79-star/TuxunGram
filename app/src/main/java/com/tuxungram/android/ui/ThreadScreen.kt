@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -52,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -97,6 +100,23 @@ fun SimpleMessageBubble(
     var menuOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     val outgoing = msg.outgoing
+    // Official palette (v0.9.17, X2): same bubble language
+    // as the main chat. Thread/topic lists do not compute
+    // same-sender runs, so the shape stays uniform here.
+    val palette = OfficialTheme.current()
+    val threadBubbleBg = when {
+        msg.kind == MsgKind.STICKER ||
+            msg.kind == MsgKind.ANIMATED_EMOJI -> Modifier
+        outgoing -> Modifier.background(
+            Brush.verticalGradient(
+                listOf(palette.outBubbleGradient, palette.outBubble)
+            ),
+            RoundedCornerShape(18.dp)
+        )
+        else -> Modifier.background(
+            palette.inBubble, RoundedCornerShape(18.dp)
+        )
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -119,19 +139,7 @@ fun SimpleMessageBubble(
         }
         Box {
             Column(
-                modifier = Modifier
-                    .background(
-                        if (msg.kind == MsgKind.STICKER ||
-                            msg.kind == MsgKind.ANIMATED_EMOJI
-                        ) {
-                            Color.Transparent
-                        } else if (outgoing) {
-                            Color(0xFFD8EDCB)
-                        } else {
-                            Color(0xFFF1F1F1)
-                        },
-                        RoundedCornerShape(18.dp)
-                    )
+                modifier = threadBubbleBg
                     .combinedClickable(
                         onClick = {
                             if (msg.kind == MsgKind.VIDEO &&
@@ -169,8 +177,10 @@ fun SimpleMessageBubble(
                 if (isGroup && !outgoing && msg.senderName.isNotEmpty()) {
                     Text(
                         msg.senderName,
-                        color = Color(0xFF5B7C99),
-                        fontSize = 12.sp,
+                        color = OfficialTheme.nameColor(
+                            msg.senderUserId, OfficialTheme.dark
+                        ),
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = if (msg.senderUserId != 0L) {
                             Modifier.clickable {
@@ -183,16 +193,28 @@ fun SimpleMessageBubble(
                     )
                 }
                 if (msg.replyToId != 0L) {
-                    Row(
-                        modifier = Modifier
-                            .background(
-                                Color(0x14000000), RoundedCornerShape(6.dp)
-                            )
-                            .padding(horizontal = 7.dp, vertical = 4.dp)
-                    ) {
+                    Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .fillMaxHeight()
+                                .background(
+                                    if (outgoing) {
+                                        palette.outReplyLine
+                                    } else {
+                                        palette.inReplyLine
+                                    },
+                                    RoundedCornerShape(2.dp)
+                                )
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             "回复：${msg.replySummary.ifEmpty { "原消息" }}",
-                            color = Color(0xFF546E7A),
+                            color = if (outgoing) {
+                                palette.outText.copy(alpha = 0.85f)
+                            } else {
+                                palette.textSecondary
+                            },
                             fontSize = 12.sp,
                             maxLines = 2
                         )
@@ -201,7 +223,11 @@ fun SimpleMessageBubble(
                 }
                 when (msg.kind) {
                     MsgKind.TEXT -> {
-                        RichMessageText(msg, onBotCommand = onBotCommand)
+                        RichMessageText(
+                            msg, onBotCommand = onBotCommand,
+                            color = if (outgoing) palette.outText else palette.inText,
+                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                        )
                         if (msg.lpTitle.isNotEmpty() ||
                             msg.lpSiteName.isNotEmpty()
                         ) {
@@ -220,7 +246,11 @@ fun SimpleMessageBubble(
                         AnimationBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            RichMessageText(msg, onBotCommand = onBotCommand)
+                            RichMessageText(
+                            msg, onBotCommand = onBotCommand,
+                            color = if (outgoing) palette.outText else palette.inText,
+                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                        )
                         }
                     }
                     MsgKind.POLL -> {
@@ -235,21 +265,33 @@ fun SimpleMessageBubble(
                         PhotoBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            RichMessageText(msg, onBotCommand = onBotCommand)
+                            RichMessageText(
+                            msg, onBotCommand = onBotCommand,
+                            color = if (outgoing) palette.outText else palette.inText,
+                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                        )
                         }
                     }
                     MsgKind.DOCUMENT, MsgKind.VIDEO -> {
                         FileBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            RichMessageText(msg, onBotCommand = onBotCommand)
+                            RichMessageText(
+                            msg, onBotCommand = onBotCommand,
+                            color = if (outgoing) palette.outText else palette.inText,
+                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                        )
                         }
                     }
                     MsgKind.VOICE -> {
                         VoiceBubbleContent(msg)
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
-                            RichMessageText(msg, onBotCommand = onBotCommand)
+                            RichMessageText(
+                            msg, onBotCommand = onBotCommand,
+                            color = if (outgoing) palette.outText else palette.inText,
+                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                        )
                         }
                     }
                     MsgKind.LOCATION -> LocationBubbleContent(msg)
@@ -297,10 +339,19 @@ fun SimpleMessageBubble(
                 if (msg.buttons.isNotEmpty()) {
                     InlineButtonGrid(msg, chatId)
                 }
-                Row {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         formatMsgTime(msg.dateSeconds),
-                        color = Color.Gray,
+                        color = if (outgoing) {
+                            palette.outTime
+                        } else {
+                            palette.inTime
+                        },
                         fontSize = 11.sp
                     )
                     when (msg.sendingState) {

@@ -29,6 +29,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -81,6 +83,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
@@ -1359,6 +1362,25 @@ fun ChatScreen(
             }
             show
         }
+        // Bubble tails (v0.9.17, X2): the last message of a
+        // same-sender run gets the official small corner on
+        // its own side; a run ends when the chronologically
+        // next message changes direction or sender, or opens
+        // a new day.
+        val tailShowIds = remember(messages) {
+            val show = HashSet<Long>()
+            for (i in messages.indices) {
+                val m = messages[i]
+                val n = messages.getOrNull(i + 1)
+                if (n == null || n.outgoing != m.outgoing ||
+                    n.senderUserId != m.senderUserId ||
+                    n.id in separatorIds
+                ) {
+                    show.add(m.id)
+                }
+            }
+            show
+        }
         // Chat wallpaper (v0.7.0, F3): a solid color behind the
         // message area only; the top bar and the dock keep the
         // theme surface. 默认 leaves it transparent.
@@ -1616,22 +1638,18 @@ fun ChatScreen(
                         ) {
                             Text(
                                 formatDayLabel(msg.dateSeconds),
-                                color = MaterialTheme.colorScheme
-                                    .onSurfaceVariant,
-                                fontSize = 11.sp,
+                                // Service chip (v0.9.17, X2):
+                                // chat_serviceBackground /
+                                // chat_serviceText, pill shape,
+                                // no border — the official look.
+                                color = OfficialTheme.current().serviceText,
+                                fontSize = 12.sp,
                                 modifier = Modifier
                                     .background(
-                                        MaterialTheme.colorScheme
-                                            .surfaceVariant,
-                                        RoundedCornerShape(10.dp)
+                                        OfficialTheme.current().serviceBg,
+                                        RoundedCornerShape(12.dp)
                                     )
-                                    .border(
-                                        1.dp,
-                                        MaterialTheme.colorScheme
-                                            .outlineVariant,
-                                        RoundedCornerShape(10.dp)
-                                    )
-                                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
                             )
                         }
                     }
@@ -1646,16 +1664,18 @@ fun ChatScreen(
                         ) {
                             Text(
                                 "未读消息",
-                                color = MaterialTheme.colorScheme
-                                    .onPrimaryContainer,
-                                fontSize = 11.sp,
+                                // Unread divider (v0.9.17, X2):
+                                // chat_unreadMessagesStartBackground
+                                // with its white start text.
+                                color = Color.White,
+                                fontSize = 12.sp,
                                 modifier = Modifier
                                     .background(
-                                        MaterialTheme.colorScheme
-                                            .primaryContainer,
-                                        RoundedCornerShape(10.dp)
+                                        OfficialTheme.current()
+                                            .unreadDividerBg,
+                                        RoundedCornerShape(12.dp)
                                     )
-                                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
                             )
                         }
                     }
@@ -1717,6 +1737,7 @@ fun ChatScreen(
                             (chat?.isGroup == true ||
                                 chat?.isChannel == true),
                         showSenderAvatar = msg.id in avatarShowIds,
+                        showTail = msg.id in tailShowIds,
                         onOpenSenderProfile = { userId ->
                             DeepLink.pendingProfileUser.value = userId
                         },
@@ -3299,11 +3320,10 @@ fun SenderAvatarBubble(
     msg: MsgItem,
     onOpenSenderProfile: (Long) -> Unit
 ) {
-    val hue = (msg.senderUserId % 8 + 8) % 8
-    val colors = listOf(
-        Color(0xFFEF9A9A), Color(0xFFF48FB1), Color(0xFFCE93D8),
-        Color(0xFF90CAF9), Color(0xFF80CBC4), Color(0xFFA5D6A7),
-        Color(0xFFFFCC80), Color(0xFFBCAAA4)
+    // Official avatar placeholder (v0.9.17, X1): the
+    // avatar_background* gradient picked by abs(id % 7).
+    val avatarPair = OfficialTheme.avatarColors(
+        msg.senderUserId, OfficialTheme.dark
     )
     Box(
         modifier = Modifier.clickable {
@@ -3317,7 +3337,12 @@ fun SenderAvatarBubble(
             Box(
                 modifier = Modifier
                     .size(32.dp)
-                    .background(colors[hue.toInt()], CircleShape),
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(avatarPair.first, avatarPair.second)
+                        ),
+                        CircleShape
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -3359,6 +3384,10 @@ fun MessageBubble(
     // profile page.
     showSenderAvatar: Boolean = false,
     onOpenSenderProfile: (Long) -> Unit = {},
+    // Official bubble tail (v0.9.17, X2): the caller marks
+    // the last message of a same-sender run; its outer
+    // bottom corner shrinks to the official small radius.
+    showTail: Boolean = false,
     // Animated-emoji click effect for THIS message, when
     // one is playing (v0.9.16, W4).
     animEffect: AnimEffect? = null
@@ -3483,28 +3512,51 @@ fun MessageBubble(
         }
         Box {
             // Bubble corner style (v0.7.0, F3): 现代/经典 from
-            // settings, applied live.
+            // settings, applied live. Official shape (v0.9.17,
+            // X2): 18 dp corners, and the last message of a run
+            // shrinks its own-side bottom corner to 5 dp — the
+            // official tail. Colors come from the official
+            // palette: chat_inBubble for incoming, a
+            // chat_outBubbleGradient -> chat_outBubble vertical
+            // gradient for outgoing.
             val bubbleStyle by UiSettings.bubbleStyle.collectAsState()
+            val palette = OfficialTheme.current()
+            val corner = if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
+                8.dp
+            } else {
+                18.dp
+            }
+            val tailCorner = if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
+                8.dp
+            } else {
+                5.dp
+            }
+            val bubbleShape = if (outgoing) {
+                RoundedCornerShape(
+                    topStart = corner, topEnd = corner,
+                    bottomStart = corner,
+                    bottomEnd = if (showTail) tailCorner else corner
+                )
+            } else {
+                RoundedCornerShape(
+                    topStart = corner, topEnd = corner,
+                    bottomEnd = corner,
+                    bottomStart = if (showTail) tailCorner else corner
+                )
+            }
+            val bubbleBg = when {
+                msg.kind == MsgKind.STICKER ||
+                    msg.kind == MsgKind.ANIMATED_EMOJI -> Modifier
+                outgoing -> Modifier.background(
+                    Brush.verticalGradient(
+                        listOf(palette.outBubbleGradient, palette.outBubble)
+                    ),
+                    bubbleShape
+                )
+                else -> Modifier.background(palette.inBubble, bubbleShape)
+            }
             Column(
-                modifier = Modifier
-                    .background(
-                        if (msg.kind == MsgKind.STICKER ||
-                            msg.kind == MsgKind.ANIMATED_EMOJI
-                        ) {
-                            Color.Transparent
-                        } else if (outgoing) {
-                            Color(0xFFD8EDCB)
-                        } else {
-                            Color(0xFFF1F1F1)
-                        },
-                        RoundedCornerShape(
-                            if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
-                                8.dp
-                            } else {
-                                18.dp
-                            }
-                        )
-                    )
+                modifier = bubbleBg
                     .combinedClickable(
                         onClick = {
                             if (selectionMode) {
@@ -3582,8 +3634,12 @@ fun MessageBubble(
                 if (isGroup && !outgoing && msg.senderName.isNotEmpty()) {
                     Text(
                         msg.senderName,
-                        color = Color(0xFF5B7C99),
-                        fontSize = 12.sp,
+                        // avatar_nameInMessage* by sender id
+                        // (v0.9.17, X2).
+                        color = OfficialTheme.nameColor(
+                            msg.senderUserId, OfficialTheme.dark
+                        ),
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = if (msg.senderUserId != 0L) {
                             Modifier.clickable {
@@ -3595,14 +3651,32 @@ fun MessageBubble(
                     )
                 }
                 if (msg.replyToId != 0L) {
-                    Row(
-                        modifier = Modifier
-                            .background(Color(0x14000000), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 7.dp, vertical = 4.dp)
-                    ) {
+                    // Official reply bar (v0.9.17, X2): a 3 dp
+                    // accent line on the left, no gray box;
+                    // line color is chat_inReplyLine /
+                    // chat_outReplyLine.
+                    Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .fillMaxHeight()
+                                .background(
+                                    if (outgoing) {
+                                        palette.outReplyLine
+                                    } else {
+                                        palette.inReplyLine
+                                    },
+                                    RoundedCornerShape(2.dp)
+                                )
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             "回复：${msg.replySummary.ifEmpty { "原消息" }}",
-                            color = Color(0xFF546E7A),
+                            color = if (outgoing) {
+                                palette.outText.copy(alpha = 0.85f)
+                            } else {
+                                palette.textSecondary
+                            },
                             fontSize = 12.sp,
                             maxLines = 2
                         )
@@ -3613,7 +3687,9 @@ fun MessageBubble(
                     MsgKind.TEXT -> {
                         RichMessageText(
                             msg,
-                            onBotCommand = { MessageStore.sendText(it) }
+                            onBotCommand = { MessageStore.sendText(it) },
+                            color = if (outgoing) palette.outText else palette.inText,
+                            linkColor = if (outgoing) palette.outText else palette.linkIn
                         )
                         if (msg.lpTitle.isNotEmpty() || msg.lpSiteName.isNotEmpty()) {
                             Spacer(Modifier.height(6.dp))
@@ -3629,7 +3705,9 @@ fun MessageBubble(
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
                                 msg,
-                                onBotCommand = { MessageStore.sendText(it) }
+                                onBotCommand = { MessageStore.sendText(it) },
+                                color = if (outgoing) palette.outText else palette.inText,
+                                linkColor = if (outgoing) palette.outText else palette.linkIn
                             )
                         }
                     }
@@ -3647,7 +3725,9 @@ fun MessageBubble(
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
                                 msg,
-                                onBotCommand = { MessageStore.sendText(it) }
+                                onBotCommand = { MessageStore.sendText(it) },
+                                color = if (outgoing) palette.outText else palette.inText,
+                                linkColor = if (outgoing) palette.outText else palette.linkIn
                             )
                         }
                     }
@@ -3657,7 +3737,9 @@ fun MessageBubble(
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
                                 msg,
-                                onBotCommand = { MessageStore.sendText(it) }
+                                onBotCommand = { MessageStore.sendText(it) },
+                                color = if (outgoing) palette.outText else palette.inText,
+                                linkColor = if (outgoing) palette.outText else palette.linkIn
                             )
                         }
                     }
@@ -3667,7 +3749,9 @@ fun MessageBubble(
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
                                 msg,
-                                onBotCommand = { MessageStore.sendText(it) }
+                                onBotCommand = { MessageStore.sendText(it) },
+                                color = if (outgoing) palette.outText else palette.inText,
+                                linkColor = if (outgoing) palette.outText else palette.linkIn
                             )
                         }
                     }
@@ -3716,14 +3800,28 @@ fun MessageBubble(
                 if (msg.buttons.isNotEmpty()) {
                     InlineButtonGrid(msg, chatId)
                 }
-                Row {
-                    Text(formatMsgTime(msg.dateSeconds), color = Color.Gray, fontSize = 11.sp)
+                // Time + read state (v0.9.17, X2): the
+                // official layout puts them inside the bubble
+                // at its bottom-right, in chat_inTimeText /
+                // chat_outTimeText; the ticks ride the same
+                // out-time color (chat_outSentCheck family).
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        formatMsgTime(msg.dateSeconds),
+                        color = if (outgoing) palette.outTime else palette.inTime,
+                        fontSize = 11.sp
+                    )
                     when (msg.readState) {
                         "read" -> {
                             Spacer(Modifier.width(4.dp))
                             TicksIcon(
                                 read = true,
-                                color = Color(0xFF5B7C99),
+                                color = palette.outTime,
                                 sizeDp = 15
                             )
                         }
@@ -3731,7 +3829,7 @@ fun MessageBubble(
                             Spacer(Modifier.width(4.dp))
                             TicksIcon(
                                 read = false,
-                                color = Color.Gray,
+                                color = palette.outTime,
                                 sizeDp = 15
                             )
                         }
@@ -4211,6 +4309,41 @@ fun AlbumBubble(
     val outgoing = first.outgoing
     var menuOpen by remember { mutableStateOf(false) }
     val bubbleStyle by UiSettings.bubbleStyle.collectAsState()
+    // Official palette (v0.9.17, X2): same bubble language
+    // as MessageBubble; an album is its own run, so its
+    // own-side bottom corner always takes the tail radius.
+    val palette = OfficialTheme.current()
+    val albumCorner = if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
+        8.dp
+    } else {
+        18.dp
+    }
+    val albumTail = if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
+        8.dp
+    } else {
+        5.dp
+    }
+    val albumShape = if (outgoing) {
+        RoundedCornerShape(
+            topStart = albumCorner, topEnd = albumCorner,
+            bottomStart = albumCorner, bottomEnd = albumTail
+        )
+    } else {
+        RoundedCornerShape(
+            topStart = albumCorner, topEnd = albumCorner,
+            bottomEnd = albumCorner, bottomStart = albumTail
+        )
+    }
+    val albumBg = if (outgoing) {
+        Modifier.background(
+            Brush.verticalGradient(
+                listOf(palette.outBubbleGradient, palette.outBubble)
+            ),
+            albumShape
+        )
+    } else {
+        Modifier.background(palette.inBubble, albumShape)
+    }
     val captionItem = items.firstOrNull { it.text.isNotEmpty() }
     Row(
         modifier = Modifier
@@ -4236,21 +4369,7 @@ fun AlbumBubble(
         }
         Box {
             Column(
-                modifier = Modifier
-                    .background(
-                        if (outgoing) {
-                            Color(0xFFD8EDCB)
-                        } else {
-                            Color(0xFFF1F1F1)
-                        },
-                        RoundedCornerShape(
-                            if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
-                                8.dp
-                            } else {
-                                18.dp
-                            }
-                        )
-                    )
+                modifier = albumBg
                     .combinedClickable(
                         onClick = {},
                         onLongClick = { menuOpen = true }
@@ -4262,8 +4381,10 @@ fun AlbumBubble(
                 ) {
                     Text(
                         first.senderName,
-                        color = Color(0xFF5B7C99),
-                        fontSize = 12.sp,
+                        color = OfficialTheme.nameColor(
+                            first.senderUserId, OfficialTheme.dark
+                        ),
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier
                             .padding(horizontal = 4.dp)
@@ -4281,15 +4402,29 @@ fun AlbumBubble(
                     Row(
                         modifier = Modifier
                             .padding(horizontal = 4.dp)
-                            .background(
-                                Color(0x14000000),
-                                RoundedCornerShape(6.dp)
-                            )
-                            .padding(horizontal = 7.dp, vertical = 4.dp)
+                            .height(IntrinsicSize.Min)
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .fillMaxHeight()
+                                .background(
+                                    if (outgoing) {
+                                        palette.outReplyLine
+                                    } else {
+                                        palette.inReplyLine
+                                    },
+                                    RoundedCornerShape(2.dp)
+                                )
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             "回复：${first.replySummary.ifEmpty { "原消息" }}",
-                            color = Color(0xFF546E7A),
+                            color = if (outgoing) {
+                                palette.outText.copy(alpha = 0.85f)
+                            } else {
+                                palette.textSecondary
+                            },
                             fontSize = 12.sp,
                             maxLines = 2
                         )
@@ -4311,15 +4446,34 @@ fun AlbumBubble(
                     Box(Modifier.padding(horizontal = 4.dp)) {
                         RichMessageText(
                             captionItem,
-                            onBotCommand = { MessageStore.sendText(it) }
+                            onBotCommand = { MessageStore.sendText(it) },
+                            color = if (outgoing) {
+                                palette.outText
+                            } else {
+                                palette.inText
+                            },
+                            linkColor = if (outgoing) {
+                                palette.outText
+                            } else {
+                                palette.linkIn
+                            }
                         )
                     }
                     Spacer(Modifier.height(2.dp))
                 }
-                Row(Modifier.padding(horizontal = 4.dp)) {
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .align(Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         formatMsgTime(last.dateSeconds),
-                        color = Color.Gray,
+                        color = if (outgoing) {
+                            palette.outTime
+                        } else {
+                            palette.inTime
+                        },
                         fontSize = 11.sp
                     )
                     when (last.readState) {
@@ -4327,7 +4481,7 @@ fun AlbumBubble(
                             Spacer(Modifier.width(4.dp))
                             TicksIcon(
                                 read = true,
-                                color = Color(0xFF5B7C99),
+                                color = palette.outTime,
                                 sizeDp = 15
                             )
                         }
@@ -4335,7 +4489,7 @@ fun AlbumBubble(
                             Spacer(Modifier.width(4.dp))
                             TicksIcon(
                                 read = false,
-                                color = Color.Gray,
+                                color = palette.outTime,
                                 sizeDp = 15
                             )
                         }
