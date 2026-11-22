@@ -127,6 +127,7 @@ import kotlinx.coroutines.delay
 import com.tuxungram.android.ui.ArchiveScreen
 import com.tuxungram.android.ui.BlockedScreen
 import com.tuxungram.android.ui.DownloadsScreen
+import com.tuxungram.android.ui.StatsScreen
 import com.tuxungram.android.ui.ChangelogScreen
 import com.tuxungram.android.ui.GuideScreen
 import com.tuxungram.android.ui.WhatsNewScreen
