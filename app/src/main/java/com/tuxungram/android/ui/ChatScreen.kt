@@ -95,6 +95,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.provider.ContactsContract
 import com.tuxungram.android.td.AdminStore
+import com.tuxungram.android.td.AlbumPart
 import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.AuthState
@@ -444,6 +445,7 @@ fun ChatScreen(
         }
     }
 
+
     // Round video notes (v0.9.14, U4): recorded with the
     // system camera app through ACTION_VIDEO_CAPTURE (the
     // caller needs no camera permission and no camera
@@ -626,6 +628,87 @@ fun ChatScreen(
             } catch (t: Throwable) {
                 // Picker copy failed: stay on the chat screen silently.
             }
+        }
+    }
+
+    // Album picking (v0.9.15, V4): several photos/videos in
+    // one go via the system document picker. One pick falls
+    // back to the existing single-photo / single-file flows;
+    // two or more open the album preview and send through
+    // sendMessageAlbum. The server caps an album at 10
+    // items, so the pick is capped there too.
+    var albumParts by remember { mutableStateOf<List<AlbumPart>>(emptyList()) }
+    var albumCaption by remember { mutableStateOf("") }
+    var albumPreviewOpen by remember { mutableStateOf(false) }
+    val albumPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isEmpty()) {
+            return@rememberLauncherForActivityResult
+        }
+        try {
+            val parts = ArrayList<AlbumPart>()
+            for (uri in uris.take(10)) {
+                val mime = context.contentResolver.getType(uri) ?: ""
+                if (!mime.startsWith("image/") &&
+                    !mime.startsWith("video/")
+                ) {
+                    continue
+                }
+                var displayName = "media"
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val name = cursor.getString(0)
+                        if (!name.isNullOrBlank()) displayName = name
+                    }
+                }
+                val ext = android.webkit.MimeTypeMap.getSingleton()
+                    .getExtensionFromMimeType(mime)
+                    ?: if (mime.startsWith("video/")) "mp4" else "jpg"
+                val file = File(
+                    context.cacheDir,
+                    "album_${System.currentTimeMillis()}_" +
+                        "${parts.size}.$ext"
+                )
+                context.contentResolver.openInputStream(uri)
+                    ?.use { inputStream ->
+                        file.outputStream().use { output ->
+                            inputStream.copyTo(output)
+                        }
+                    }
+                parts.add(AlbumPart(file.absolutePath, mime, displayName))
+            }
+            when {
+                parts.isEmpty() -> Toast.makeText(
+                    context, "没选到能发的照片或视频。",
+                    Toast.LENGTH_SHORT
+                ).show()
+                parts.size == 1 -> {
+                    val part = parts[0]
+                    if (part.mimeType.startsWith("image/")) {
+                        pendingPhoto = part.path
+                        photoCaption = ""
+                    } else {
+                        pendingFile = Triple(
+                            part.path, part.mimeType, part.fileName
+                        )
+                    }
+                }
+                else -> {
+                    albumParts = parts
+                    albumCaption = ""
+                    albumPreviewOpen = true
+                }
+            }
+        } catch (t: Throwable) {
+            Toast.makeText(
+                context, "读取所选文件失败，没有发出去。",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -895,6 +978,27 @@ fun ChatScreen(
                 allowWhenOnline = chat != null && !chat.isGroup &&
                     !chat.isChannel && !chat.isSecret,
                 onCancel = { pendingPhoto = null }
+            )
+            return@Column
+        }
+
+        if (albumPreviewOpen && albumParts.size >= 2) {
+            AlbumPreview(
+                parts = albumParts,
+                caption = albumCaption,
+                onCaptionChange = { albumCaption = it },
+                onSend = {
+                    MessageStore.clearSendError()
+                    MessageStore.sendAlbum(
+                        albumParts, albumCaption.trim()
+                    )
+                    albumPreviewOpen = false
+                    albumParts = emptyList()
+                },
+                onCancel = {
+                    albumPreviewOpen = false
+                    albumParts = emptyList()
+                }
             )
             return@Column
         }
@@ -1239,6 +1343,43 @@ fun ChatScreen(
                 )
             }
         }
+        // Album grouping (v0.9.15, V4): runs of 2+ consecutive
+        // photo/video messages sharing a media_album_id render
+        // as ONE grid bubble anchored at the run's first
+        // (oldest) message; the other members render nothing.
+        // Before this version media_album_id was not even
+        // parsed, so albums arrived as separate bubbles.
+        val albumAnchors = remember(messages) {
+            val anchors = HashMap<Long, List<MsgItem>>()
+            val covered = HashSet<Long>()
+            var i = 0
+            while (i < messages.size) {
+                val first = messages[i]
+                if (first.mediaAlbumId != 0L &&
+                    (first.kind == MsgKind.PHOTO ||
+                        first.kind == MsgKind.VIDEO)
+                ) {
+                    var j = i + 1
+                    while (j < messages.size &&
+                        messages[j].mediaAlbumId == first.mediaAlbumId &&
+                        (messages[j].kind == MsgKind.PHOTO ||
+                            messages[j].kind == MsgKind.VIDEO)
+                    ) {
+                        j++
+                    }
+                    if (j - i >= 2) {
+                        anchors[first.id] = messages.subList(i, j)
+                        for (k in i + 1 until j) {
+                            covered.add(messages[k].id)
+                        }
+                        i = j
+                        continue
+                    }
+                }
+                i++
+            }
+            anchors to covered
+        }
         LazyColumn(
             state = listState,
             reverseLayout = true,
@@ -1277,7 +1418,9 @@ fun ChatScreen(
                         transformOrigin = TransformOrigin(0.5f, 1f)
                     }
                 ) {
-                    if (msg.id in separatorIds) {
+                    if (msg.id in separatorIds &&
+                        msg.id !in albumAnchors.second
+                    ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1305,7 +1448,9 @@ fun ChatScreen(
                             )
                         }
                     }
-                    if (unreadFirstId != 0L && msg.id == unreadFirstId) {
+                    if (unreadFirstId != 0L && msg.id == unreadFirstId &&
+                        msg.id !in albumAnchors.second
+                    ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1327,6 +1472,28 @@ fun ChatScreen(
                             )
                         }
                     }
+                    val albumRun = albumAnchors.first[msg.id]
+                    if (msg.id in albumAnchors.second) {
+                        // Covered by the album bubble anchored at
+                        // the run's first message (v0.9.15, V4).
+                    } else if (albumRun != null) {
+                        AlbumBubble(
+                            items = albumRun,
+                            isGroup = chat?.isGroup == true,
+                            onOpenPhoto = { m -> viewerId = m.id },
+                            onOpenVideo = { m -> videoItem = m },
+                            onReply = { m ->
+                                MessageStore.setReplyTarget(m)
+                            },
+                            onForward = onForward,
+                            onDeleteSelected = { itemsToDelete ->
+                                pendingDelete = itemsToDelete
+                            },
+                            onOpenSenderProfile = { userId ->
+                                DeepLink.pendingProfileUser.value = userId
+                            }
+                        )
+                    } else {
                     MessageBubble(
                         msg,
                         isGroup = chat?.isGroup == true,
@@ -1367,6 +1534,7 @@ fun ChatScreen(
                             DeepLink.pendingProfileUser.value = userId
                         }
                     )
+                    }
                 }
             }
         }
@@ -1956,6 +2124,19 @@ fun ChatScreen(
                             )
                             DropdownMenuItem(
                                 leadingIcon = {
+                                    Icon(ImageIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
+                                text = { Text("发相册（多选）") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    AppLock.noteExternalLaunch()
+                                    albumPicker.launch(
+                                        arrayOf("image/*", "video/*")
+                                    )
+                                }
+                            )
+                            DropdownMenuItem(
+                                leadingIcon = {
                                     Icon(ClipIcon, contentDescription = null, modifier = Modifier.size(20.dp))
                                 },
                                 text = { Text("发文件 / 视频 / 语音") },
@@ -2406,6 +2587,111 @@ fun PhotoPreview(
                     )
                 }
             }
+        }
+    }
+}
+
+/** Album send preview (v0.9.15, V4): a grid of the picked
+ *  photos/videos plus ONE caption for the whole album (it
+ *  rides on the first item when sent). Video cells show a
+ *  first frame grabbed with MediaMetadataRetriever. */
+@Composable
+fun AlbumPreview(
+    parts: List<AlbumPart>,
+    caption: String,
+    onCaptionChange: (String) -> Unit,
+    onSend: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            "发送相册（${parts.size} 项）",
+            fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(12.dp))
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            gridItems(parts) { part ->
+                val bitmap by produceState<android.graphics.Bitmap?>(
+                    null, part.path
+                ) {
+                    value = withContext(Dispatchers.IO) {
+                        if (part.mimeType.startsWith("image/")) {
+                            decodeCached(part.path)
+                        } else {
+                            try {
+                                val retriever =
+                                    android.media.MediaMetadataRetriever()
+                                retriever.setDataSource(part.path)
+                                val frame = retriever.getFrameAtTime(0)
+                                retriever.release()
+                                frame
+                            } catch (t: Throwable) {
+                                null
+                            }
+                        }
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFE0E0E0)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap!!.asImageBitmap(),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    if (part.mimeType.startsWith("video/")) {
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .background(
+                                    Color(0x66000000), CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = caption,
+            onValueChange = onCaptionChange,
+            placeholder = { Text("给整个相册写一句说明（可空）") },
+            modifier = Modifier.fillMaxWidth(),
+            maxLines = 3
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(onClick = onCancel) { Text("取消") }
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = onSend) { Text("发送") }
         }
     }
 }
@@ -3553,6 +3839,286 @@ fun MessageBubble(
  *  translateMessageText, then the translated text under a
  *  hairline with a 译文 marker and a collapse button. Shared
  *  by the main chat bubble and the thread/forum bubble. */
+/** Album bubble (v0.9.15, V4): one bubble for a whole
+ *  media_album_id run — a 2-column grid of photo/video
+ *  cells, the album caption (the first non-empty item text)
+ *  under it, and the LAST item's time/read state as the
+ *  footer. Tapping a photo opens the full-screen viewer on
+ *  that item (which pages through the chat's photos);
+ *  tapping a video plays it when downloaded, otherwise
+ *  starts the download. The long-press menu is the basic
+ *  set: reply (anchored at the first item), forward and
+ *  delete act on the whole album. Selection mode does not
+ *  cover album rows in this version. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun AlbumBubble(
+    items: List<MsgItem>,
+    isGroup: Boolean,
+    onOpenPhoto: (MsgItem) -> Unit,
+    onOpenVideo: (MsgItem) -> Unit,
+    onReply: (MsgItem) -> Unit,
+    onForward: (List<MsgItem>) -> Unit,
+    onDeleteSelected: (List<MsgItem>) -> Unit,
+    onOpenSenderProfile: (Long) -> Unit
+) {
+    val first = items.first()
+    val last = items.last()
+    val outgoing = first.outgoing
+    var menuOpen by remember { mutableStateOf(false) }
+    val bubbleStyle by UiSettings.bubbleStyle.collectAsState()
+    val captionItem = items.firstOrNull { it.text.isNotEmpty() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = if (outgoing) {
+            Arrangement.End
+        } else {
+            Arrangement.Start
+        },
+        verticalAlignment = Alignment.Bottom
+    ) {
+        if (isGroup && !outgoing) {
+            if (first.senderUserId != 0L) {
+                SenderAvatarBubble(
+                    msg = first,
+                    onOpenSenderProfile = onOpenSenderProfile
+                )
+            } else {
+                Spacer(Modifier.width(32.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+        }
+        Box {
+            Column(
+                modifier = Modifier
+                    .background(
+                        if (outgoing) {
+                            Color(0xFFD8EDCB)
+                        } else {
+                            Color(0xFFF1F1F1)
+                        },
+                        RoundedCornerShape(
+                            if (bubbleStyle == UiSettings.BUBBLE_CLASSIC) {
+                                8.dp
+                            } else {
+                                18.dp
+                            }
+                        )
+                    )
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = { menuOpen = true }
+                    )
+                    .padding(horizontal = 6.dp, vertical = 6.dp)
+            ) {
+                if (isGroup && !outgoing &&
+                    first.senderName.isNotEmpty()
+                ) {
+                    Text(
+                        first.senderName,
+                        color = Color(0xFF5B7C99),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .padding(horizontal = 4.dp)
+                            .clickable {
+                                if (first.senderUserId != 0L) {
+                                    onOpenSenderProfile(
+                                        first.senderUserId
+                                    )
+                                }
+                            }
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                if (first.replyToId != 0L) {
+                    Row(
+                        modifier = Modifier
+                            .padding(horizontal = 4.dp)
+                            .background(
+                                Color(0x14000000),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 7.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            "回复：${first.replySummary.ifEmpty { "原消息" }}",
+                            color = Color(0xFF546E7A),
+                            fontSize = 12.sp,
+                            maxLines = 2
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                }
+                Column {
+                    items.chunked(2).forEach { rowItems ->
+                        Row {
+                            for (item in rowItems) {
+                                AlbumCell(item, onOpenPhoto, onOpenVideo)
+                                Spacer(Modifier.width(4.dp))
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                    }
+                }
+                if (captionItem != null) {
+                    Box(Modifier.padding(horizontal = 4.dp)) {
+                        RichMessageText(
+                            captionItem,
+                            onBotCommand = { MessageStore.sendText(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
+                }
+                Row(Modifier.padding(horizontal = 4.dp)) {
+                    Text(
+                        formatMsgTime(last.dateSeconds),
+                        color = Color.Gray,
+                        fontSize = 11.sp
+                    )
+                    when (last.readState) {
+                        "read" -> {
+                            Spacer(Modifier.width(4.dp))
+                            TicksIcon(
+                                read = true,
+                                color = Color(0xFF5B7C99),
+                                sizeDp = 15
+                            )
+                        }
+                        "sent" -> {
+                            Spacer(Modifier.width(4.dp))
+                            TicksIcon(
+                                read = false,
+                                color = Color.Gray,
+                                sizeDp = 15
+                            )
+                        }
+                    }
+                    if (last.sendingState == "failed") {
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "发送失败",
+                            color = Color(0xFFC62828),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("回复") },
+                    onClick = {
+                        menuOpen = false
+                        onReply(first)
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("转发整个相册") },
+                    onClick = {
+                        menuOpen = false
+                        onForward(items)
+                    }
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text("删除", color = Color(0xFFC62828))
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onDeleteSelected(items)
+                    }
+                )
+            }
+        }
+    }
+}
+
+/** One cell of an album grid: the photo itself, or the
+ *  video's thumbnail (its minithumbnail until the real
+ *  thumbnail lands) with a play chip and duration. */
+@Composable
+fun AlbumCell(
+    item: MsgItem,
+    onOpenPhoto: (MsgItem) -> Unit,
+    onOpenVideo: (MsgItem) -> Unit
+) {
+    val stillPath = if (item.kind == MsgKind.PHOTO) {
+        item.photoPath
+    } else {
+        item.thumbPath
+    }
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        null, stillPath, item.miniThumbData
+    ) {
+        value = withContext(Dispatchers.IO) {
+            when {
+                stillPath != null -> decodeCached(stillPath)
+                item.miniThumbData.isNotEmpty() ->
+                    decodeMiniThumb(item.miniThumbData)
+                else -> null
+            }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(114.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFFE0E0E0))
+            .clickable {
+                when {
+                    item.kind == MsgKind.PHOTO -> onOpenPhoto(item)
+                    item.filePath != null -> onOpenVideo(item)
+                    else -> MessageStore.downloadFileFor(item)
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        if (item.kind == MsgKind.VIDEO) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .background(Color(0x66000000), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            if (item.durationSec > 0) {
+                Text(
+                    formatDurationClock(item.durationSec),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .background(
+                            Color(0x66000000),
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun TranslationArea(chatId: Long, msg: MsgItem) {
     val translations by MessageStore.translations.collectAsState()

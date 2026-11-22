@@ -209,6 +209,13 @@ data class MsgItem(
     val mediaAlbumId: Long = 0L
 )
 
+/** One picked photo/video for an album send (v0.9.15, V4). */
+data class AlbumPart(
+    val path: String,
+    val mimeType: String,
+    val fileName: String
+)
+
 /** How one send should deviate from the plain immediate send
  *  (v0.9.3, M5): silent (no notification for the other side)
  *  and/or scheduled (messageSendOptions.scheduling_state). */
@@ -1239,6 +1246,60 @@ object MessageStore {
         }
     }
 
+    /** Send 2+ picked photos/videos as one album
+     *  (v0.9.15, V4): sendMessageAlbum is verified in
+     *  td_api.tl (chat_id / topic_id / reply_to / options /
+     *  input_message_contents -> messages). The caption rides
+     *  on the FIRST item — that is where Telegram surfaces an
+     *  album's caption. Photos reuse photoContent, videos the
+     *  fileContent video branch; the reply target is honored
+     *  and consumed exactly like a single send. The answer's
+     *  messages are reconciled into byId like any other send;
+     *  updateMessageSendSucceeded finishes them in place. */
+    fun sendAlbum(parts: List<AlbumPart>, caption: String) {
+        val chatId = currentChatId
+        if (chatId == 0L || parts.size < 2) return
+        val replyTo = replyToJson()
+        clearReplyTarget()
+        val contents = JSONArray()
+        parts.forEachIndexed { index, part ->
+            val first = index == 0
+            val content = if (part.mimeType.startsWith("image/")) {
+                photoContent(part.path, if (first) caption else "")
+            } else {
+                val built = fileContent(
+                    part.path, part.mimeType, part.fileName
+                )
+                if (first && caption.isNotEmpty()) {
+                    built.put("caption", formattedText(caption))
+                }
+                built
+            }
+            contents.put(content)
+        }
+        val query = TdClient.request("sendMessageAlbum").apply {
+            put("chat_id", chatId)
+            put("topic_id", JSONObject.NULL)
+            if (replyTo != null) put("reply_to", replyTo)
+            put("options", JSONObject.NULL)
+            put("input_message_contents", contents)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _sendError.value = sendErrorText(response)
+            } else {
+                val arr = response.optJSONArray("messages")
+                    ?: JSONArray()
+                for (i in 0 until arr.length()) {
+                    val msg = arr.optJSONObject(i) ?: continue
+                    val item = parseMessage(msg)
+                    byId[item.id] = item
+                }
+                if (arr.length() > 0) publish()
+            }
+        }
+    }
+
     /** The shared sendMessage boilerplate for content types
      *  that need no send modifiers (v0.9.4: polls, locations,
      *  contacts): reply target honored, result reconciled into
@@ -2058,6 +2119,17 @@ object MessageStore {
             "messageVideo" -> {
                 val video = content.optJSONObject("video")
                 val file = video?.optJSONObject("video")
+                // The video's own thumbnail (v0.9.15, V4):
+                // album grids and the file row's preview need
+                // a still image; it rides the same thumb
+                // fields the video-note branch uses, and the
+                // updateFile handler already patches them.
+                val vThumbFile = video?.optJSONObject("thumbnail")
+                    ?.optJSONObject("file")
+                val vThumbId = vThumbFile?.optInt("id", 0) ?: 0
+                if (vThumbId != 0 && downloadedPath(vThumbFile) == null) {
+                    requestDownload(vThumbId, priority = 1)
+                }
                 base.copy(
                     kind = MsgKind.VIDEO,
                     text = content.optJSONObject("caption")?.optString("text") ?: "",
@@ -2067,7 +2139,11 @@ object MessageStore {
                     fileName = video?.optString("file_name") ?: "",
                     fileSize = fileSizeOf(file),
                     fileMime = video?.optString("mime_type") ?: "",
-                    durationSec = video?.optInt("duration", 0) ?: 0
+                    durationSec = video?.optInt("duration", 0) ?: 0,
+                    thumbFileId = vThumbId,
+                    thumbPath = downloadedPath(vThumbFile),
+                    miniThumbData = video?.optJSONObject("minithumbnail")
+                        ?.optString("data") ?: ""
                 )
             }
             "messageVoiceNote" -> {
