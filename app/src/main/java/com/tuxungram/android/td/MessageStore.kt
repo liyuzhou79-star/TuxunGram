@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, OTHER }
+enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, OTHER }
 
 /** One poll option, flattened from pollOption. */
 data class PollOptionUi(
@@ -135,7 +135,16 @@ data class MsgItem(
     // at that unix time; scheduledWhenOnline = it goes out
     // when the other side comes online.
     val scheduledAtSec: Int = 0,
-    val scheduledWhenOnline: Boolean = false
+    val scheduledWhenOnline: Boolean = false,
+    // Location payload (LOCATION kind, v0.9.4 N2).
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    // Contact payload (CONTACT kind, v0.9.4 N2): display name,
+    // phone number, and the Telegram user id when the shared
+    // contact is a Telegram user (0 = not known / not a user).
+    val contactName: String = "",
+    val contactPhone: String = "",
+    val contactUserId: Long = 0L
 )
 
 /** How one send should deviate from the plain immediate send
@@ -784,6 +793,41 @@ object MessageStore {
         sendContent(content)
     }
 
+    /** Share a one-shot location in the open chat (v0.9.4,
+     *  N2; inputMessageLocation verified in td_api.tl). The
+     *  coordinates come from the system LocationManager in the
+     *  UI layer — no Play services involved. */
+    fun sendLocation(latitude: Double, longitude: Double) {
+        sendContent(JSONObject().apply {
+            put("@type", "inputMessageLocation")
+            put("location", JSONObject().apply {
+                put("@type", "location")
+                put("latitude", latitude)
+                put("longitude", longitude)
+                put("horizontal_accuracy", 0.0)
+            })
+        })
+    }
+
+    /** Share a contact card in the open chat (v0.9.4, N2;
+     *  inputMessageContact verified in td_api.tl). user_id
+     *  stays 0 for contacts picked from the system address
+     *  book — TDLib links the card to a Telegram account by
+     *  phone number on its side. */
+    fun sendContact(phoneNumber: String, firstName: String, lastName: String) {
+        sendContent(JSONObject().apply {
+            put("@type", "inputMessageContact")
+            put("contact", JSONObject().apply {
+                put("@type", "contact")
+                put("phone_number", phoneNumber)
+                put("first_name", firstName)
+                put("last_name", lastName)
+                put("vcard", "")
+                put("user_id", 0L)
+            })
+        })
+    }
+
     fun clearSendError() {
         _sendError.value = null
     }
@@ -1344,6 +1388,26 @@ object MessageStore {
                     kind = MsgKind.POLL,
                     pollId = pollObj?.optLong("id", 0L) ?: 0L,
                     poll = pollObj?.let { parsePoll(it) }
+                )
+            }
+            "messageLocation" -> {
+                val loc = content.optJSONObject("location")
+                base.copy(
+                    kind = MsgKind.LOCATION,
+                    latitude = loc?.optDouble("latitude", 0.0) ?: 0.0,
+                    longitude = loc?.optDouble("longitude", 0.0) ?: 0.0
+                )
+            }
+            "messageContact" -> {
+                val contact = content.optJSONObject("contact")
+                val first = contact?.optString("first_name") ?: ""
+                val last = contact?.optString("last_name") ?: ""
+                base.copy(
+                    kind = MsgKind.CONTACT,
+                    contactName = listOf(first, last)
+                        .filter { it.isNotEmpty() }.joinToString(" "),
+                    contactPhone = contact?.optString("phone_number") ?: "",
+                    contactUserId = contact?.optLong("user_id", 0L) ?: 0L
                 )
             }
             "messagePhoto" -> {

@@ -81,7 +81,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.provider.ContactsContract
 import com.tuxungram.android.td.AdminStore
+import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.AuthState
 import com.tuxungram.android.td.ChatItem
 import com.tuxungram.android.td.ChatStore
@@ -335,6 +337,54 @@ fun ChatScreen(
     var attachMenuOpen by remember { mutableStateOf(false) }
     // Create-a-poll sheet (v0.9.4, N1).
     var pollCreateOpen by remember { mutableStateOf(false) }
+    // Location sharing (v0.9.4, N2): a fetched fix waits here
+    // for the confirm dialog before it is sent.
+    var pendingLocation by remember {
+        mutableStateOf<Pair<Double, Double>?>(null)
+    }
+    val locationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        if (grants.values.any { it }) {
+            fetchOneLocation(context) { fix ->
+                if (fix != null) {
+                    pendingLocation = fix
+                } else {
+                    Toast.makeText(
+                        context,
+                        "没取到位置，检查定位开关再试一次。",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        } else {
+            Toast.makeText(
+                context,
+                "没有定位权限，发不了位置。",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+    // Contact sharing (v0.9.4, N2): pick from the system
+    // address book, read name + first phone number, send the
+    // card. A contact without a number cannot be shared.
+    val contactPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickContact()
+    ) { uri ->
+        if (uri != null) {
+            val picked = readPickedContact(context, uri)
+            if (picked == null) {
+                Toast.makeText(
+                    context,
+                    "这个联系人没有电话号码，发不了。",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                MessageStore.clearSendError()
+                MessageStore.sendContact(picked.first, picked.second, picked.third)
+            }
+        }
+    }
     // Emoji/sticker/GIF panel docked above the keyboard area
     // (steer: the input bar must not be a bare text box).
     var stickerPanelOpen by remember { mutableStateOf(false) }
@@ -588,6 +638,8 @@ fun ChatScreen(
                                         MsgKind.STICKER -> "[贴纸]"
                                         MsgKind.ANIMATION -> "[动图]"
                                         MsgKind.POLL -> "[投票]"
+                                        MsgKind.LOCATION -> "[位置]"
+                                        MsgKind.CONTACT -> "[联系人]"
                                         else -> "[消息]"
                                     }
                                 },
@@ -632,6 +684,34 @@ fun ChatScreen(
                 onCancel = { pendingPhoto = null }
             )
             return@Column
+        }
+
+        val locationToSend = pendingLocation
+        if (locationToSend != null) {
+            AlertDialog(
+                onDismissRequest = { pendingLocation = null },
+                title = { Text("发送当前位置？") },
+                text = {
+                    Text(
+                        "纬度 ${formatCoord(locationToSend.first)}，" +
+                            "经度 ${formatCoord(locationToSend.second)}"
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        MessageStore.clearSendError()
+                        MessageStore.sendLocation(
+                            locationToSend.first, locationToSend.second
+                        )
+                        pendingLocation = null
+                    }) { Text("发送") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingLocation = null }) {
+                        Text("取消")
+                    }
+                }
+            )
         }
 
         if (pollCreateOpen) {
@@ -855,6 +935,8 @@ fun ChatScreen(
                                         MsgKind.STICKER -> "[贴纸]"
                                         MsgKind.ANIMATION -> "[动图]"
                                         MsgKind.POLL -> "[投票]"
+                                        MsgKind.LOCATION -> "[位置]"
+                                        MsgKind.CONTACT -> "[联系人]"
                                         else -> "[消息]"
                                     }
                                 }
@@ -999,6 +1081,55 @@ fun ChatScreen(
                                 onClick = {
                                     attachMenuOpen = false
                                     pollCreateOpen = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("位置") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    val granted = androidx.core.content.ContextCompat
+                                        .checkSelfPermission(
+                                            context,
+                                            android.Manifest.permission
+                                                .ACCESS_FINE_LOCATION
+                                        ) == android.content.pm.PackageManager
+                                        .PERMISSION_GRANTED ||
+                                        androidx.core.content.ContextCompat
+                                            .checkSelfPermission(
+                                                context,
+                                                android.Manifest.permission
+                                                    .ACCESS_COARSE_LOCATION
+                                            ) == android.content.pm.PackageManager
+                                            .PERMISSION_GRANTED
+                                    if (granted) {
+                                        fetchOneLocation(context) { fix ->
+                                            if (fix != null) {
+                                                pendingLocation = fix
+                                            } else {
+                                                Toast.makeText(
+                                                    context,
+                                                    "没取到位置，检查定位开关再试一次。",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
+                                    } else {
+                                        locationPermission.launch(
+                                            arrayOf(
+                                                android.Manifest.permission
+                                                    .ACCESS_FINE_LOCATION,
+                                                android.Manifest.permission
+                                                    .ACCESS_COARSE_LOCATION
+                                            )
+                                        )
+                                    }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("联系人") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    contactPicker.launch(null)
                                 }
                             )
                         }
@@ -1806,6 +1937,8 @@ fun MessageBubble(
                             )
                         }
                     }
+                    MsgKind.LOCATION -> LocationBubbleContent(msg)
+                    MsgKind.CONTACT -> ContactBubbleContent(msg)
                     MsgKind.OTHER -> Text(
                         "[消息]",
                         color = Color.Gray,
@@ -2095,6 +2228,243 @@ fun formatDuration(totalSeconds: Int): String {
 
 /** Hand a downloaded file to whatever app can open it, via
  *  FileProvider (the file lives in TDLib's private directory). */
+/** One coordinate, five decimals — plenty for a shared pin
+ *  and short enough to read (v0.9.4, N2). */
+fun formatCoord(value: Double): String =
+    String.format(java.util.Locale.US, "%.5f", value)
+
+/** One-shot location from the system LocationManager
+ *  (v0.9.4, N2) — deliberately no Play services dependency.
+ *  A fresh-enough last-known fix wins; otherwise a single
+ *  update is requested with a 12 s timeout. Null = no fix
+ *  (providers off, permission missing, or timeout), which
+ *  the UI reports honestly instead of sending anything. */
+fun fetchOneLocation(
+    context: android.content.Context,
+    onResult: (Pair<Double, Double>?) -> Unit
+) {
+    try {
+        val manager = context.getSystemService(
+            android.content.Context.LOCATION_SERVICE
+        ) as android.location.LocationManager
+        val providers = listOf(
+            android.location.LocationManager.GPS_PROVIDER,
+            android.location.LocationManager.NETWORK_PROVIDER
+        ).filter { provider ->
+            try {
+                manager.isProviderEnabled(provider)
+            } catch (t: Throwable) {
+                false
+            }
+        }
+        if (providers.isEmpty()) {
+            onResult(null)
+            return
+        }
+        val now = System.currentTimeMillis()
+        val last = providers.mapNotNull { provider ->
+            try {
+                manager.getLastKnownLocation(provider)
+            } catch (t: Throwable) {
+                null
+            }
+        }.maxByOrNull { it.time }
+        if (last != null && now - last.time < 5 * 60 * 1000) {
+            onResult(last.latitude to last.longitude)
+            return
+        }
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        var settled = false
+        val listener = object : android.location.LocationListener {
+            override fun onLocationChanged(location: android.location.Location) {
+                if (!settled) {
+                    settled = true
+                    onResult(location.latitude to location.longitude)
+                }
+            }
+        }
+        mainHandler.postDelayed({
+            if (!settled) {
+                settled = true
+                try {
+                    manager.removeUpdates(listener)
+                } catch (t: Throwable) {
+                }
+                onResult(last?.let { it.latitude to it.longitude })
+            }
+        }, 12_000)
+        @Suppress("DEPRECATION")
+        manager.requestSingleUpdate(
+            providers.first(), listener, android.os.Looper.getMainLooper()
+        )
+    } catch (t: Throwable) {
+        onResult(null)
+    }
+}
+
+/** Read (phone, first name, last name) for a contact picked
+ *  from the system address book; null when the contact has
+ *  no phone number (v0.9.4, N2). */
+fun readPickedContact(
+    context: android.content.Context,
+    uri: Uri
+): Triple<String, String, String>? {
+    return try {
+        var contactId = ""
+        var displayName = ""
+        context.contentResolver.query(
+            uri,
+            arrayOf(
+                ContactsContract.Contacts._ID,
+                ContactsContract.Contacts.DISPLAY_NAME
+            ),
+            null, null, null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                contactId = cursor.getString(0) ?: ""
+                displayName = cursor.getString(1) ?: ""
+            }
+        }
+        if (contactId.isEmpty()) return null
+        var phone = ""
+        context.contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+            "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+            arrayOf(contactId),
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                phone = cursor.getString(0) ?: ""
+            }
+        }
+        if (phone.isBlank()) {
+            null
+        } else {
+            val first = displayName.substringBefore(' ').ifEmpty { displayName }
+            val last = displayName.substringAfter(' ', "")
+            Triple(phone, first, last)
+        }
+    } catch (t: Throwable) {
+        null
+    }
+}
+
+/** Location card (v0.9.4, N2): a static map-like tile with
+ *  the pin and coordinates — no map SDK in the app; tapping
+ *  hands the coordinates to the system map app via a geo:
+ *  intent. */
+@Composable
+fun LocationBubbleContent(msg: MsgItem) {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .width(208.dp)
+            .clickable {
+                val uri = Uri.parse(
+                    "geo:${msg.latitude},${msg.longitude}" +
+                        "?q=${msg.latitude},${msg.longitude}"
+                )
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                } catch (t: Throwable) {
+                    Toast.makeText(
+                        context, "这台手机上没有能打开地图的应用。",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(104.dp)
+                .background(Color(0xFFD9EAD3), RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("📍", fontSize = 36.sp)
+        }
+        Spacer(Modifier.height(5.dp))
+        Text("位置", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "${formatCoord(msg.latitude)}, ${formatCoord(msg.longitude)}",
+            color = Color.Gray, fontSize = 12.sp
+        )
+        Text(
+            "点开在地图里看",
+            color = MaterialTheme.colorScheme.primary, fontSize = 12.sp
+        )
+    }
+}
+
+/** Contact card (v0.9.4, N2): name + phone, a profile entry
+ *  when the card carries a Telegram user id, and a save
+ *  entry that hands the contact to the system address book
+ *  editor (ACTION_INSERT) instead of writing silently. */
+@Composable
+fun ContactBubbleContent(msg: MsgItem) {
+    val context = LocalContext.current
+    Column(modifier = Modifier.width(208.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primary, CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    msg.contactName.take(1).ifEmpty { "?" },
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(Modifier.width(9.dp))
+            Column {
+                Text(
+                    msg.contactName.ifEmpty { "联系人" },
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
+                Text(msg.contactPhone, color = Color.Gray, fontSize = 13.sp)
+            }
+        }
+        Row {
+            if (msg.contactUserId != 0L) {
+                TextButton(onClick = {
+                    DeepLink.pendingProfileUser.value = msg.contactUserId
+                }) {
+                    Text("查看资料", fontSize = 13.sp)
+                }
+            }
+            TextButton(onClick = {
+                val intent = Intent(ContactsContract.Intents.Insert.ACTION).apply {
+                    type = ContactsContract.RawContacts.CONTENT_TYPE
+                    putExtra(
+                        ContactsContract.Intents.Insert.NAME, msg.contactName
+                    )
+                    putExtra(
+                        ContactsContract.Intents.Insert.PHONE, msg.contactPhone
+                    )
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (t: Throwable) {
+                    Toast.makeText(
+                        context, "这台手机上没有通讯录应用。",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }) {
+                Text("存到通讯录", fontSize = 13.sp)
+            }
+        }
+    }
+}
+
 fun openFileWithSystem(context: android.content.Context, path: String, mime: String) {
     try {
         val file = File(path)
