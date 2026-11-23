@@ -13,6 +13,11 @@ data class MemberEntry(
     val name: String,
     val statusText: String,
     val statusKind: String = "member",
+    /** The member's tag (chatMember.tag, v0.9.39, F2):
+     *  for an administrator this IS their custom title.
+     *  Kept separately from [statusText] (which displays
+     *  it) so the title editor can prefill the raw value. */
+    val tag: String = "",
     /** Local path of the small profile photo once AvatarStore
      *  has it on disk (v0.9.9, W0); null = initial-letter disc. */
     val photoPath: String? = null
@@ -680,9 +685,15 @@ object ProfileStore {
         val userId = sender.optLong("user_id")
         val statusType =
             member.optJSONObject("status")?.optString("@type") ?: ""
+        // Member tag (v0.9.39, F2): an administrator's
+        // tag is their custom title and replaces the
+        // plain role word, as in the member list.
+        val tag = member.optString("tag")
         val status = when (statusType) {
-            "chatMemberStatusCreator" -> "群主"
-            "chatMemberStatusAdministrator" -> "管理员"
+            "chatMemberStatusCreator" ->
+                tag.ifEmpty { "群主" }
+            "chatMemberStatusAdministrator" ->
+                tag.ifEmpty { "管理员" }
             "chatMemberStatusRestricted" -> "受限"
             "chatMemberStatusBanned" -> "已封禁"
             "chatMemberStatusLeft" -> "已离开"
@@ -699,7 +710,10 @@ object ProfileStore {
         synchronized(membersLock) {
             if (memberList.any { it.userId == userId }) return false
             memberList.add(
-                MemberEntry(userId, nameByUser[userId] ?: "", status, kind)
+                MemberEntry(
+                    userId, nameByUser[userId] ?: "", status, kind,
+                    tag = tag
+                )
             )
         }
         if (!nameByUser.containsKey(userId)) fetchName(userId)

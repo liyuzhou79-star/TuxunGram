@@ -67,6 +67,10 @@ fun MembersScreen(chatId: Long, onBack: () -> Unit) {
     val notice by AdminStore.notice.collectAsState()
     var query by remember { mutableStateOf("") }
     var actionTarget by remember { mutableStateOf<MemberEntry?>(null) }
+    // Administrator custom-title editor (v0.9.39, F2).
+    var titleTarget by remember { mutableStateOf<MemberEntry?>(null) }
+    var titleText by remember { mutableStateOf("") }
+    var titleError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(chatId) {
         MemberListStore.load(chatId)
         AdminStore.loadCaps(chatId)
@@ -297,6 +301,14 @@ fun MembersScreen(chatId: Long, onBack: () -> Unit) {
                             }) { Text("解除封禁") }
                         }
                         "administrator" -> {
+                            if (caps.canManageTags) {
+                                TextButton(onClick = {
+                                    titleText = target.tag
+                                    titleError = null
+                                    titleTarget = target
+                                    actionTarget = null
+                                }) { Text("设置头衔") }
+                            }
                             if (caps.canPromote) {
                                 TextButton(onClick = {
                                     AdminStore.demoteMember(
@@ -312,6 +324,83 @@ fun MembersScreen(chatId: Long, onBack: () -> Unit) {
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { actionTarget = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // Administrator custom-title editor (v0.9.39, F2):
+    // the title is the member tag (setChatMemberTag) —
+    // 0-16 characters, no emoji, per td_api.tl. The
+    // client checks both rules up front in plain words;
+    // the server stays the final judge and its refusal
+    // lands in the shared admin notice. Saving an empty
+    // field clears the title.
+    val editing = titleTarget
+    if (editing != null) {
+        AlertDialog(
+            onDismissRequest = { titleTarget = null },
+            title = {
+                Text(
+                    "给 ${editing.name.ifEmpty { "这位管理员" }} 设置头衔"
+                )
+            },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = titleText,
+                        onValueChange = {
+                            titleText = it
+                            titleError = null
+                        },
+                        singleLine = true,
+                        label = { Text("头衔") },
+                        isError = titleError != null,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        titleError
+                            ?: "最多 16 个字，不能带表情；" +
+                                "留空保存就是清除头衔。",
+                        fontSize = 12.sp,
+                        color = if (titleError != null) {
+                            Color(0xFFC62828)
+                        } else {
+                            Color.Gray
+                        },
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val cleaned = titleText.trim()
+                    val codePoints = cleaned.codePointCount(
+                        0, cleaned.length
+                    )
+                    val hasEmoji = cleaned.codePoints().anyMatch {
+                        it >= 0x1F000 || it in 0x2600..0x27BF ||
+                            Character.getType(it) ==
+                            Character.SURROGATE.toInt()
+                    }
+                    when {
+                        codePoints > 16 ->
+                            titleError =
+                                "头衔最多 16 个字，现在 $codePoints 个。"
+                        hasEmoji ->
+                            titleError = "头衔不能带表情，换成纯文字吧。"
+                        else -> {
+                            AdminStore.setMemberTitle(
+                                chatId, editing.userId, cleaned
+                            )
+                            titleTarget = null
+                        }
+                    }
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { titleTarget = null }) {
                     Text("取消")
                 }
             }

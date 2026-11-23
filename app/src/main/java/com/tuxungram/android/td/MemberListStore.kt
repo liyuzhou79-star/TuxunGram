@@ -122,6 +122,7 @@ object MemberListStore {
                     MemberEntry(
                         userId = userId,
                         name = nameByUser[userId] ?: "",
+                        tag = title,
                         statusText = when {
                             title.isNotEmpty() -> title
                             isOwner -> "群主"
@@ -329,9 +330,16 @@ object MemberListStore {
         val userId = sender.optLong("user_id")
         val statusType =
             member.optJSONObject("status")?.optString("@type") ?: ""
+        // Member tag (v0.9.39, F2): for creators and
+        // administrators the tag IS the custom title —
+        // it replaces the plain role word in the row,
+        // the official display rule.
+        val tag = member.optString("tag")
         val status = when (statusType) {
-            "chatMemberStatusCreator" -> "群主"
-            "chatMemberStatusAdministrator" -> "管理员"
+            "chatMemberStatusCreator" ->
+                tag.ifEmpty { "群主" }
+            "chatMemberStatusAdministrator" ->
+                tag.ifEmpty { "管理员" }
             "chatMemberStatusRestricted" -> "受限"
             "chatMemberStatusBanned" -> "已封禁"
             "chatMemberStatusLeft" -> "已离开"
@@ -348,7 +356,10 @@ object MemberListStore {
         synchronized(membersLock) {
             if (memberList.any { it.userId == userId }) return false
             memberList.add(
-                MemberEntry(userId, nameByUser[userId] ?: "", status, kind)
+                MemberEntry(
+                    userId, nameByUser[userId] ?: "", status, kind,
+                    tag = tag
+                )
             )
         }
         if (!nameByUser.containsKey(userId) || !AvatarStore.hasUser(userId)) fetchName(userId)

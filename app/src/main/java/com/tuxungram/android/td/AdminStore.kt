@@ -28,7 +28,12 @@ data class AdminCaps(
     /** True for the chat creator. Content protection
      *  (toggleChatHasProtectedContent) is owner-only per
      *  td_api.tl, so O2 gates that row on this flag. */
-    val isCreator: Boolean = false
+    val isCreator: Boolean = false,
+    /** Member tags / administrator custom titles
+     *  (v0.9.39, F2): setChatMemberTag requires the
+     *  can_manage_tags right to change other users'
+     *  tags; the creator always can. */
+    val canManageTags: Boolean = false
 )
 
 /** One invite link row for the admin invite section
@@ -90,7 +95,7 @@ object AdminStore {
                         AdminCaps(
                             true, true, true, true, true,
                             canInvite = true, canManageSettings = true,
-                            isCreator = true
+                            isCreator = true, canManageTags = true
                         )
                     "chatMemberStatusAdministrator" -> {
                         val rights = status.optJSONObject("rights")
@@ -107,7 +112,9 @@ object AdminStore {
                             canInvite =
                                 rights?.optBoolean("can_invite_users") == true,
                             canManageSettings =
-                                rights?.optBoolean("can_change_info") == true
+                                rights?.optBoolean("can_change_info") == true,
+                            canManageTags =
+                                rights?.optBoolean("can_manage_tags") == true
                         )
                     }
                     else -> AdminCaps()
@@ -212,6 +219,38 @@ object AdminStore {
             .put("can_be_edited", false)
             .put("rights", rights)
         setMemberStatus(chatId, userId, status, "已设为管理员。")
+    }
+
+    /** Set (or, with an empty [title], clear) an
+     *  administrator's custom title (v0.9.39, F2). This
+     *  tl's chatMemberStatusAdministrator carries NO
+     *  custom_title field — in this TDLib the title is
+     *  the member tag: chatMember.tag reads it back, and
+     *  setChatMemberTag writes it (verified in
+     *  td_api.tl: "Changes the tag or custom title of a
+     *  chat member", 0-16 characters without emoji,
+     *  basic groups and supergroups, can_manage_tags
+     *  right for other users). The caller validates
+     *  length / emoji; the server remains the final
+     *  judge and refusals surface through the shared
+     *  notice, like every other member action. */
+    fun setMemberTitle(chatId: Long, userId: Long, title: String) {
+        val query = TdClient.request("setChatMemberTag").apply {
+            put("chat_id", chatId)
+            put("user_id", userId)
+            put("tag", title)
+        }
+        act(
+            query,
+            if (title.isEmpty()) {
+                "已清除头衔。"
+            } else {
+                "头衔已设为「$title」。"
+            }
+        ) {
+            ProfileStore.load(chatId)
+            MemberListStore.refreshIf(chatId)
+        }
     }
 
     /** Demote an administrator back to a plain member. */
