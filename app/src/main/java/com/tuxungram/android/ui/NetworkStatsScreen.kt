@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -253,6 +254,11 @@ fun NetworkStatsScreen(onBack: () -> Unit) {
                                     MaterialTheme.colorScheme
                                         .surfaceVariant
                                 )
+                                // Decorative (v0.9.49, T3): the
+                                // legend rows directly below carry
+                                // every segment's name, percent
+                                // and bytes as text.
+                                .clearAndSetSemantics { }
                         ) {
                             shownCategories.forEachIndexed {
                                     index, (_, bytes) ->

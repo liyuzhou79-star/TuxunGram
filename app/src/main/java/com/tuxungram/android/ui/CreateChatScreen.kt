@@ -218,7 +218,13 @@ fun CreateChatScreen(
                                     selected + contact.userId
                                 }
                             }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            // Row metrics follow the official
+                            // create-group user cell (v0.9.49,
+                            // T1): 46 dp avatar, 58 dp row,
+                            // 16 sp name. The checkbox keeps its
+                            // leading seat (our multi-select
+                            // affordance); the avatar joins it.
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Checkbox(
@@ -231,8 +237,12 @@ fun CreateChatScreen(
                                 }
                             }
                         )
+                        AvatarImage(
+                            path = contact.photoPath, sizeDp = 46
+                        )
+                        Spacer(Modifier.width(12.dp))
                         Column {
-                            Text(contact.name, fontSize = 15.sp)
+                            Text(contact.name, fontSize = 16.sp)
                             if (contact.username.isNotEmpty()) {
                                 Text(
                                     "@${contact.username}",

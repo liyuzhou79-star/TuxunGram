@@ -438,7 +438,9 @@ fun ProfileScreen(
                     Text(
                         p.title,
                         color = profilePalette.textPrimary,
-                        fontSize = 22.sp,
+                        // 20 sp matches the official profile
+                        // header name (v0.9.49, T1 — was 22).
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
@@ -1480,7 +1482,10 @@ fun ProfileScreen(
                                                 .size(76.dp),
                                             strokeWidthDp = 8f,
                                             arcColor =
-                                                profilePalette.accent
+                                                profilePalette.accent,
+                                            description = "助力等级 " +
+                                                "${st.level} 级，本级进度 " +
+                                                "${(frac * 100).toInt()}%"
                                         ) {
                                             Column(
                                                 horizontalAlignment =

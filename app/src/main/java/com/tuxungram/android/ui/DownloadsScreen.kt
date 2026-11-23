@@ -216,7 +216,9 @@ fun DownloadsScreen(
                             ) {
                                 ProgressRing(
                                     fraction = frac,
-                                    modifier = Modifier.size(64.dp)
+                                    modifier = Modifier.size(64.dp),
+                                    description = "总进度 " +
+                                        "${(frac * 100).toInt()}%"
                                 ) {
                                     Text(
                                         "${(frac * 100).toInt()}%",
@@ -259,7 +261,10 @@ fun DownloadsScreen(
                                     samples = speedHistory.toList(),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(36.dp)
+                                        .height(36.dp),
+                                    description = "总速度曲线，" +
+                                        "当前总速度 " +
+                                        "${formatBytes(totalSpeed)}/s"
                                 )
                                 Text(
                                     "最近 ${speedHistory.size} 秒的总速度曲线",

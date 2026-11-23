@@ -424,15 +424,17 @@ private fun MemberRow(
                 onClick = onClick,
                 onLongClick = { if (actionable) onLongClick() }
             )
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            // Row metrics match the official member cell
+            // (v0.9.49, T1): 46 dp avatar, 64 dp row.
+            .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (member.photoPath != null) {
-            AvatarImage(path = member.photoPath, sizeDp = 42)
+            AvatarImage(path = member.photoPath, sizeDp = 46)
         } else {
             Box(
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(46.dp)
                     .background(Color(0xFFB0BEC5), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
@@ -447,7 +449,11 @@ private fun MemberRow(
         Spacer(Modifier.width(11.dp))
         Text(
             member.name.ifEmpty { "用户 ${member.userId}" },
-            fontSize = 15.sp,
+            // Official member-cell name size (v0.9.49, T1 —
+            // was 15). The right-hand status stays a small
+            // privilege label by design (creator / admin only),
+            // not the official presence line.
+            fontSize = 17.sp,
             modifier = Modifier.weight(1f),
             overflow = TextOverflow.Ellipsis,
             maxLines = 1

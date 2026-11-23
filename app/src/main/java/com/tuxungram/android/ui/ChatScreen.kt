@@ -118,6 +118,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.sp
 import android.provider.ContactsContract
 import com.tuxungram.android.td.AdminStore
@@ -758,9 +760,26 @@ fun ChatScreen(
     // read, put it back into the input box (only if the user has
     // not already started typing).
     val draftLoaded by MessageStore.draftLoaded.collectAsState()
+    // The input text as of the last draft sync point (v0.9.49,
+    // T2): restored, remotely applied, or debounce-saved. The
+    // box is "clean" while input == draftBaseline — only then
+    // may a remote draft (edited on another device) replace
+    // what is in the box. Any local keystroke makes it dirty,
+    // and a dirty box is never touched by sync.
+    var draftBaseline by remember { mutableStateOf("") }
     LaunchedEffect(draftLoaded) {
         if (draftLoaded && input.isEmpty()) {
             input = MessageStore.draftText.value
+            draftBaseline = input
+        }
+    }
+    // Remote draft changes (v0.9.49, T2): MessageStore bumps
+    // the revision on updateChatDraftMessage for this chat.
+    val draftRevision by MessageStore.draftRevision.collectAsState()
+    LaunchedEffect(draftRevision) {
+        if (draftRevision > 0 && input == draftBaseline) {
+            input = MessageStore.draftText.value
+            draftBaseline = input
         }
     }
     // Draft saving + own typing action: typing sends
@@ -772,6 +791,10 @@ fun ChatScreen(
         if (input.isNotBlank()) MessageStore.sendTypingAction()
         delay(700)
         MessageStore.saveDraft(input)
+        // Everything in the box is now the saved draft: the
+        // box is clean again, so a later remote edit may be
+        // applied (see the revision effect above).
+        draftBaseline = input
     }
     // Typing subtitle expiry safety net (F5).
     val peerAction by MessageStore.peerAction.collectAsState()
@@ -3948,7 +3971,20 @@ fun ChatScreen(
                 ) {
                     // Slash entry (W2): one tap puts a "/" in the
                     // box, which raises the command popup.
-                    IconButton(onClick = { if (!input.startsWith("/")) input = "/$input" }) {
+                    IconButton(
+                        onClick = {
+                            if (!input.startsWith("/")) {
+                                input = "/$input"
+                            }
+                        },
+                        // The child is a bare "/" glyph; give
+                        // the button its spoken name (v0.9.49,
+                        // T3 — the one unlabeled IconButton the
+                        // post-0.9.33 sweep found).
+                        modifier = Modifier.semantics {
+                            contentDescription = "机器人命令"
+                        }
+                    ) {
                         Text(
                             "/",
                             fontSize = 21.sp,

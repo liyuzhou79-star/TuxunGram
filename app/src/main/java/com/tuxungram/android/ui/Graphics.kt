@@ -36,6 +36,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -522,9 +524,21 @@ fun EmptyStateMini(
 fun Sparkline(
     samples: List<Long>,
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.primary
+    color: Color = MaterialTheme.colorScheme.primary,
+    // Screen-reader meaning of the curve (v0.9.49, T3): a
+    // Canvas carries no semantics of its own, so a caller
+    // whose curve conveys a number passes it here (e.g.
+    // "总速度曲线，当前总速度 1.2 MB/s"); null keeps the
+    // curve purely decorative.
+    description: String? = null
 ) {
-    Canvas(modifier = modifier) {
+    Canvas(
+        modifier = if (description != null) {
+            modifier.semantics { contentDescription = description }
+        } else {
+            modifier
+        }
+    ) {
         if (samples.size < 2) return@Canvas
         val maxV = (samples.maxOrNull() ?: 0L).coerceAtLeast(1L)
         val stepX = size.width / (samples.size - 1).coerceAtLeast(1)
@@ -563,10 +577,22 @@ fun ProgressRing(
     modifier: Modifier = Modifier,
     strokeWidthDp: Float = 7f,
     arcColor: Color = MaterialTheme.colorScheme.primary,
+    // Screen-reader meaning of the ring (v0.9.49, T3), e.g.
+    // "总进度 62%": the centre slot usually shows the bare
+    // number with no context, so callers pass the full
+    // phrase here. Null keeps the ring decorative.
+    description: String? = null,
     center: @Composable () -> Unit = {}
 ) {
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+    Box(
+        modifier = if (description != null) {
+            modifier.semantics { contentDescription = description }
+        } else {
+            modifier
+        },
+        contentAlignment = Alignment.Center
+    ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val stroke = strokeWidthDp.dp.toPx()
             val inset = stroke / 2f

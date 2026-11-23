@@ -79,6 +79,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -285,12 +286,37 @@ fun SettingsScreen(
             backupScope.launch {
                 backupResult = withContext(Dispatchers.IO) {
                     try {
+                        // Bounded read (v0.9.49, T4): a real
+                        // settings backup is a few KB; refuse
+                        // anything past 4 MB instead of loading
+                        // an unbounded file into memory.
+                        var tooBig = false
                         val text = settingsContext.contentResolver
                             .openInputStream(uri)?.use { input ->
-                                input.readBytes()
-                                    .toString(Charsets.UTF_8)
+                                val out =
+                                    java.io.ByteArrayOutputStream()
+                                val buf = ByteArray(64 * 1024)
+                                var total = 0
+                                while (true) {
+                                    val n = input.read(buf)
+                                    if (n < 0) break
+                                    total += n
+                                    if (total > 4_000_000) {
+                                        tooBig = true
+                                        break
+                                    }
+                                    out.write(buf, 0, n)
+                                }
+                                if (tooBig) {
+                                    null
+                                } else {
+                                    out.toByteArray()
+                                        .toString(Charsets.UTF_8)
+                                }
                             }
-                        if (text == null) {
+                        if (tooBig) {
+                            "这个文件太大了，不像设置备份，设置没有改动。"
+                        } else if (text == null) {
                             "这个文件读不出来，设置没有改动。"
                         } else {
                             SettingsBackup.importJson(text)
@@ -1974,6 +2000,10 @@ fun SettingsScreen(
                                     MaterialTheme.colorScheme
                                         .surfaceVariant
                                 )
+                                // Decorative (v0.9.49, T3): the
+                                // legend rows directly below carry
+                                // every segment's name and size.
+                                .clearAndSetSemantics { }
                         ) {
                             bd.byType.forEachIndexed {
                                     index, pair ->
@@ -2107,6 +2137,10 @@ fun SettingsScreen(
                                                 .colorScheme
                                                 .surfaceVariant
                                         )
+                                        // Decorative (v0.9.49,
+                                        // T3): the exact size is
+                                        // the text right below.
+                                        .clearAndSetSemantics { }
                                 ) {
                                     Box(
                                         modifier = Modifier

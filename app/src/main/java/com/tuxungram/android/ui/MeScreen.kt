@@ -170,7 +170,9 @@ fun MeScreen(
             Text(
                 me.displayName.ifEmpty { "我" },
                 color = palette.textPrimary,
-                fontSize = 22.sp, fontWeight = FontWeight.SemiBold
+                // Same header family as the profile page:
+                // 20 sp (v0.9.49, T1 — was 22).
+                fontSize = 20.sp, fontWeight = FontWeight.SemiBold
             )
             Text(
                 "在线",
