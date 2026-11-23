@@ -30,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -456,6 +458,144 @@ fun EmptyState(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
+    }
+}
+
+/** Compact empty state (v0.9.46): the small sibling of
+ *  [EmptyState] for dialogs, panels and other tight slots
+ *  where the full illustration is too tall — a 56 dp disc
+ *  with the icon, a title line and one plain sentence.
+ *  Replaces the bare gray "nothing here" lines the label
+ *  dialogs, the crash-log dialog, the tag-search panel and
+ *  similar places used to show. */
+@Composable
+fun EmptyStateMini(
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 24.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(
+                    MaterialTheme.colorScheme.primaryContainer
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(28.dp)
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            title, fontSize = 14.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+        if (subtitle != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                subtitle, color = Color.Gray, fontSize = 12.5.sp,
+                textAlign = androidx.compose.ui.text.style
+                    .TextAlign.Center
+            )
+        }
+    }
+}
+
+/** A live-rate sparkline (v0.9.46): the recent samples of
+ *  one number (the download centre's total speed) drawn as
+ *  a filled polyline, so a rate reads as a curve instead of
+ *  one digit that changes every second. The peak of the
+ *  visible window sets the scale; an all-zero window draws
+ *  a flat line at the bottom, which is the honest picture. */
+@Composable
+fun Sparkline(
+    samples: List<Long>,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.primary
+) {
+    Canvas(modifier = modifier) {
+        if (samples.size < 2) return@Canvas
+        val maxV = (samples.maxOrNull() ?: 0L).coerceAtLeast(1L)
+        val stepX = size.width / (samples.size - 1).coerceAtLeast(1)
+        val topPad = 2.dp.toPx()
+        val usable = (size.height - topPad * 2).coerceAtLeast(1f)
+        val pts = samples.mapIndexed { i, v ->
+            Offset(
+                i * stepX,
+                topPad + usable -
+                    (v.toFloat() / maxV.toFloat()) * usable
+            )
+        }
+        val fill = androidx.compose.ui.graphics.Path().apply {
+            moveTo(pts.first().x, size.height)
+            pts.forEach { lineTo(it.x, it.y) }
+            lineTo(pts.last().x, size.height)
+            close()
+        }
+        drawPath(fill, color.copy(alpha = 0.15f))
+        for (i in 0 until pts.size - 1) {
+            drawLine(
+                color, pts[i], pts[i + 1],
+                strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round
+            )
+        }
+    }
+}
+
+/** A ring progress indicator (v0.9.46): track circle plus
+ *  an accent arc for [fraction], with a free centre slot
+ *  (a percentage, a level number). Used by the download
+ *  centre's total progress and the profile boost level. */
+@Composable
+fun ProgressRing(
+    fraction: Float,
+    modifier: Modifier = Modifier,
+    strokeWidthDp: Float = 7f,
+    arcColor: Color = MaterialTheme.colorScheme.primary,
+    center: @Composable () -> Unit = {}
+) {
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = strokeWidthDp.dp.toPx()
+            val inset = stroke / 2f
+            val arcSize = Size(
+                size.width - stroke, size.height - stroke
+            )
+            val topLeft = Offset(inset, inset)
+            drawArc(
+                color = trackColor,
+                startAngle = -90f, sweepAngle = 360f,
+                useCenter = false, topLeft = topLeft, size = arcSize,
+                style = androidx.compose.ui.graphics.drawscope
+                    .Stroke(width = stroke)
+            )
+            val sweep = 360f * fraction.coerceIn(0f, 1f)
+            if (sweep > 0f) {
+                drawArc(
+                    color = arcColor,
+                    startAngle = -90f, sweepAngle = sweep,
+                    useCenter = false, topLeft = topLeft,
+                    size = arcSize,
+                    style = androidx.compose.ui.graphics.drawscope
+                        .Stroke(
+                            width = stroke, cap = StrokeCap.Round
+                        )
+                )
+            }
+        }
+        center()
     }
 }
 

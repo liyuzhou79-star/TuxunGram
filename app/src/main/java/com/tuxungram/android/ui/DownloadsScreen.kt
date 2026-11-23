@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -74,6 +75,19 @@ fun DownloadsScreen(
     val retryLimit by DownloadStore.retryLimit.collectAsState()
     val totalSpeed by DownloadStore.totalSpeedBps.collectAsState()
     LaunchedEffect(Unit) { DownloadStore.refresh(context) }
+    // Total-speed history for the summary sparkline
+    // (v0.9.46): one sample per second while this page is
+    // open, keeping the last 90 seconds. The store only
+    // publishes the instantaneous rate; the curve is a
+    // view of it, sampled here where it is drawn.
+    val speedHistory = remember { mutableStateListOf<Long>() }
+    LaunchedEffect(Unit) {
+        while (true) {
+            speedHistory.add(DownloadStore.totalSpeedBps.value)
+            if (speedHistory.size > 90) speedHistory.removeAt(0)
+            kotlinx.coroutines.delay(1000)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -146,20 +160,100 @@ fun DownloadsScreen(
                     Spacer(Modifier.width(6.dp))
                 }
             }
-            if (totalSpeed > 0) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "总速度 ${formatBytes(totalSpeed)}/s",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
             Spacer(Modifier.height(6.dp))
             Text(
                 "排队只管你亲手点下的文件下载；图片、头像这类自动加载的走下面的自动下载设置。",
                 color = Color.Gray, fontSize = 12.5.sp
             )
+        }
+        // Summary card (v0.9.46): the page's visual head —
+        // a ring for the overall progress of everything
+        // with a known size, the live total speed as a
+        // number AND a sparkline of its last seconds, and
+        // the section counts. Before this the total speed
+        // was one small text line and there was no overall
+        // progress view at all.
+        if (entries.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            val activeCount = entries.count { it.active }
+            val queuedCount = entries.count {
+                it.queued && !it.active
+            }
+            val doneCount = entries.count { it.completed }
+            val sized = entries.filter { it.totalSize > 0 }
+            val totalBytes = sized.sumOf { it.totalSize }
+            val doneBytes = sized.sumOf {
+                if (it.completed) {
+                    it.totalSize
+                } else {
+                    it.downloadedSize.coerceAtMost(it.totalSize)
+                }
+            }
+            val frac = if (totalBytes > 0) {
+                doneBytes.toFloat() / totalBytes.toFloat()
+            } else {
+                0f
+            }
+            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                GroupCard {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ProgressRing(
+                            fraction = frac,
+                            modifier = Modifier.size(64.dp)
+                        ) {
+                            Text(
+                                "${(frac * 100).toInt()}%",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "总速度 ${formatBytes(totalSpeed)}/s",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (totalSpeed > 0) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme
+                                        .onSurface
+                                }
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "进行中 $activeCount · 排队 " +
+                                    "$queuedCount · 已完成 $doneCount",
+                                fontSize = 12.5.sp, color = Color.Gray
+                            )
+                            if (totalBytes > 0) {
+                                Text(
+                                    "已下 ${formatBytes(doneBytes)}" +
+                                        " / 共 ${formatBytes(totalBytes)}",
+                                    fontSize = 12.5.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                        }
+                    }
+                    if (speedHistory.size >= 2) {
+                        Spacer(Modifier.height(10.dp))
+                        Sparkline(
+                            samples = speedHistory.toList(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(36.dp)
+                        )
+                        Text(
+                            "最近 ${speedHistory.size} 秒的总速度曲线",
+                            fontSize = 11.sp, color = Color.Gray,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(4.dp))
         Row(
@@ -190,12 +284,86 @@ fun DownloadsScreen(
                 subtitle = "在聊天里点开一个文件或视频开始下载，它就会出现在这里。"
             )
         } else {
+            // Sectioned list (v0.9.46): what is moving now,
+            // what waits in the queue, and everything else —
+            // each with an icon-led header and a count,
+            // instead of one flat undifferentiated list.
+            val activeEntries = entries.filter { it.active }
+            val queuedEntries = entries.filter {
+                it.queued && !it.active
+            }
+            val otherEntries = entries.filter {
+                !it.active && !it.queued
+            }
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(entries, key = { it.key }) { entry ->
-                    DownloadRow(entry)
+                if (activeEntries.isNotEmpty()) {
+                    item(key = "sec-active") {
+                        DownloadSectionHeader(
+                            DownloadIcon, "进行中",
+                            activeEntries.size
+                        )
+                    }
+                    items(activeEntries, key = { it.key }) {
+                        DownloadRow(it)
+                    }
+                }
+                if (queuedEntries.isNotEmpty()) {
+                    item(key = "sec-queued") {
+                        DownloadSectionHeader(
+                            ClockIcon, "排队中",
+                            queuedEntries.size
+                        )
+                    }
+                    items(queuedEntries, key = { it.key }) {
+                        DownloadRow(it)
+                    }
+                }
+                if (otherEntries.isNotEmpty()) {
+                    item(key = "sec-other") {
+                        DownloadSectionHeader(
+                            FolderIcon, "已完成及其他",
+                            otherEntries.size
+                        )
+                    }
+                    items(otherEntries, key = { it.key }) {
+                        DownloadRow(it)
+                    }
                 }
             }
         }
+    }
+}
+
+/** Section header inside the downloads list (v0.9.46):
+ *  a small accent icon, the section name and its count. */
+@Composable
+private fun DownloadSectionHeader(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    count: Int
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = 20.dp, end = 20.dp,
+                top = 14.dp, bottom = 2.dp
+            )
+    ) {
+        Icon(
+            icon, contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(17.dp)
+        )
+        Spacer(Modifier.width(7.dp))
+        Text(
+            title, fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.width(6.dp))
+        Text("$count", fontSize = 12.5.sp, color = Color.Gray)
     }
 }
 

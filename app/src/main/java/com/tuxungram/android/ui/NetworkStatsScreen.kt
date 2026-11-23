@@ -207,12 +207,110 @@ fun NetworkStatsScreen(onBack: () -> Unit) {
                             )
                         }
                     }
+                    // Category composition (v0.9.46): every
+                    // traffic category (the rows below grouped
+                    // by their file-type half, networks merged)
+                    // as ONE stacked bar with a legend — the
+                    // page's chart, where before the composition
+                    // could only be worked out by reading every
+                    // row's numbers. Past the top few, the tail
+                    // folds into 其他 so the bar stays readable.
+                    val categoryTotals = rows
+                        .groupBy { it.label.substringBefore(" · ") }
+                        .map { (name, rs) ->
+                            name to rs.sumOf {
+                                it.receivedBytes + it.sentBytes
+                            }
+                        }
+                        .filter { it.second > 0 }
+                        .sortedByDescending { it.second }
+                    val grandTotal = categoryTotals.sumOf {
+                        it.second
+                    }
+                    if (categoryTotals.size > 1 && grandTotal > 0) {
+                        val shownCategories =
+                            if (categoryTotals.size > 7) {
+                                categoryTotals.take(6) +
+                                    ("其他" to categoryTotals
+                                        .drop(6)
+                                        .sumOf { it.second })
+                            } else {
+                                categoryTotals
+                            }
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "按类型构成",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(12.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    MaterialTheme.colorScheme
+                                        .surfaceVariant
+                                )
+                        ) {
+                            shownCategories.forEachIndexed {
+                                    index, (_, bytes) ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(bytes.toFloat())
+                                        .height(12.dp)
+                                        .background(
+                                            TILE_PALETTE[
+                                                index %
+                                                    TILE_PALETTE.size
+                                            ]
+                                        )
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        for ((index, pair) in
+                            shownCategories.withIndex()) {
+                            val (name, bytes) = pair
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(
+                                            TILE_PALETTE[
+                                                index %
+                                                    TILE_PALETTE.size
+                                            ],
+                                            CircleShape
+                                        )
+                                )
+                                Spacer(Modifier.width(7.dp))
+                                Text(name, fontSize = 12.5.sp)
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    "${(bytes * 100 / grandTotal)}%" +
+                                        " · ${formatBytes(bytes)}",
+                                    fontSize = 12.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                        }
+                    }
                 }
                 if (rows.isEmpty()) {
                     Spacer(Modifier.height(16.dp))
-                    Text(
-                        "还没有记录到流量。",
-                        color = Color.Gray, fontSize = 13.sp
+                    EmptyState(
+                        icon = PollIcon,
+                        title = "还没有记录到流量",
+                        subtitle = "刷一会儿聊天、下载几个文件再回来看，" +
+                            "这里会按类型和网络列出用量。"
                     )
                 }
                 val maxRowTotal = rows.maxOfOrNull {
@@ -238,10 +336,14 @@ fun NetworkStatsScreen(onBack: () -> Unit) {
                                 fontSize = 12.sp, color = Color.Gray,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
-                            // Share bar (v0.9.29, V3): this
-                            // row's traffic against the biggest
-                            // row, so heavy categories stand out
-                            // without reading the numbers.
+                            // Share bar (v0.9.29, V3; split
+                            // rx/tx v0.9.46): this row's traffic
+                            // against the biggest row, so heavy
+                            // categories stand out without
+                            // reading the numbers — and the bar
+                            // itself is split into its download
+                            // (primary) and upload (tertiary)
+                            // parts, matching the totals card.
                             val rowTotal =
                                 row.receivedBytes + row.sentBytes
                             if (rowTotal > 0) {
@@ -250,13 +352,13 @@ fun NetworkStatsScreen(onBack: () -> Unit) {
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(5.dp)
+                                        .clip(RoundedCornerShape(3.dp))
                                         .background(
                                             MaterialTheme.colorScheme
-                                                .surfaceVariant,
-                                            RoundedCornerShape(3.dp)
+                                                .surfaceVariant
                                         )
                                 ) {
-                                    Box(
+                                    Row(
                                         modifier = Modifier
                                             .fillMaxWidth(
                                                 (rowTotal.toFloat() /
@@ -264,12 +366,38 @@ fun NetworkStatsScreen(onBack: () -> Unit) {
                                                     .coerceIn(0f, 1f)
                                             )
                                             .height(5.dp)
-                                            .background(
-                                                MaterialTheme.colorScheme
-                                                    .primary,
-                                                RoundedCornerShape(3.dp)
+                                    ) {
+                                        if (row.receivedBytes > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(
+                                                        row.receivedBytes
+                                                            .toFloat()
+                                                    )
+                                                    .height(5.dp)
+                                                    .background(
+                                                        MaterialTheme
+                                                            .colorScheme
+                                                            .primary
+                                                    )
                                             )
-                                    )
+                                        }
+                                        if (row.sentBytes > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(
+                                                        row.sentBytes
+                                                            .toFloat()
+                                                    )
+                                                    .height(5.dp)
+                                                    .background(
+                                                        MaterialTheme
+                                                            .colorScheme
+                                                            .tertiary
+                                                    )
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
