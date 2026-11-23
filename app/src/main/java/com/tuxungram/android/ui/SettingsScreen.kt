@@ -1807,6 +1807,14 @@ fun SettingsScreen(
                 title = "下载的文件",
                 subtitle = "${formatBytes(storageInfo.filesBytes)}，共 ${storageInfo.fileCount} 个"
             )
+            if (storageInfo.otherAccountsBytes > 0) {
+                SettingsDivider()
+                IconRow(
+                    icon = StorageIcon,
+                    title = "其他账号的数据",
+                    subtitle = "${formatBytes(storageInfo.otherAccountsBytes)}（在各账号自己的存储页里管理）"
+                )
+            }
             // Usage bar (v0.9.29, V3): database vs downloaded
             // files as one proportional bar under the two
             // numbers, so where the space went reads at a

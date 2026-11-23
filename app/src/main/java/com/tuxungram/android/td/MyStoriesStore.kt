@@ -227,7 +227,10 @@ object MyStoriesStore {
         TdRepository.sendRaw(query) { response ->
             _loading.value = false
             if (TdClient.isError(response)) {
-                _exhausted.value = true
+                // An error is not the end of the list
+                // (v0.9.41, H1①): exhausted stayed false so
+                // the "try again" in the notice is real —
+                // scrolling (loadMore) retries this page.
                 _notice.value =
                     "动态列表没拉到，再试一次。（错误码 " +
                         "${response.optInt("code")}）"

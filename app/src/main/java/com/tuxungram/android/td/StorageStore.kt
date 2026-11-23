@@ -18,7 +18,17 @@ data class DownloadedEntry(
 data class StorageInfo(
     val databaseBytes: Long,
     val filesBytes: Long,
-    val fileCount: Int
+    val fileCount: Int,
+    /** Bytes held by the OTHER account slots' directory
+     *  pairs (v0.9.41, H4): the two numbers above measure
+     *  only the current account — the same directories
+     *  sendParameters writes, so they are exact for it —
+     *  but the app as a whole occupies more when other
+     *  accounts are signed in on this phone. Reported
+     *  separately, never merged into the current
+     *  account's bar: cleanup here must not reach into
+     *  another account's data. */
+    val otherAccountsBytes: Long = 0L
 )
 
 /**
@@ -43,7 +53,18 @@ object StorageStore {
                 }
             }
         }
-        return StorageInfo(dbBytes, bytes, count)
+        var otherBytes = 0L
+        val current = AccountStore.currentSlot()
+        for (slot in AccountStore.slots.value) {
+            if (slot == current) continue
+            otherBytes += dirSize(
+                File(context.filesDir, AccountStore.dbDirName(slot))
+            )
+            otherBytes += dirSize(
+                File(context.filesDir, AccountStore.filesDirName(slot))
+            )
+        }
+        return StorageInfo(dbBytes, bytes, count, otherBytes)
     }
 
     /** Newest first, capped so a huge cache cannot flood the

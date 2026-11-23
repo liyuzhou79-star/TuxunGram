@@ -63,6 +63,19 @@ object TdRepository {
     private val clientGeneration =
         java.util.concurrent.atomic.AtomicInteger(0)
 
+    /** Set by [logOut]: once TDLib confirms the close, the
+     *  process restarts into a fresh login instead of
+     *  reusing this one (v0.9.41, H1③/H4). Every store is a
+     *  process-wide singleton holding the outgoing
+     *  account's chats, contacts and badges; the in-process
+     *  reconnect the Closed screen offers would have kept
+     *  all of it alive for whoever logs in next — the same
+     *  leak class the v0.9.6 fix closed for notifications
+     *  on the account-switch path, which already restarts
+     *  the process for exactly this reason. */
+    @Volatile
+    private var restartAfterLogout = false
+
     @Volatile
     private var appContext: Context? = null
 
@@ -270,7 +283,29 @@ object TdRepository {
                 }
             }
             "authorizationStateLoggingOut" -> _authState.value = AuthState.LoggingOut
-            "authorizationStateClosed" -> _authState.value = AuthState.Closed
+            "authorizationStateClosed" -> {
+                if (restartAfterLogout) {
+                    restartAfterLogout = false
+                    val ctx = appContext
+                    if (ctx != null) {
+                        // This slot's local-only data names
+                        // the outgoing account's chats; it
+                        // leaves with the account (H4).
+                        LocalPins.clear()
+                        LocalLabels.clear()
+                        // Stay on "正在退出…" — the process
+                        // is about to restart into the login
+                        // flow; flashing the Closed screen's
+                        // reconnect button here would race it.
+                        _authState.value = AuthState.LoggingOut
+                        restartProcess(ctx)
+                    } else {
+                        _authState.value = AuthState.Closed
+                    }
+                } else {
+                    _authState.value = AuthState.Closed
+                }
+            }
             else -> _authState.value = AuthState.Other(state.optString("@type"))
         }
     }
@@ -377,7 +412,17 @@ object TdRepository {
         })
     }
 
+    /** Log the current account out. The close TDLib
+     *  answers with restarts the process (see
+     *  [restartAfterLogout]) — this also covers the
+     *  pre-authorization use, leaving the QR-login state:
+     *  the fresh process lands on the phone-login screen,
+     *  which is where that flow wants to end up anyway.
+     *  The outgoing account's notifications are withdrawn
+     *  by restartProcess, as on the switch path. */
     fun logOut() {
+        if (client == null) return
+        restartAfterLogout = true
         send(TdClient.request("logOut"))
     }
 

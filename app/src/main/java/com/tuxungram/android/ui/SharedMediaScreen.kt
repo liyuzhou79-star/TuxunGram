@@ -149,7 +149,14 @@ fun SharedMediaScreen(chatId: Long, onBack: () -> Unit) {
             when (tab) {
                 MediaTab.PHOTO -> {
                     if (tabItems.isEmpty()) {
-                        EmptyOrLoading(tabExhausted)
+                        EmptyOrLoading(
+                        tabExhausted,
+                        onRetry = if (error != null) {
+                            { SharedMediaStore.loadMore(tab) }
+                        } else {
+                            null
+                        }
+                    )
                     } else {
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(3),
@@ -160,7 +167,14 @@ fun SharedMediaScreen(chatId: Long, onBack: () -> Unit) {
                                     modifier = Modifier
                                         .aspectRatio(1f)
                                         .padding(1.dp)
-                                        .background(Color(0xFFEEEEEE))
+                                        // Theme surface, not a
+                                        // hard-coded near-white:
+                                        // the light tile flashed
+                                        // in dark mode (v0.9.41, H3).
+                                        .background(
+                                            MaterialTheme.colorScheme
+                                                .surfaceVariant
+                                        )
                                         .clickable {
                                             viewerIndex = tabItems.indexOf(item)
                                         },
@@ -188,7 +202,14 @@ fun SharedMediaScreen(chatId: Long, onBack: () -> Unit) {
                 }
                 MediaTab.VIDEO, MediaTab.FILE -> {
                     if (tabItems.isEmpty()) {
-                        EmptyOrLoading(tabExhausted)
+                        EmptyOrLoading(
+                        tabExhausted,
+                        onRetry = if (error != null) {
+                            { SharedMediaStore.loadMore(tab) }
+                        } else {
+                            null
+                        }
+                    )
                     } else {
                         val listState = rememberLazyListState()
                         LazyColumn(
@@ -225,7 +246,14 @@ fun SharedMediaScreen(chatId: Long, onBack: () -> Unit) {
                 }
                 MediaTab.LINK -> {
                     if (tabItems.isEmpty()) {
-                        EmptyOrLoading(tabExhausted)
+                        EmptyOrLoading(
+                        tabExhausted,
+                        onRetry = if (error != null) {
+                            { SharedMediaStore.loadMore(tab) }
+                        } else {
+                            null
+                        }
+                    )
                     } else {
                         val listState = rememberLazyListState()
                         LazyColumn(
@@ -302,7 +330,10 @@ fun SharedMediaScreen(chatId: Long, onBack: () -> Unit) {
 }
 
 @Composable
-private fun EmptyOrLoading(exhausted: Boolean) {
+private fun EmptyOrLoading(
+    exhausted: Boolean,
+    onRetry: (() -> Unit)? = null
+) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -317,6 +348,17 @@ private fun EmptyOrLoading(exhausted: Boolean) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(12.dp))
                 Text("正在加载…", color = Color.Gray)
+                // After a failed first page the store no
+                // longer marks the tab exhausted (v0.9.41,
+                // H1①), so this state can be a failure
+                // rather than a load in flight — give it the
+                // retry the error text above promises.
+                if (onRetry != null) {
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = onRetry) {
+                        Text("重试")
+                    }
+                }
             }
         }
     }

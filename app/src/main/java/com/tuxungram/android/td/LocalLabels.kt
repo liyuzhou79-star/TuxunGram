@@ -232,6 +232,15 @@ object LocalLabels {
         }
     }
 
+    /** Drop this slot's labels and assignments (logout,
+     *  v0.9.41 H4): same reasoning as LocalPins.clear —
+     *  they describe the outgoing account's chats. */
+    fun clear() {
+        _labels.value = emptyList()
+        _assignments.value = emptyMap()
+        persist()
+    }
+
     /** Replace everything (settings import). Assignments that
      *  point at labels the import does not define are dropped. */
     fun replaceAll(root: JSONObject) {

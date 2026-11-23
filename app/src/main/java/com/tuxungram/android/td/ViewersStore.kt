@@ -261,10 +261,12 @@ object ViewersStore {
             if (pollKey != key) return@sendRaw
             _pollLoading.value = false
             if (TdClient.isError(response)) {
+                // An error is not the end of the list
+                // (v0.9.41, H1①): exhausted stays false so
+                // "load more" can retry the same page.
                 _pollError.value =
                     "投票者名单没查到，再试一次。（错误码 " +
                         "${response.optInt("code")}）"
-                _pollExhausted.value = true
                 return@sendRaw
             }
             _pollTotal.value = response.optInt("total_count")

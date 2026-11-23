@@ -105,4 +105,13 @@ object LocalPins {
         _ids.value = list.filter { it != 0L }.distinct()
         persist()
     }
+
+    /** Drop this slot's whole list (logout, v0.9.41 H4):
+     *  local pins name the outgoing account's chats, so
+     *  they leave with the account instead of lingering
+     *  for whoever logs into this slot next. */
+    fun clear() {
+        _ids.value = emptyList()
+        persist()
+    }
 }

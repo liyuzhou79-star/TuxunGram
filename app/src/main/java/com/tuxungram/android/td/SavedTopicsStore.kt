@@ -74,10 +74,52 @@ object SavedTopicsStore {
         _notice.value = null
     }
 
+    /** The Saved Messages chat id, resolved lazily from
+     *  getMe + ChatStore's user→chat map; needed to tell
+     *  which updateDeleteMessages events belong to a topic
+     *  history (message ids are only unique inside a chat).
+     *  0 while unknown — deletes are skipped until it is
+     *  known, never guessed. */
+    @Volatile
+    private var savedChatId = 0L
+
+    private fun resolveSavedChatId() {
+        if (savedChatId != 0L) return
+        TdRepository.sendRaw(TdClient.request("getMe")) { me ->
+            if (TdClient.isError(me)) return@sendRaw
+            val myId = me.optLong("id")
+            if (myId != 0L) {
+                savedChatId = ChatStore.chatIdOfUser(myId)
+            }
+        }
+    }
+
     private fun attach() {
         if (attached) return
         attached = true
         TdRepository.addUpdateListener { update ->
+            // Deleted messages leave an open topic history
+            // too (v0.9.41, H1④), scoped to the Saved
+            // Messages chat once its id is known.
+            if (update.optString("@type") == "updateDeleteMessages") {
+                if (savedChatId != 0L &&
+                    update.optLong("chat_id") == savedChatId &&
+                    !update.optBoolean("from_cache")
+                ) {
+                    val ids = update.optJSONArray("message_ids")
+                    if (ids != null && ids.length() > 0 &&
+                        _history.value.isNotEmpty()
+                    ) {
+                        val gone = HashSet<Long>()
+                        for (i in 0 until ids.length()) {
+                            gone.add(ids.optLong(i))
+                        }
+                        _history.value =
+                            _history.value.filter { it.id !in gone }
+                    }
+                }
+                return@addUpdateListener
+            }
             if (update.optString("@type") ==
                 "updateSavedMessagesTopic"
             ) {
@@ -105,6 +147,7 @@ object SavedTopicsStore {
      *  loadSavedMessagesTopics simply means "all loaded". */
     fun load() {
         attach()
+        resolveSavedChatId()
         synchronized(byId) { byId.clear() }
         _topics.value = emptyList()
         _loading.value = true
@@ -177,7 +220,11 @@ object SavedTopicsStore {
             _historyLoading.value = false
             if (openTopicId != topicId) return@sendRaw
             if (TdClient.isError(response)) {
-                historyExhausted = true
+                // An error is not the end of the history
+                // (v0.9.41, H1①): this used to set
+                // historyExhausted, silently stopping the
+                // topic's paging for the whole session. The
+                // next scroll retries the same page instead.
                 if (_history.value.isEmpty()) {
                     _notice.value =
                         "这个话题里的消息没拉到，再试一次。" +

@@ -145,7 +145,10 @@ object SearchStore {
             if (gen != generation) return@sendRaw
             _searching.value = false
             if (TdClient.isError(response)) {
-                _exhausted.value = true
+                // An error is not the end of the results
+                // (v0.9.41, H1①): exhausted stays false so
+                // scrolling retries the same page instead of
+                // silently ending this search session.
                 return@sendRaw
             }
             nextOffset = response.optString("next_offset")

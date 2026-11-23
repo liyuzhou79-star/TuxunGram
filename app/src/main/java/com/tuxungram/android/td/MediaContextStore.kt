@@ -51,6 +51,28 @@ object MediaContextStore {
         if (listenerRegistered) return
         listenerRegistered = true
         TdRepository.addUpdateListener { update ->
+            // Deleted messages leave the viewer's context
+            // too (v0.9.41, H1④): before this, a photo
+            // deleted elsewhere stayed swipeable in the
+            // viewer until the context was rebuilt.
+            if (update.optString("@type") == "updateDeleteMessages") {
+                if (chatId != 0L &&
+                    update.optLong("chat_id") == chatId &&
+                    !update.optBoolean("from_cache")
+                ) {
+                    val ids = update.optJSONArray("message_ids")
+                    if (ids != null && ids.length() > 0) {
+                        var changed = false
+                        for (i in 0 until ids.length()) {
+                            if (byId.remove(ids.optLong(i)) != null) {
+                                changed = true
+                            }
+                        }
+                        if (changed) publish()
+                    }
+                }
+                return@addUpdateListener
+            }
             if (update.optString("@type") != "updateFile") {
                 return@addUpdateListener
             }
@@ -148,7 +170,12 @@ object MediaContextStore {
                 return@sendRaw
             }
             if (TdClient.isError(response)) {
-                _exhausted.value = true
+                // An error is not the end of the stream
+                // (v0.9.41, H1①): this used to set
+                // exhausted, and since open() keeps the
+                // context when the same chat is reopened,
+                // one transient failure stopped the viewer
+                // paging for the rest of the process.
                 return@sendRaw
             }
             val next = response.optLong("next_from_message_id")

@@ -35,6 +35,15 @@ object SharedMediaStore {
 
     private var chatId = 0L
 
+    /** Window generation (v0.9.41, H1②): bumped every time
+     *  [open] actually switches chats. A loadMore response
+     *  carries the generation it was sent under; the bare
+     *  chatId check alone could not tell a stale page from
+     *  a previous visit to the SAME chat (A→B→A) apart from
+     *  a fresh one, and the stale page would land in the new
+     *  window with its old cursor. */
+    private var openGeneration = 0
+
     /** The chat the current lists belong to (read by the
      *  download center to locate files' messages, v0.9.27). */
     val mediaChatId: Long
@@ -51,6 +60,32 @@ object SharedMediaStore {
         if (listenerRegistered) return
         listenerRegistered = true
         TdRepository.addUpdateListener { update ->
+            // Deleted messages leave the snapshot too
+            // (v0.9.41, H1④): before this, a message deleted
+            // elsewhere stayed in the grid until the page was
+            // reopened on another chat.
+            if (update.optString("@type") == "updateDeleteMessages") {
+                if (chatId != 0L &&
+                    update.optLong("chat_id") == chatId &&
+                    !update.optBoolean("from_cache")
+                ) {
+                    val ids = update.optJSONArray("message_ids")
+                    if (ids != null && ids.length() > 0) {
+                        val gone = HashSet<Long>()
+                        for (i in 0 until ids.length()) {
+                            gone.add(ids.optLong(i))
+                        }
+                        var changed = false
+                        for ((_, list) in lists) {
+                            if (list.removeAll { it.id in gone }) {
+                                changed = true
+                            }
+                        }
+                        if (changed) publish()
+                    }
+                }
+                return@addUpdateListener
+            }
             if (update.optString("@type") != "updateFile") return@addUpdateListener
             val file = update.optJSONObject("file") ?: return@addUpdateListener
             val fileId = file.optInt("id")
@@ -96,6 +131,7 @@ object SharedMediaStore {
         registerListener()
         if (chatId == forChatId) return
         chatId = forChatId
+        openGeneration++
         lists.clear()
         nextFrom.clear()
         loading.clear()
@@ -110,6 +146,7 @@ object SharedMediaStore {
         if (loading.contains(tab)) return
         if (_exhausted.value.contains(tab)) return
         loading.add(tab)
+        val gen = openGeneration
         val query = TdClient.request("searchChatMessages").apply {
             put("chat_id", forChat)
             put("topic_id", JSONObject.NULL)
@@ -122,10 +159,18 @@ object SharedMediaStore {
         }
         TdRepository.sendRaw(query) { response ->
             loading.remove(tab)
-            if (chatId != forChat) return@sendRaw
+            if (chatId != forChat || gen != openGeneration) {
+                return@sendRaw
+            }
             if (TdClient.isError(response)) {
+                // An error is not the end of the list
+                // (v0.9.41, H1①): until this fix the tab was
+                // marked exhausted here, so the "try again"
+                // in the error text could never actually be
+                // tried — loadMore early-returned forever.
+                // The tab stays loadable; the next scroll or
+                // button tap retries the same page.
                 _error.value = "这一类没加载出来，再试一次。（错误码 ${response.optInt("code")}）"
-                _exhausted.value = _exhausted.value + tab
                 return@sendRaw
             }
             val next = response.optLong("next_from_message_id")

@@ -223,8 +223,12 @@ object BoostStore {
             if (TdClient.isError(response)) {
                 if (offset.isEmpty()) {
                     _boostsVisible.value = false
+                    _boostsHasMore.value = false
                 }
-                _boostsHasMore.value = false
+                // A later page failing is not the end of
+                // the list (v0.9.41, H1①): hasMore keeps its
+                // value so the "load more" row stays and a
+                // tap retries the same page.
                 return@sendRaw
             }
             _boostsVisible.value = true
