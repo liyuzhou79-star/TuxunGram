@@ -5056,6 +5056,11 @@ fun MessageBubble(
     highlightQuery: String = ""
 ) {
     val outgoing = msg.outgoing
+    // Message text size (v0.9.39, F5): the Appearance
+    // slider, applied to this bubble's body text and
+    // captions only — nothing else on screen reads it.
+    val msgTextSize by UiSettings.msgTextSize.collectAsState()
+    val bubbleTextSize = msgTextSize.sp
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val haptics = LocalHapticFeedback.current
@@ -5470,7 +5475,8 @@ fun MessageBubble(
                             onBotCommand = { MessageStore.sendText(it) },
                             highlightQuery = highlightQuery,
                             color = if (outgoing) palette.outText else palette.inText,
-                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                            linkColor = if (outgoing) palette.outText else palette.linkIn,
+                            fontSize = bubbleTextSize
                         )
                         if (msg.lpTitle.isNotEmpty() || msg.lpSiteName.isNotEmpty()) {
                             Spacer(Modifier.height(6.dp))
@@ -5501,7 +5507,8 @@ fun MessageBubble(
                                 onBotCommand = { MessageStore.sendText(it) },
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
-                                linkColor = if (outgoing) palette.outText else palette.linkIn
+                                linkColor = if (outgoing) palette.outText else palette.linkIn,
+                                fontSize = bubbleTextSize
                             )
                         }
                     }
@@ -5542,7 +5549,8 @@ fun MessageBubble(
                                 onBotCommand = { MessageStore.sendText(it) },
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
-                                linkColor = if (outgoing) palette.outText else palette.linkIn
+                                linkColor = if (outgoing) palette.outText else palette.linkIn,
+                                fontSize = bubbleTextSize
                             )
                         }
                     }
@@ -5555,7 +5563,8 @@ fun MessageBubble(
                                 onBotCommand = { MessageStore.sendText(it) },
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
-                                linkColor = if (outgoing) palette.outText else palette.linkIn
+                                linkColor = if (outgoing) palette.outText else palette.linkIn,
+                                fontSize = bubbleTextSize
                             )
                         }
                     }
@@ -5568,7 +5577,8 @@ fun MessageBubble(
                                 onBotCommand = { MessageStore.sendText(it) },
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
-                                linkColor = if (outgoing) palette.outText else palette.linkIn
+                                linkColor = if (outgoing) palette.outText else palette.linkIn,
+                                fontSize = bubbleTextSize
                             )
                         }
                     }
@@ -5581,7 +5591,8 @@ fun MessageBubble(
                                 onBotCommand = { MessageStore.sendText(it) },
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
-                                linkColor = if (outgoing) palette.outText else palette.linkIn
+                                linkColor = if (outgoing) palette.outText else palette.linkIn,
+                                fontSize = bubbleTextSize
                             )
                         }
                     }
@@ -6365,6 +6376,10 @@ fun AlbumBubble(
     val outgoing = first.outgoing
     var menuOpen by remember { mutableStateOf(false) }
     val bubbleStyle by UiSettings.bubbleStyle.collectAsState()
+    // Album caption follows the message text size too
+    // (v0.9.39, F5).
+    val msgTextSize by UiSettings.msgTextSize.collectAsState()
+    val bubbleTextSize = msgTextSize.sp
     // Official palette (v0.9.17, X2): same bubble language
     // as MessageBubble; an album is its own run, so its
     // own-side bottom corner always takes the tail radius.
@@ -6575,7 +6590,8 @@ fun AlbumBubble(
                                 palette.outText
                             } else {
                                 palette.linkIn
-                            }
+                            },
+                            fontSize = bubbleTextSize
                         )
                     }
                     Spacer(Modifier.height(2.dp))

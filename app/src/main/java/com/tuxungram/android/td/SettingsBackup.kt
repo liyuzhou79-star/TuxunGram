@@ -57,6 +57,7 @@ object SettingsBackup {
             put("chat_bg", UiSettings.chatBg.value)
             put("bubble_style", UiSettings.bubbleStyle.value)
             put("font_size", UiSettings.fontSize.value)
+            put("msg_text_size", UiSettings.msgTextSize.value)
             put("voice_speed", UiSettings.voiceSpeed.value.toDouble())
             // Wallpaper paths only — never the picture files
             // (see the header note).
@@ -169,6 +170,7 @@ object SettingsBackup {
         var chatBg: Int? = null
         var bubbleStyle: Int? = null
         var fontSize: Int? = null
+        var msgTextSize: Int? = null
         var voiceSpeed: Float? = null
         var chatBgImage: String? = null
         var chatBgFill: Long? = null
@@ -233,6 +235,13 @@ object SettingsBackup {
                         return "备份里的字体大小取值不对，设置没有改动。"
                     }
                     fontSize = v
+                }
+                if (uiObj.has("msg_text_size")) {
+                    val v = uiObj.getInt("msg_text_size")
+                    if (v !in UiSettings.MSG_TEXT_SIZE_RANGE) {
+                        return "备份里的消息文字大小取值不对，设置没有改动。"
+                    }
+                    msgTextSize = v
                 }
                 if (uiObj.has("voice_speed")) {
                     val v = uiObj.getDouble("voice_speed").toFloat()
@@ -399,6 +408,7 @@ object SettingsBackup {
         chatBg?.let { UiSettings.setChatBg(it) }
         bubbleStyle?.let { UiSettings.setBubbleStyle(it) }
         fontSize?.let { UiSettings.setFontSize(it) }
+        msgTextSize?.let { UiSettings.setMsgTextSize(it) }
         voiceSpeed?.let { UiSettings.setVoiceSpeed(it) }
         // Fill before image (v0.9.38, E1): the two are
         // alternatives in UiSettings — a non-empty image

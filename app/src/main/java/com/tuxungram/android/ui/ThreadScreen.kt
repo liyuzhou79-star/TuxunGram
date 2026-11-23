@@ -155,6 +155,11 @@ fun SimpleMessageBubble(
     // Per-user reaction list (v0.9.39, F1).
     var addedReactionsOpen by remember { mutableStateOf(false) }
     val outgoing = msg.outgoing
+    // Message text size (v0.9.39, F5): same Appearance
+    // slider as the main chat, body text and captions
+    // of this bubble only.
+    val msgTextSize by UiSettings.msgTextSize.collectAsState()
+    val bubbleTextSize = msgTextSize.sp
     // Official palette (v0.9.17, X2): same bubble language
     // as the main chat, including the grouped-run tail
     // corner since v0.9.18 (Y3) — the caller computes the
@@ -392,7 +397,8 @@ fun SimpleMessageBubble(
                         RichMessageText(
                             msg, onBotCommand = onBotCommand,
                             color = if (outgoing) palette.outText else palette.inText,
-                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                            linkColor = if (outgoing) palette.outText else palette.linkIn,
+                            fontSize = bubbleTextSize
                         )
                         if (msg.lpTitle.isNotEmpty() ||
                             msg.lpSiteName.isNotEmpty()
@@ -415,7 +421,8 @@ fun SimpleMessageBubble(
                             RichMessageText(
                             msg, onBotCommand = onBotCommand,
                             color = if (outgoing) palette.outText else palette.inText,
-                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                            linkColor = if (outgoing) palette.outText else palette.linkIn,
+                            fontSize = bubbleTextSize
                         )
                         }
                     }
@@ -442,7 +449,8 @@ fun SimpleMessageBubble(
                             RichMessageText(
                             msg, onBotCommand = onBotCommand,
                             color = if (outgoing) palette.outText else palette.inText,
-                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                            linkColor = if (outgoing) palette.outText else palette.linkIn,
+                            fontSize = bubbleTextSize
                         )
                         }
                     }
@@ -462,7 +470,8 @@ fun SimpleMessageBubble(
                             RichMessageText(
                             msg, onBotCommand = onBotCommand,
                             color = if (outgoing) palette.outText else palette.inText,
-                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                            linkColor = if (outgoing) palette.outText else palette.linkIn,
+                            fontSize = bubbleTextSize
                         )
                         }
                     }
@@ -473,7 +482,8 @@ fun SimpleMessageBubble(
                             RichMessageText(
                             msg, onBotCommand = onBotCommand,
                             color = if (outgoing) palette.outText else palette.inText,
-                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                            linkColor = if (outgoing) palette.outText else palette.linkIn,
+                            fontSize = bubbleTextSize
                         )
                         }
                     }
@@ -484,7 +494,8 @@ fun SimpleMessageBubble(
                             RichMessageText(
                             msg, onBotCommand = onBotCommand,
                             color = if (outgoing) palette.outText else palette.inText,
-                            linkColor = if (outgoing) palette.outText else palette.linkIn
+                            linkColor = if (outgoing) palette.outText else palette.linkIn,
+                            fontSize = bubbleTextSize
                         )
                         }
                     }

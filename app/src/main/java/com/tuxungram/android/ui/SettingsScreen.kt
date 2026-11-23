@@ -59,6 +59,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -124,6 +125,7 @@ import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import com.tuxungram.android.td.UpdateChecker
 import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1181,6 +1183,37 @@ fun SettingsScreen(
                 }
             }
         }
+        Spacer(Modifier.height(16.dp))
+        Text("消息文字大小", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "只放大或缩小聊天气泡里的消息文字（和上面的「字体大小」是两回事，" +
+                "列表、标题、设置页都不受影响），拖动立刻生效。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val msgTextSize by UiSettings.msgTextSize.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Slider(
+                value = msgTextSize.toFloat(),
+                onValueChange = {
+                    UiSettings.setMsgTextSize(it.roundToInt())
+                },
+                valueRange = 12f..20f,
+                steps = 7,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                "${msgTextSize}sp",
+                fontSize = 14.sp,
+                modifier = Modifier.width(44.dp)
+            )
+        }
+        Text(
+            "示例：这行字的大小就是现在的消息文字大小。",
+            fontSize = msgTextSize.sp,
+            modifier = Modifier.padding(top = 2.dp)
+        )
         Spacer(Modifier.height(16.dp))
         Text("底部导航栏", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))

@@ -25,6 +25,7 @@ object UiSettings {
     private const val KEY_CHAT_BG_PER_CHAT = "chat_bg_per_chat"
     private const val KEY_BUBBLE_STYLE = "bubble_style"
     private const val KEY_FONT_SIZE = "font_size"
+    private const val KEY_MSG_TEXT_SIZE = "msg_text_size"
     private const val KEY_DUCK_BAR = "duck_bar"
     private const val KEY_LABEL_DOTS = "label_dots"
     private const val KEY_SOUND_FX = "sound_fx"
@@ -81,6 +82,17 @@ object UiSettings {
      *  together, like in mature clients. */
     val FONT_SCALES = listOf(0.85f, 1.0f, 1.15f, 1.3f)
     val FONT_NAMES = listOf("小", "标准", "大", "特大")
+
+    /** Message text size in sp (v0.9.39, F5): the official
+     *  client's separate slider — it sizes ONLY chat bubble
+     *  body text (message text and media captions in the
+     *  three bubble hosts), never lists, titles or settings
+     *  rows. Independent of the whole-UI font scale above.
+     *  The default is 15, the bubble body size the app has
+     *  always rendered, so nothing changes until the user
+     *  moves the slider. */
+    val MSG_TEXT_SIZE_RANGE = 12..20
+    const val MSG_TEXT_SIZE_DEFAULT = 15
 
     private val _unreadCap = MutableStateFlow(999)
     val unreadCap: StateFlow<Int> = _unreadCap
@@ -146,6 +158,9 @@ object UiSettings {
     private val _fontSize = MutableStateFlow(1)
     val fontSize: StateFlow<Int> = _fontSize
 
+    private val _msgTextSize = MutableStateFlow(MSG_TEXT_SIZE_DEFAULT)
+    val msgTextSize: StateFlow<Int> = _msgTextSize
+
     /** Bottom navigation bar (the "Duck bar", v0.9.19, Z5):
      *  the app's own bottom tab bar, on by default. Turning
      *  it off leaves the home level to the official drawer
@@ -207,6 +222,15 @@ object UiSettings {
             if (bubble in BUBBLE_MODERN..BUBBLE_CLASSIC) bubble else BUBBLE_MODERN
         val font = prefs.getInt(KEY_FONT_SIZE, 1)
         _fontSize.value = if (font in FONT_SCALES.indices) font else 1
+        val msgText = prefs.getInt(
+            KEY_MSG_TEXT_SIZE, MSG_TEXT_SIZE_DEFAULT
+        )
+        _msgTextSize.value =
+            if (msgText in MSG_TEXT_SIZE_RANGE) {
+                msgText
+            } else {
+                MSG_TEXT_SIZE_DEFAULT
+            }
         _duckBar.value = prefs.getBoolean(KEY_DUCK_BAR, true)
         _labelDots.value = prefs.getBoolean(KEY_LABEL_DOTS, false)
         val speed = prefs.getFloat(KEY_VOICE_SPEED, 1f)
@@ -328,6 +352,15 @@ object UiSettings {
         if (index !in FONT_SCALES.indices) return
         _fontSize.value = index
         persist { it.putInt(KEY_FONT_SIZE, index) }
+    }
+
+    /** Set the bubble body text size in sp (v0.9.39, F5);
+     *  out-of-range values are ignored, never clamped
+     *  silently into a different choice. */
+    fun setMsgTextSize(sp: Int) {
+        if (sp !in MSG_TEXT_SIZE_RANGE) return
+        _msgTextSize.value = sp
+        persist { it.putInt(KEY_MSG_TEXT_SIZE, sp) }
     }
 
     /** ARGB of the chosen chat wallpaper for the current mode;
