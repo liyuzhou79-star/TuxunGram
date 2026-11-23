@@ -170,6 +170,11 @@ fun SimpleMessageBubble(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var menuOpen by remember { mutableStateOf(false) }
+    // In-bubble text selection (v0.9.47, R1): same division
+    // as the main chat — a long press that began on the body
+    // text belongs to the text's SelectionContainer; the
+    // menu opens for long presses anywhere else.
+    var textPressed by remember(msg.id) { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     // Select-text page (v0.9.44, N7).
     var selectTextOpen by remember { mutableStateOf(false) }
@@ -349,9 +354,15 @@ fun SimpleMessageBubble(
                             }
                         },
                         onLongClick = {
-                            // Touch feedback (v0.9.30, W6).
-                            com.tuxungram.android.td.Haptics.tick()
-                            menuOpen = true
+                            if (textPressed) {
+                                // On the body text: selection
+                                // owns this press (v0.9.47, R1).
+                                textPressed = false
+                            } else {
+                                // Touch feedback (v0.9.30, W6).
+                                com.tuxungram.android.td.Haptics.tick()
+                                menuOpen = true
+                            }
                         }
                     )
                     .padding(horizontal = 11.dp, vertical = 8.dp)
@@ -479,7 +490,9 @@ fun SimpleMessageBubble(
                             msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
-                            fontSize = bubbleTextSize
+                            fontSize = bubbleTextSize,
+                            selectable = true,
+                            onTextPress = { textPressed = it }
                         )
                         if (msg.lpTitle.isNotEmpty() ||
                             msg.lpSiteName.isNotEmpty()
@@ -503,7 +516,9 @@ fun SimpleMessageBubble(
                             msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
-                            fontSize = bubbleTextSize
+                            fontSize = bubbleTextSize,
+                            selectable = true,
+                            onTextPress = { textPressed = it }
                         )
                         }
                     }
@@ -531,7 +546,9 @@ fun SimpleMessageBubble(
                             msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
-                            fontSize = bubbleTextSize
+                            fontSize = bubbleTextSize,
+                            selectable = true,
+                            onTextPress = { textPressed = it }
                         )
                         }
                     }
@@ -552,7 +569,9 @@ fun SimpleMessageBubble(
                             msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
-                            fontSize = bubbleTextSize
+                            fontSize = bubbleTextSize,
+                            selectable = true,
+                            onTextPress = { textPressed = it }
                         )
                         }
                     }
@@ -564,7 +583,9 @@ fun SimpleMessageBubble(
                             msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
-                            fontSize = bubbleTextSize
+                            fontSize = bubbleTextSize,
+                            selectable = true,
+                            onTextPress = { textPressed = it }
                         )
                         }
                     }
@@ -576,7 +597,9 @@ fun SimpleMessageBubble(
                             msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
-                            fontSize = bubbleTextSize
+                            fontSize = bubbleTextSize,
+                            selectable = true,
+                            onTextPress = { textPressed = it }
                         )
                         }
                     }

@@ -3,9 +3,11 @@ package com.tuxungram.android.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,6 +20,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -83,7 +87,21 @@ fun RichMessageText(
     // every case-insensitive occurrence of this query in the
     // text gets a warm highlight background, mapped through
     // the same custom-emoji offset shift as the entities.
-    highlightQuery: String = ""
+    highlightQuery: String = "",
+    // In-bubble text selection (v0.9.47, R1): the three chat
+    // hosts pass true for bubble body text and captions, so
+    // a long press ON the text starts a real selection
+    // (system handles, drag to extend, copy the chosen part)
+    // the way the official client behaves. [onTextPress]
+    // reports press down / up on the text WITHOUT consuming
+    // anything; the host bubble reads it in its own
+    // long-press handler to leave text long-presses to the
+    // selection and keep opening its menu for long presses
+    // anywhere else (image, padding, cards). All other
+    // surfaces keep the default false and render exactly
+    // as before.
+    selectable: Boolean = false,
+    onTextPress: (Boolean) -> Unit = {}
 ) {
     // Custom emoji (L2): kick off the sticker fetch for this
     // message's ids and watch the downloaded paths; the inline
@@ -101,12 +119,16 @@ fun RichMessageText(
     }
     if (msg.entities.isEmpty()) {
         if (highlightQuery.isEmpty()) {
-            Text(msg.text, fontSize = fontSize, color = color)
+            BubbleTextWrap(selectable, onTextPress) {
+                Text(msg.text, fontSize = fontSize, color = color)
+            }
         } else {
-            Text(
-                highlightedPlain(msg.text, highlightQuery),
-                fontSize = fontSize, color = color
-            )
+            BubbleTextWrap(selectable, onTextPress) {
+                Text(
+                    highlightedPlain(msg.text, highlightQuery),
+                    fontSize = fontSize, color = color
+                )
+            }
         }
         return
     }
@@ -395,14 +417,64 @@ fun RichMessageText(
             }
         }
     }
-    Text(
-        annotated,
-        inlineContent = inlineContent,
-        fontSize = fontSize,
-        color = color,
-        maxLines = maxLines,
-        overflow = TextOverflow.Ellipsis
-    )
+    BubbleTextWrap(selectable, onTextPress) {
+        Text(
+            annotated,
+            inlineContent = inlineContent,
+            fontSize = fontSize,
+            color = color,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/**
+ * The selection shell for bubble text (v0.9.47, R1). With
+ * [selectable] off this is a pass-through — every preview
+ * and secondary surface renders byte-identically to
+ * before. With it on, the text sits in a SelectionContainer
+ * (long press on the text starts a selection with system
+ * handles; drags extend it inside the text; taps still
+ * reach LinkAnnotation clicks and the bubble's own click
+ * chain, because the selection gesture only engages after
+ * the long-press timeout) plus a passive Initial-pass
+ * press observer: it consumes NOTHING, it only tells the
+ * host bubble "a press is currently down on the text", so
+ * the bubble's long-press handler can tell a text
+ * long-press (selection's business) from a long-press on
+ * the bubble's non-text area (the menu's business). The
+ * flag also self-clears: any event with no pressed change
+ * reports up, and the host resets it when it reads it.
+ */
+@Composable
+private fun BubbleTextWrap(
+    selectable: Boolean,
+    onTextPress: (Boolean) -> Unit,
+    content: @Composable () -> Unit
+) {
+    if (!selectable) {
+        content()
+        return
+    }
+    SelectionContainer {
+        Box(
+            modifier = Modifier.pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(
+                            PointerEventPass.Initial
+                        )
+                        onTextPress(
+                            event.changes.any { it.pressed }
+                        )
+                    }
+                }
+            }
+        ) {
+            content()
+        }
+    }
 }
 
 /**

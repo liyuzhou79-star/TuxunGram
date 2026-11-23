@@ -104,9 +104,11 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -453,6 +455,11 @@ fun ChatScreen(
     onOpenThread: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
+    // Panel / keyboard interlock (v0.9.47, R6): the sticker
+    // panel and the IME are mutually exclusive, switched
+    // explicitly through this controller (see the emoji
+    // toggle in the composer).
+    val keyboardController = LocalSoftwareKeyboardController.current
     val chats by ChatStore.chats.collectAsState()
     val adminCaps by AdminStore.caps.collectAsState()
     // Resolved-chat fallback (v0.9.44, N4): a chat opened
@@ -3964,7 +3971,18 @@ fun ChatScreen(
                             }
                         )
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        // Panel / keyboard interlock (v0.9.47,
+                        // R6): focus arriving in the field from
+                        // elsewhere (a tap after using another
+                        // control) closes the sticker panel —
+                        // the keyboard is coming up instead.
+                        .onFocusChanged { state ->
+                            if (state.isFocused && stickerPanelOpen) {
+                                stickerPanelOpen = false
+                            }
+                        },
                     maxLines = 4,
                     // Emoji toggle inside the field (v0.9.18,
                     // Y2): the official layout puts the sticker
@@ -3974,8 +3992,25 @@ fun ChatScreen(
                     leadingIcon = {
                         IconButton(
                             onClick = {
-                                stickerPanelOpen = !stickerPanelOpen
-                                if (stickerPanelOpen) MediaStore.load()
+                                // Panel / keyboard interlock
+                                // (v0.9.47, R6): opening the panel
+                                // explicitly hides the IME and
+                                // closing it through this toggle
+                                // (the icon is a keyboard while
+                                // the panel is open) explicitly
+                                // brings the IME back. Before this
+                                // version nothing ever hid the
+                                // keyboard, so panel and IME could
+                                // stack and squeeze the message
+                                // list from both sides.
+                                val opening = !stickerPanelOpen
+                                stickerPanelOpen = opening
+                                if (opening) {
+                                    keyboardController?.hide()
+                                    MediaStore.load()
+                                } else {
+                                    keyboardController?.show()
+                                }
                             },
                             modifier = Modifier.size(38.dp)
                         ) {
@@ -4725,7 +4760,7 @@ fun AlbumPreview(
                 ) {
                     value = withContext(Dispatchers.IO) {
                         if (part.mimeType.startsWith("image/")) {
-                            decodeCached(part.path)
+                            decodeCached(part.path, 512)
                         } else {
                             try {
                                 val retriever =
@@ -5431,6 +5466,15 @@ fun MessageBubble(
         }
     }
     var menuOpen by remember { mutableStateOf(false) }
+    // In-bubble text selection (v0.9.47, R1): true while a
+    // press that began on this bubble's body text is still
+    // down. The long-press handler below reads it to leave
+    // text long-presses to the text's SelectionContainer
+    // (selection starts, no menu); long-presses anywhere
+    // else on the bubble keep opening the menu. Reset when
+    // read, so a press cancelled mid-flight (a scroll
+    // takeover) can suppress at most that one read.
+    var textPressed by remember(msg.id) { mutableStateOf(false) }
     // Select-text page (v0.9.44, N7).
     var selectTextOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
@@ -5678,6 +5722,13 @@ fun MessageBubble(
                         onLongClick = {
                             if (selectionMode) {
                                 onToggleSelect(msg)
+                            } else if (textPressed) {
+                                // Long-press began on the body
+                                // text (v0.9.47, R1): the text's
+                                // SelectionContainer owns this
+                                // press and starts the selection —
+                                // the menu stays closed.
+                                textPressed = false
                             } else {
                                 // Touch feedback (v0.9.30, W6):
                                 // the floating menu opening is
@@ -5835,7 +5886,9 @@ fun MessageBubble(
                             highlightQuery = highlightQuery,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
-                            fontSize = bubbleTextSize
+                            fontSize = bubbleTextSize,
+                            selectable = !selectionMode,
+                            onTextPress = { textPressed = it }
                         )
                         if (msg.lpTitle.isNotEmpty() || msg.lpSiteName.isNotEmpty()) {
                             Spacer(Modifier.height(6.dp))
@@ -5868,7 +5921,9 @@ fun MessageBubble(
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
-                                fontSize = bubbleTextSize
+                                fontSize = bubbleTextSize,
+                                selectable = !selectionMode,
+                                onTextPress = { textPressed = it }
                             )
                         }
                     }
@@ -5911,7 +5966,9 @@ fun MessageBubble(
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
-                                fontSize = bubbleTextSize
+                                fontSize = bubbleTextSize,
+                                selectable = !selectionMode,
+                                onTextPress = { textPressed = it }
                             )
                         }
                     }
@@ -5926,7 +5983,9 @@ fun MessageBubble(
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
-                                fontSize = bubbleTextSize
+                                fontSize = bubbleTextSize,
+                                selectable = !selectionMode,
+                                onTextPress = { textPressed = it }
                             )
                         }
                     }
@@ -5941,7 +6000,9 @@ fun MessageBubble(
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
-                                fontSize = bubbleTextSize
+                                fontSize = bubbleTextSize,
+                                selectable = !selectionMode,
+                                onTextPress = { textPressed = it }
                             )
                         }
                     }
@@ -5956,7 +6017,9 @@ fun MessageBubble(
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
-                                fontSize = bubbleTextSize
+                                fontSize = bubbleTextSize,
+                                selectable = !selectionMode,
+                                onTextPress = { textPressed = it }
                             )
                         }
                     }
@@ -6773,6 +6836,10 @@ fun AlbumBubble(
     val last = items.last()
     val outgoing = first.outgoing
     var menuOpen by remember { mutableStateOf(false) }
+    // Caption text selection (v0.9.47, R1): same division
+    // as single bubbles — a long press on the caption text
+    // selects, anywhere else opens the album menu.
+    var albumTextPressed by remember { mutableStateOf(false) }
     val bubbleStyle by UiSettings.bubbleStyle.collectAsState()
     // Album caption follows the message text size too
     // (v0.9.39, F5).
@@ -6841,7 +6908,15 @@ fun AlbumBubble(
                 modifier = albumBg
                     .combinedClickable(
                         onClick = {},
-                        onLongClick = { menuOpen = true }
+                        onLongClick = {
+                            if (albumTextPressed) {
+                                // On the caption text: the
+                                // selection owns it (R1).
+                                albumTextPressed = false
+                            } else {
+                                menuOpen = true
+                            }
+                        }
                     )
                     .padding(horizontal = 6.dp, vertical = 6.dp)
             ) {
@@ -6991,7 +7066,9 @@ fun AlbumBubble(
                             } else {
                                 palette.linkIn
                             },
-                            fontSize = bubbleTextSize
+                            fontSize = bubbleTextSize,
+                            selectable = true,
+                            onTextPress = { albumTextPressed = it }
                         )
                     }
                     Spacer(Modifier.height(2.dp))
@@ -7104,7 +7181,7 @@ fun AlbumCell(
     ) {
         value = withContext(Dispatchers.IO) {
             when {
-                stillPath != null -> decodeCached(stillPath)
+                stillPath != null -> decodeCached(stillPath, 384)
                 item.miniThumbData.isNotEmpty() ->
                     decodeMiniThumb(item.miniThumbData)
                 else -> null
@@ -7590,7 +7667,7 @@ fun GiveawayBubbleContent(msg: MsgItem, showStatusAction: Boolean = true) {
                 initialValue = null, stickerPath
             ) {
                 value = withContext(Dispatchers.IO) {
-                    decodeCached(stickerPath)
+                    decodeCached(stickerPath, 512)
                 }
             }
             val bmp = bitmap
@@ -8501,13 +8578,29 @@ fun FileBubbleContent(msg: MsgItem) {
 @Composable
 fun PhotoBubbleContent(msg: MsgItem) {
     val path = msg.photoPath
+    // Progressive stages (v0.9.47, R5): the inline
+    // minithumbnail (parsed since this version) shows first
+    // — tiny and soft, exactly what it is for — and the
+    // picked photo size replaces it the moment its file
+    // lands. Before this version a photo showed only the
+    // "loading" text until the full file arrived, while
+    // videos already had their minithumbnail stage. The
+    // full decode is capped at 1024 px (v0.9.47, R4): the
+    // bubble is 220 dp wide, and pickPhotoSize already
+    // prefers a <=900 px size, so the cap only bites on
+    // the all-sizes-huge fallback.
     val bitmap by produceState<android.graphics.Bitmap?>(
-        initialValue = null, path
+        initialValue = null, path, msg.miniThumbData
     ) {
-        value = if (path == null) {
-            null
-        } else {
-            withContext(Dispatchers.IO) { decodeCached(path) }
+        value = when {
+            path != null -> withContext(Dispatchers.IO) {
+                decodeCached(path, 1024)
+            }
+            msg.miniThumbData.isNotEmpty() ->
+                withContext(Dispatchers.IO) {
+                    decodeMiniThumb(msg.miniThumbData)
+                }
+            else -> null
         }
     }
     val ratio = if (msg.photoWidth > 0 && msg.photoHeight > 0) {
@@ -8701,7 +8794,7 @@ private fun PaidMediaTile(
                         null
                     } else {
                         withContext(Dispatchers.IO) {
-                            decodeCached(path)
+                            decodeCached(path, 1024)
                         }
                     }
                 }
@@ -8729,7 +8822,7 @@ private fun PaidMediaTile(
                 ) {
                     value = when {
                         thumb != null -> withContext(Dispatchers.IO) {
-                            decodeCached(thumb)
+                            decodeCached(thumb, 512)
                         }
                         mini.isNotEmpty() -> withContext(Dispatchers.IO) {
                             decodeMiniThumb(mini)
@@ -8869,7 +8962,7 @@ fun VideoNoteBubbleContent(msg: MsgItem) {
     ) {
         value = when {
             thumb != null ->
-                withContext(Dispatchers.IO) { decodeCached(thumb) }
+                withContext(Dispatchers.IO) { decodeCached(thumb, 640) }
             mini.isNotEmpty() ->
                 withContext(Dispatchers.IO) { decodeMiniThumb(mini) }
             else -> null
@@ -8943,7 +9036,7 @@ fun DiceBubbleContent(msg: MsgItem) {
         value = if (path == null) {
             null
         } else {
-            withContext(Dispatchers.IO) { decodeCached(path) }
+            withContext(Dispatchers.IO) { decodeCached(path, 512) }
         }
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -8995,7 +9088,7 @@ fun GameBubbleContent(msg: MsgItem) {
         value = if (path == null) {
             null
         } else {
-            withContext(Dispatchers.IO) { decodeCached(path) }
+            withContext(Dispatchers.IO) { decodeCached(path, 1024) }
         }
     }
     Column(modifier = Modifier.width(220.dp)) {
@@ -9103,7 +9196,7 @@ fun StickerBubbleContent(msg: MsgItem) {
         value = if (path == null) {
             null
         } else {
-            withContext(Dispatchers.IO) { decodeCached(path) }
+            withContext(Dispatchers.IO) { decodeCached(path, 640) }
         }
     }
     val bmp = bitmap
@@ -9147,7 +9240,7 @@ fun AnimatedEmojiBubbleContent(msg: MsgItem, effect: AnimEffect?) {
         value = if (path == null) {
             null
         } else {
-            withContext(Dispatchers.IO) { decodeCached(path) }
+            withContext(Dispatchers.IO) { decodeCached(path, 512) }
         }
     }
     val bounce = remember { Animatable(1f) }
@@ -9173,7 +9266,7 @@ fun AnimatedEmojiBubbleContent(msg: MsgItem, effect: AnimEffect?) {
             }
             if (p != null) {
                 value = withContext(Dispatchers.IO) {
-                    decodeCached(p)
+                    decodeCached(p, 512)
                 }
             }
         }
@@ -10171,7 +10264,7 @@ private fun TrendingSetCell(set: TrendingSetUi, onClick: () -> Unit) {
         value = if (path == null) {
             null
         } else {
-            withContext(Dispatchers.IO) { decodeCached(path) }
+            withContext(Dispatchers.IO) { decodeCached(path, 256) }
         }
     }
     Column(
@@ -10219,7 +10312,7 @@ private fun MediaPickerCell(entry: MediaEntry, onClick: () -> Unit) {
         value = if (path == null) {
             null
         } else {
-            withContext(Dispatchers.IO) { decodeCached(path) }
+            withContext(Dispatchers.IO) { decodeCached(path, 512) }
         }
     }
     Box(

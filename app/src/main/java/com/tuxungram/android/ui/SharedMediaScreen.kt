@@ -369,7 +369,7 @@ private fun GridThumb(path: String) {
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path
     ) {
-        value = withContext(Dispatchers.IO) { decodeCached(path) }
+        value = withContext(Dispatchers.IO) { decodeCached(path, 512) }
     }
     val bmp = bitmap
     if (bmp != null) {

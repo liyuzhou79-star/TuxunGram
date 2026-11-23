@@ -316,13 +316,15 @@ fun decodeCached(path: String, maxDim: Int = 0): android.graphics.Bitmap? {
 /** Small rounded media thumbnail for list rows (v0.9.11,
  *  A2): the chat list's last-message media chip. Decodes
  *  through the same cache as avatars; renders nothing
- *  while the file is not on disk yet. */
+ *  while the file is not on disk yet. The decode is capped
+ *  at 96 px (v0.9.47, R4): the chip is 22 dp, and the
+ *  source can be a full photo size. */
 @Composable
 fun MediaThumbChip(path: String, sizeDp: Int = 22) {
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path
     ) {
-        value = withContext(Dispatchers.IO) { decodeCached(path) }
+        value = withContext(Dispatchers.IO) { decodeCached(path, 96) }
     }
     val bmp = bitmap ?: return
     Image(
@@ -335,14 +337,20 @@ fun MediaThumbChip(path: String, sizeDp: Int = 22) {
     )
 }
 
-/** Round avatar from a downloaded TDLib photo file; the small
- *  renditions are tiny, so a plain decode is fine. */
+/** Round avatar from a downloaded TDLib photo file. The
+ *  decode is capped at 3x the display size (v0.9.47, R4):
+ *  avatar files can be 640 px renditions shown at 52 dp,
+ *  and the shared bitmap cache keys by requested size, so
+ *  the cap costs nothing when a bigger rendition of the
+ *  same file is genuinely needed elsewhere. */
 @Composable
 fun AvatarImage(path: String, sizeDp: Int) {
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path
     ) {
-        value = withContext(Dispatchers.IO) { decodeCached(path) }
+        value = withContext(Dispatchers.IO) {
+            decodeCached(path, (sizeDp * 3).coerceIn(96, 512))
+        }
     }
     val bmp = bitmap
     if (bmp != null) {
