@@ -3422,6 +3422,36 @@ object MessageStore {
                 currentChatObject = chat
                 refreshAccess()
             }
+            "updateChatMember" -> {
+                // A member's status changed in the open chat
+                // (v0.9.44, N3): when it is MY status (muted,
+                // unmuted, kicked, readmitted) the dock must
+                // follow. The update does not say cheaply
+                // whether it was me, and member changes in
+                // one open chat are rare — re-decide from the
+                // group object (a local read) on any of them.
+                if (update.optLong("chat_id") != currentChatId) {
+                    return
+                }
+                refreshAccess()
+            }
+            "updateChatPermissions" -> {
+                // Default-permissions change (v0.9.44, N3):
+                // TDLib delivers permission changes on this
+                // dedicated update, not inside updateChat —
+                // fold the new permissions into the stored
+                // chat object and re-decide the dock, so an
+                // admin opening or closing posting while the
+                // chat is on screen flips the bar live.
+                if (update.optLong("chat_id") != currentChatId) {
+                    return
+                }
+                val perms = update.optJSONObject("permissions")
+                    ?: return
+                val chatObj = currentChatObject ?: return
+                chatObj.put("permissions", perms)
+                refreshAccess()
+            }
             "updateSupergroup" -> {
                 val sg = update.optJSONObject("supergroup")
                     ?: return
