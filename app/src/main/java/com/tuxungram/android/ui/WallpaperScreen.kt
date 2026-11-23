@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -266,7 +267,7 @@ private fun WallpaperTile(bg: BgUi, onClick: () -> Unit) {
                     else -> "壁纸"
                 }
             },
-            fontSize = 11.5.sp, maxLines = 1
+            fontSize = 11.5.sp, overflow = TextOverflow.Ellipsis, maxLines = 1
         )
         if (bg.isDefault) {
             Text(

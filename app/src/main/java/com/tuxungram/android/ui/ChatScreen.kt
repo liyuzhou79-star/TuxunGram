@@ -1287,6 +1287,7 @@ fun ChatScreen(
                         color = headerPalette.actionBarTitle,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.SemiBold,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1
                     )
                     // Header subtitle (F5 + v0.9.18, Y6):
@@ -1303,6 +1304,7 @@ fun ChatScreen(
                             peerAction,
                             color = headerPalette.accentText,
                             fontSize = 13.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     } else if (!chat?.presenceText.isNullOrEmpty()) {
@@ -1314,6 +1316,7 @@ fun ChatScreen(
                                 headerPalette.textSecondary
                             },
                             fontSize = 13.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     } else if ((chat?.memberCount ?: 0) > 0) {
@@ -1325,6 +1328,7 @@ fun ChatScreen(
                             },
                             color = headerPalette.textSecondary,
                             fontSize = 13.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     }
@@ -1612,7 +1616,7 @@ fun ChatScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(220.dp)
-                        .background(Color(0xFFF7F7F7))
+                        .background(OfficialTheme.current().panelBg)
                         .lazyListScrollbar(chatSearchListState)
                 ) {
                     items(
@@ -2227,6 +2231,7 @@ fun ChatScreen(
                     Text(
                         messageSummaryText(pinned),
                         fontSize = 13.sp,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1
                     )
                 }
@@ -2685,7 +2690,7 @@ fun ChatScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFFF5F5F5))
+                        .background(OfficialTheme.current().panelBg)
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2707,7 +2712,7 @@ fun ChatScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFFF5F5F5))
+                        .background(OfficialTheme.current().panelBg)
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2734,6 +2739,7 @@ fun ChatScreen(
                             },
                             color = Color.Gray,
                             fontSize = 13.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     }
@@ -2754,7 +2760,7 @@ fun ChatScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFFF5F5F5))
+                        .background(OfficialTheme.current().panelBg)
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2768,6 +2774,7 @@ fun ChatScreen(
                         if (cp.title.isNotEmpty()) {
                             Text(
                                 cp.title, fontSize = 13.sp,
+                                overflow = TextOverflow.Ellipsis,
                                 maxLines = 1
                             )
                         }
@@ -2792,7 +2799,7 @@ fun ChatScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFFF5F5F5))
+                        .background(OfficialTheme.current().panelBg)
                         .padding(horizontal = 12.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2816,7 +2823,7 @@ fun ChatScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFFF5F5F5))
+                        .background(OfficialTheme.current().panelBg)
                         .padding(horizontal = 12.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2979,6 +2986,7 @@ fun ChatScreen(
                                 Text(
                                     hint, fontSize = 12.5.sp,
                                     color = Color.Gray,
+                                    overflow = TextOverflow.Ellipsis,
                                     maxLines = 1,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -3154,6 +3162,7 @@ fun ChatScreen(
                                         item.third,
                                         fontSize = 12.5.sp,
                                         color = Color.Gray,
+                                        overflow = TextOverflow.Ellipsis,
                                         maxLines = 1,
                                         modifier = Modifier.weight(1f)
                                     )
@@ -3270,6 +3279,7 @@ fun ChatScreen(
                                         Text(
                                             user.name,
                                             fontSize = 14.sp,
+                                            overflow = TextOverflow.Ellipsis,
                                             maxLines = 1
                                         )
                                         Text(
@@ -3282,6 +3292,7 @@ fun ChatScreen(
                                             },
                                             color = Color.Gray,
                                             fontSize = 12.sp,
+                                            overflow = TextOverflow.Ellipsis,
                                             maxLines = 1
                                         )
                                     }
@@ -3412,7 +3423,7 @@ fun ChatScreen(
                                             .weight(1f)
                                             .padding(3.dp)
                                     ) {
-                                        Text(btn.text, maxLines = 1)
+                                        Text(btn.text, overflow = TextOverflow.Ellipsis, maxLines = 1)
                                     }
                                 }
                             }
@@ -3591,6 +3602,7 @@ fun ChatScreen(
                             botHere.menuButtonText
                                 .ifEmpty { "打开应用" },
                             fontSize = 14.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     }
@@ -3605,6 +3617,7 @@ fun ChatScreen(
                         Text(
                             botHere.menuButtonText,
                             fontSize = 14.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     }
@@ -3626,7 +3639,7 @@ fun ChatScreen(
                             }
                         )
                     }) {
-                        Text("应用", fontSize = 14.sp, maxLines = 1)
+                        Text("应用", fontSize = 14.sp, overflow = TextOverflow.Ellipsis, maxLines = 1)
                     }
                 } else if (botUi?.takeIf { it.chatId == chatId }
                         ?.let { it.commands.isNotEmpty() || it.groupBots.isNotEmpty() } == true
@@ -4268,10 +4281,18 @@ fun PhotoPreview(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .background(Color(0xFFEEEEEE)),
+                    // Theme surface (v0.9.41, H3): the
+                    // hard-coded near-white flashed as a
+                    // light box in dark mode.
+                    .background(
+                        MaterialTheme.colorScheme.surfaceVariant
+                    ),
                 contentAlignment = Alignment.Center
             ) {
-                Text("图片读不出来", color = Color.Gray)
+                Text(
+                    "图片读不出来",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -4773,6 +4794,7 @@ fun InlineButtonGrid(msg: MsgItem, chatId: Long) {
                             btn.text,
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 13.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     }
@@ -5405,6 +5427,7 @@ fun MessageBubble(
                                     palette.inTime
                                 },
                                 fontSize = 11.sp,
+                                overflow = TextOverflow.Ellipsis,
                                 maxLines = 1,
                                 modifier = Modifier.clickable {
                                     onOpenSenderProfile(
@@ -6322,6 +6345,7 @@ fun MessageBubble(
                                     viewer.name.ifEmpty { "…" },
                                     fontSize = 15.sp,
                                     modifier = Modifier.weight(1f),
+                                    overflow = TextOverflow.Ellipsis,
                                     maxLines = 1
                                 )
                                 Text(
@@ -6501,6 +6525,7 @@ fun AlbumBubble(
                                 "via ${first.viaBotLabel}",
                                 color = palette.inTime,
                                 fontSize = 11.sp,
+                                overflow = TextOverflow.Ellipsis,
                                 maxLines = 1,
                                 modifier = Modifier.clickable {
                                     onOpenSenderProfile(
@@ -7367,6 +7392,7 @@ fun AudioBubbleContent(msg: MsgItem) {
                     color = mainText,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
+                    overflow = TextOverflow.Ellipsis,
                     maxLines = 1
                 )
                 Text(
@@ -7380,6 +7406,7 @@ fun AudioBubbleContent(msg: MsgItem) {
                     },
                     color = subText,
                     fontSize = 12.sp,
+                    overflow = TextOverflow.Ellipsis,
                     maxLines = 1
                 )
                 if (active && totalMs > 0) {
@@ -7538,11 +7565,20 @@ private fun RichBlockView(
                 .background(subText.copy(alpha = 0.4f))
         )
         "quote", "pullquote" -> {
-            Row(modifier = Modifier.fillMaxWidth()) {
+            // The accent bar stretches with the quote text
+            // (v0.9.41, H2): it was a fixed 48.dp, so a long
+            // quote — or any quote at a large system font —
+            // outgrew its bar. Same IntrinsicSize pattern
+            // as the reply-quote bar in the bubble renderer.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
+            ) {
                 Box(
                     modifier = Modifier
                         .width(3.dp)
-                        .height(48.dp)
+                        .fillMaxHeight()
                         .background(linkText, RoundedCornerShape(2.dp))
                 )
                 Spacer(Modifier.width(10.dp))
@@ -7641,10 +7677,20 @@ private fun RichBlockView(
             }
         }
         "table" -> {
-            // Degraded on purpose (v0.9.40, G4 scope): the
-            // cell texts ride the message's plain-text
-            // skeleton (previews / quotes keep the words),
-            // but the grid itself is not drawn in a bubble.
+            // Plain-text grid (v0.9.41, H5; was a placeholder
+            // line in v0.9.40): the parser already carries
+            // every cell's text (InstantViewStore pageBlock-
+            // Table), so the bubble draws the grid itself —
+            // monospace lines, each cell padded to its
+            // column's display width (CJK glyphs count 2),
+            // inside a horizontally scrollable strip so a
+            // wide table never squeezes the bubble. Cell
+            // entities are not rendered (plain text only,
+            // like the Instant View table). Rows are capped
+            // at 50 with a count line — a rich post's table
+            // beyond that is article furniture, and the
+            // plain-text skeleton still carries its words
+            // to previews and quotes.
             Column(modifier = Modifier.fillMaxWidth()) {
                 block.rich?.let {
                     if (it.text.isNotEmpty()) {
@@ -7656,10 +7702,70 @@ private fun RichBlockView(
                         Spacer(Modifier.height(2.dp))
                     }
                 }
-                Text(
-                    "[表格] 表格内容暂不在气泡中展开",
-                    fontSize = 12.5.sp, color = subText
-                )
+                if (block.tableRows.isEmpty()) {
+                    Text(
+                        "[表格]",
+                        fontSize = 12.5.sp, color = subText
+                    )
+                } else {
+                    val maxCols = block.tableRows.maxOf { it.size }
+                    val widths = IntArray(maxCols)
+                    fun displayWidth(s: String): Int {
+                        var w = 0
+                        for (ch in s) {
+                            w += if (ch.code in 0x2E80..0x9FFF ||
+                                ch.code in 0xF900..0xFAFF ||
+                                ch.code in 0xFF00..0xFF60
+                            ) {
+                                2
+                            } else {
+                                1
+                            }
+                        }
+                        return w
+                    }
+                    for (row in block.tableRows) {
+                        for (c in row.indices) {
+                            val w = displayWidth(row[c].text)
+                            if (w > widths[c]) widths[c] = w
+                        }
+                    }
+                    val shownRows = block.tableRows.take(50)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                    ) {
+                        for (row in shownRows) {
+                            val line = StringBuilder()
+                            for (c in 0 until maxCols) {
+                                if (c > 0) line.append(" │ ")
+                                val cell = row.getOrNull(c)?.text
+                                    ?: ""
+                                line.append(cell)
+                                val pad = widths[c] -
+                                    displayWidth(cell)
+                                if (c < maxCols - 1 && pad > 0) {
+                                    line.append(" ".repeat(pad))
+                                }
+                            }
+                            Text(
+                                line.toString(),
+                                fontSize = 12.sp, color = mainText,
+                                fontFamily = androidx.compose.ui.text
+                                    .font.FontFamily.Monospace,
+                                maxLines = 1, softWrap = false
+                            )
+                        }
+                    }
+                    if (block.tableRows.size > shownRows.size) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "… 共 ${block.tableRows.size} 行",
+                            fontSize = 12.sp, color = subText
+                        )
+                    }
+                }
             }
         }
         "photo" -> {
@@ -7897,6 +8003,7 @@ fun ContactBubbleContent(msg: MsgItem) {
                     color = mainText,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
+                    overflow = TextOverflow.Ellipsis,
                     maxLines = 1
                 )
                 Text(msg.contactPhone, color = subText, fontSize = 13.sp)
@@ -9196,6 +9303,7 @@ fun PollVotersDialog(
                                         voter.name.ifEmpty { "…" },
                                         fontSize = 15.sp,
                                         modifier = Modifier.weight(1f),
+                                        overflow = TextOverflow.Ellipsis,
                                         maxLines = 1
                                     )
                                     Text(
@@ -9714,6 +9822,7 @@ private fun TrendingSetCell(set: TrendingSetUi, onClick: () -> Unit) {
         Text(
             set.title,
             fontSize = 10.sp,
+            overflow = TextOverflow.Ellipsis,
             maxLines = 1,
             color = Color.Gray
         )
@@ -10361,6 +10470,7 @@ private fun InlineResultRow(
                 result.title.ifEmpty { "（无标题）" },
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
+                overflow = TextOverflow.Ellipsis,
                 maxLines = 1
             )
             if (result.description.isNotEmpty()) {
@@ -10368,6 +10478,7 @@ private fun InlineResultRow(
                     result.description,
                     fontSize = 12.5.sp,
                     color = Color.Gray,
+                    overflow = TextOverflow.Ellipsis,
                     maxLines = 1
                 )
             }

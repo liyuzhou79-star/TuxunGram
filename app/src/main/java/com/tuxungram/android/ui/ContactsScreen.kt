@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
@@ -415,6 +416,7 @@ private fun ContactRow(contact: ContactEntry, onClick: () -> Unit) {
                     contact.name,
                     color = palette.textPrimary,
                     fontSize = 16.sp,
+                    overflow = TextOverflow.Ellipsis,
                     maxLines = 1
                 )
                 val sub = buildList {
@@ -434,6 +436,7 @@ private fun ContactRow(contact: ContactEntry, onClick: () -> Unit) {
                             palette.textSecondary
                         },
                         fontSize = 13.sp,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1
                     )
                 }

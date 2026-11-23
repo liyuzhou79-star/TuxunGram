@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -1471,7 +1472,15 @@ fun ProfileScreen(
                                                 .padding(top = 8.dp)
                                                 .height(8.dp)
                                                 .background(
-                                                    Color(0xFFE0E0E0),
+                                                    // Theme track
+                                                    // (v0.9.41, H3):
+                                                    // the hard-coded
+                                                    // light gray was
+                                                    // a bright bar in
+                                                    // dark mode.
+                                                    MaterialTheme
+                                                        .colorScheme
+                                                        .surfaceVariant,
                                                     RoundedCornerShape(4.dp)
                                                 )
                                         ) {
@@ -1915,6 +1924,7 @@ fun ProfileScreen(
                                 Text(
                                     link.link,
                                     fontSize = 12.sp, color = Color.Gray,
+                                    overflow = TextOverflow.Ellipsis,
                                     maxLines = 1
                                 )
                                 if (!link.isRevoked) {

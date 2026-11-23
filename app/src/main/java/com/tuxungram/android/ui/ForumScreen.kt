@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
@@ -549,6 +550,7 @@ fun ForumTopicsList(
                                     topic.name,
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.SemiBold,
+                                    overflow = TextOverflow.Ellipsis,
                                     maxLines = 1
                                 )
                                 if (topic.isPinned) {
@@ -570,6 +572,7 @@ fun ForumTopicsList(
                                     topic.lastText,
                                     color = Color.Gray,
                                     fontSize = 13.sp,
+                                    overflow = TextOverflow.Ellipsis,
                                     maxLines = 1
                                 )
                             }
@@ -1054,7 +1057,7 @@ fun ForumTopicView(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFFF5F5F5))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1069,6 +1072,7 @@ fun ForumTopicView(
                         target.text.ifEmpty { "原消息" },
                         color = Color.Gray,
                         fontSize = 13.sp,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1
                     )
                 }

@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -326,6 +327,7 @@ private fun TopSenderRow(sender: TopSenderUi, maxSent: Int) {
                 sender.name.ifEmpty { "…" },
                 fontSize = 14.sp,
                 modifier = Modifier.weight(1f),
+                overflow = TextOverflow.Ellipsis,
                 maxLines = 1
             )
             Text(

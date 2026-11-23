@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.net.Uri
@@ -435,6 +436,7 @@ fun WebAppScreen(session: WebAppSession, onClose: () -> Unit) {
                 color = palette.actionBarTitle,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
+                overflow = TextOverflow.Ellipsis,
                 maxLines = 1,
                 modifier = Modifier.weight(1f)
             )
@@ -689,7 +691,7 @@ private fun WebAppNativeButton(
                 strokeWidth = 2.dp
             )
         } else {
-            Text(state.text, fontSize = 15.sp, maxLines = 1)
+            Text(state.text, fontSize = 15.sp, overflow = TextOverflow.Ellipsis, maxLines = 1)
         }
     }
 }

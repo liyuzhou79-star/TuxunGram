@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -278,11 +280,18 @@ private fun IvBlockView(block: IvBlock) {
                 .background(MaterialTheme.colorScheme.outlineVariant)
         )
         "quote", "pullquote" -> {
-            Row(modifier = Modifier.fillMaxWidth()) {
+            // Accent bar stretches with the text (v0.9.41,
+            // H2) — was a fixed 48.dp, same fix as the
+            // rich-message bubble renderer.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
+            ) {
                 Box(
                     modifier = Modifier
                         .width(3.dp)
-                        .height(48.dp)
+                        .fillMaxHeight()
                         .background(
                             MaterialTheme.colorScheme.primary,
                             RoundedCornerShape(2.dp)

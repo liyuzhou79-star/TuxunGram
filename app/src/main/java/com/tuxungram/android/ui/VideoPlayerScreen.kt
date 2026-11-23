@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import android.widget.VideoView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -131,6 +132,7 @@ fun VideoPlayerScreen(path: String, title: String, onClose: () -> Unit) {
                     title.ifEmpty { "视频" },
                     color = Color.White,
                     fontSize = 15.sp,
+                    overflow = TextOverflow.Ellipsis,
                     maxLines = 1
                 )
             }

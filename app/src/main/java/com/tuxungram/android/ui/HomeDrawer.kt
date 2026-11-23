@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -132,6 +133,7 @@ fun HomeDrawerContent(
                         color = palette.textPrimary,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1
                     )
                     if (me.phone.isNotEmpty()) {
@@ -139,6 +141,7 @@ fun HomeDrawerContent(
                             "+${me.phone}",
                             color = palette.textSecondary,
                             fontSize = 14.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     }
@@ -147,6 +150,7 @@ fun HomeDrawerContent(
                             "@${me.username}",
                             color = palette.textSecondary,
                             fontSize = 13.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     }
@@ -243,6 +247,7 @@ fun HomeDrawerContent(
                             label,
                             color = palette.textPrimary,
                             fontSize = 15.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1,
                             modifier = Modifier.weight(1f, fill = false)
                         )

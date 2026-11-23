@@ -1,6 +1,7 @@
 package com.tuxungram.android.ui
 
 
+import androidx.compose.ui.text.style.TextOverflow
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -164,12 +165,14 @@ fun SavedMessagesRow(onClick: () -> Unit) {
                 "收藏",
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 16.sp,
+                overflow = TextOverflow.Ellipsis,
                 maxLines = 1
             )
             Text(
                 "发给自己的消息和文件",
                 color = Color.Gray,
                 fontSize = 13.sp,
+                overflow = TextOverflow.Ellipsis,
                 maxLines = 1
             )
         }
@@ -465,6 +468,7 @@ fun ChatListScreen(
                     color = topPalette.actionBarTitle,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Medium,
+                    overflow = TextOverflow.Ellipsis,
                     maxLines = 1
                 )
                 Spacer(Modifier.weight(1f))
@@ -959,6 +963,7 @@ fun ChatListScreen(
                     Text(
                         "发动态",
                         fontSize = 11.sp,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1,
                         modifier = Modifier.width(60.dp)
                     )
@@ -1009,6 +1014,7 @@ fun ChatListScreen(
                         Text(
                             item?.title ?: "",
                             fontSize = 11.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1,
                             modifier = Modifier.width(60.dp)
                         )
@@ -1171,6 +1177,7 @@ fun ArchiveEntryRow(unread: Int, onClick: () -> Unit) {
             color = palette.textPrimary,
             fontWeight = FontWeight.SemiBold,
             fontSize = 17.sp,
+            overflow = TextOverflow.Ellipsis,
             maxLines = 1,
             modifier = Modifier.weight(1f, fill = false)
         )
@@ -1213,6 +1220,7 @@ fun SearchHitRow(hit: SearchHit, onClick: () -> Unit) {
                 hit.chatTitle.ifEmpty { "对话" },
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 14.sp,
+                overflow = TextOverflow.Ellipsis,
                 maxLines = 1,
                 modifier = Modifier.weight(1f, fill = false)
             )
@@ -1522,6 +1530,7 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                     color = palette.textPrimary,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 17.sp,
+                    overflow = TextOverflow.Ellipsis,
                     maxLines = 1,
                     modifier = Modifier.weight(1f, fill = false)
                 )
@@ -1573,12 +1582,14 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                         // chats_draft (v0.9.17, X3 recalibration).
                         color = palette.draftRed,
                         fontSize = 16.sp,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1
                     )
                     Text(
                         chat.draftText,
                         color = palette.textSecondary,
                         fontSize = 16.sp,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1,
                         modifier = Modifier.weight(1f)
                     )
@@ -1598,6 +1609,7 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                                 OfficialTheme.dark
                             ),
                             fontSize = 16.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1,
                             modifier = Modifier.widthIn(max = 120.dp)
                         )
@@ -1606,6 +1618,7 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit) {
                         chat.preview,
                         color = palette.textSecondary,
                         fontSize = 16.sp,
+                        overflow = TextOverflow.Ellipsis,
                         maxLines = 1,
                         modifier = Modifier.weight(1f)
                     )
@@ -2310,6 +2323,7 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                                     chat.title,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 16.sp,
+                                    overflow = TextOverflow.Ellipsis,
                                     maxLines = 1,
                                     modifier = Modifier.weight(1f, fill = false)
                                 )
@@ -2333,12 +2347,14 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                                         "草稿：",
                                         color = Color(0xFFC62828),
                                         fontSize = 14.sp,
+                                        overflow = TextOverflow.Ellipsis,
                                         maxLines = 1
                                     )
                                     Text(
                                         chat.draftText,
                                         color = Color.Gray,
                                         fontSize = 14.sp,
+                                        overflow = TextOverflow.Ellipsis,
                                         maxLines = 1
                                     )
                                 } else {
@@ -2356,6 +2372,7 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                                                 OfficialTheme.dark
                                             ),
                                             fontSize = 14.sp,
+                                            overflow = TextOverflow.Ellipsis,
                                             maxLines = 1,
                                             modifier = Modifier.widthIn(
                                                 max = 110.dp
@@ -2366,6 +2383,7 @@ fun ArchiveScreen(onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
                                         chat.preview,
                                         color = Color.Gray,
                                         fontSize = 14.sp,
+                                        overflow = TextOverflow.Ellipsis,
                                         maxLines = 1
                                     )
                                 }
@@ -2494,6 +2512,7 @@ fun FolderTab(
             } else {
                 FontWeight.Normal
             },
+            overflow = TextOverflow.Ellipsis,
             maxLines = 1,
             // 12dp (v0.9.33, Z5): tab touch height lands at
             // ~47dp including the underline, up from ~43dp.
@@ -2632,7 +2651,7 @@ fun FolderEditorDialog(
                                     }
                                 }
                             )
-                            Text(chat.title, fontSize = 14.sp, maxLines = 1)
+                            Text(chat.title, fontSize = 14.sp, overflow = TextOverflow.Ellipsis, maxLines = 1)
                         }
                     }
                 }

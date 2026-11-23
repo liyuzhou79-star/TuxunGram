@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
@@ -358,6 +359,7 @@ fun AddedReactionsDialog(onDismiss: () -> Unit) {
                                     Text(
                                         row.name.ifEmpty { "…" },
                                         fontSize = 15.sp,
+                                        overflow = TextOverflow.Ellipsis,
                                         maxLines = 1
                                     )
                                     if (row.date > 0) {

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -209,7 +210,11 @@ fun LockScreen() {
                 )
             }
         }
-        Box(modifier = Modifier.height(28.dp)) {
+        // Minimum height only (v0.9.41, H2): at a 1.3x
+        // system font the error line can wrap to two
+        // lines, and the old fixed 28.dp clipped the
+        // second one.
+        Box(modifier = Modifier.heightIn(min = 28.dp)) {
             val shownError = if (lockoutLeftMs > 0L) {
                 "试错太多，请等 ${(lockoutLeftMs + 999) / 1000} 秒再试"
             } else {

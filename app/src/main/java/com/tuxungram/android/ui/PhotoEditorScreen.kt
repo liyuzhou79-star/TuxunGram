@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas as AndroidCanvas
@@ -1561,6 +1562,7 @@ fun PhotoEditorScreen(
                             }) {
                                 Text(
                                     set.title,
+                                    overflow = TextOverflow.Ellipsis,
                                     maxLines = 1,
                                     fontWeight = if (
                                         pickerSet == set.id

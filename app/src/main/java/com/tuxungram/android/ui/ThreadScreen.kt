@@ -338,6 +338,7 @@ fun SimpleMessageBubble(
                                     palette.inTime
                                 },
                                 fontSize = 11.sp,
+                                overflow = TextOverflow.Ellipsis,
                                 maxLines = 1,
                                 modifier = Modifier.clickable {
                                     DeepLink.pendingProfileUser
@@ -1293,7 +1294,7 @@ fun ThreadScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFFF5F5F5))
+                        .background(OfficialTheme.current().panelBg)
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1308,6 +1309,7 @@ fun ThreadScreen(
                             target.text.ifEmpty { "原消息" },
                             color = Color.Gray,
                             fontSize = 13.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                     }

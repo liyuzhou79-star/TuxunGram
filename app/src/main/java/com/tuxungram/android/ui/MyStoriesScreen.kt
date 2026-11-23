@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -422,6 +423,7 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
                             album.name,
                             fontSize = 14.5.sp,
                             modifier = Modifier.weight(1f),
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                         if (member) {
@@ -546,6 +548,7 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
                         Text(
                             row.name.ifEmpty { "…" },
                             fontSize = 15.sp,
+                            overflow = TextOverflow.Ellipsis,
                             maxLines = 1
                         )
                         Text(
@@ -821,7 +824,7 @@ private fun AlbumsSection(
                             Spacer(Modifier.height(3.dp))
                             Text(
                                 album.name,
-                                fontSize = 12.sp, maxLines = 1,
+                                fontSize = 12.sp, overflow = TextOverflow.Ellipsis, maxLines = 1,
                                 modifier = Modifier.width(64.dp),
                                 textAlign =
                                     androidx.compose.ui.text.style

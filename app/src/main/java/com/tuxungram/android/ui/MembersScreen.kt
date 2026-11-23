@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -448,6 +449,7 @@ private fun MemberRow(
             member.name.ifEmpty { "用户 ${member.userId}" },
             fontSize = 15.sp,
             modifier = Modifier.weight(1f),
+            overflow = TextOverflow.Ellipsis,
             maxLines = 1
         )
         if (member.statusText.isNotEmpty() && member.statusText != "成员") {

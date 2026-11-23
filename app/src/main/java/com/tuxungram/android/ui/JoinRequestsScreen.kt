@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -244,6 +245,7 @@ private fun JoinRequestRow(
                 request.name.ifEmpty { "…" },
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
+                overflow = TextOverflow.Ellipsis,
                 maxLines = 1
             )
             if (request.bio.isNotEmpty()) {

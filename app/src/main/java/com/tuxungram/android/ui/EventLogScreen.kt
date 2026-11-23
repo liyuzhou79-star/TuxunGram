@@ -1,5 +1,6 @@
 package com.tuxungram.android.ui
 
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -203,12 +204,16 @@ private fun EventRow(event: EventUi) {
                 event.actorName,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
+                overflow = TextOverflow.Ellipsis,
                 maxLines = 1
             )
             Text(
                 event.text,
                 fontSize = 13.sp,
-                color = Color(0xFF455A64)
+                // Theme secondary text (v0.9.41, H3): the
+                // hard-coded dark slate was barely readable
+                // on the dark surface.
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 formatEventTime(event.dateSec),
