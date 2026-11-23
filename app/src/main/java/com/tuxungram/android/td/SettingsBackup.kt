@@ -43,6 +43,19 @@ import org.json.JSONObject
  * background-service state (runtime state, not settings);
  * UiSettings.seen_version (a what's-new watermark, not a
  * preference).
+ *
+ * Security audit, round 9 (v0.9.49, T4): the export was
+ * walked field by field — it carries display preferences,
+ * wallpaper PATHS, local pins/labels (chat ids and names)
+ * and the proxy list with credentials blanked; no api
+ * credentials, session or token material exists anywhere
+ * in the file, and the export leaves only through the
+ * system document picker to a destination the user picks.
+ * Import stays all-or-nothing with every scalar range-
+ * checked; unknown fields are ignored. This round added
+ * the missing bound: collection sizes (pins, wallpapers,
+ * labels, proxies) are capped at staging, so a hostile or
+ * corrupt file cannot persist an oversized collection.
  */
 object SettingsBackup {
 
@@ -303,6 +316,15 @@ object SettingsBackup {
         if (root.has("chat_wallpapers")) {
             val obj = root.optJSONObject("chat_wallpapers")
                 ?: return "备份里的专属壁纸部分格式不对，设置没有改动。"
+            // Collection size caps (v0.9.49, T4): a backup is
+            // a handful of entries by construction. Anything
+            // past these bounds is not a settings file but a
+            // payload — reject it whole, like every other
+            // malformed section, instead of persisting an
+            // oversized collection into the prefs.
+            if (obj.length() > 1000) {
+                return "备份里的专属壁纸部分格式不对，设置没有改动。"
+            }
             val staged = HashMap<Long, String>()
             try {
                 val keys = obj.keys()
@@ -324,6 +346,12 @@ object SettingsBackup {
         if (root.has("local_pins")) {
             val arr = root.optJSONArray("local_pins")
                 ?: return "备份里的本地置顶部分格式不对，设置没有改动。"
+            // Size cap (v0.9.49, T4): the product caps local
+            // pins at 10; 100 is already far beyond any real
+            // backup.
+            if (arr.length() > 100) {
+                return "备份里的本地置顶部分格式不对，设置没有改动。"
+            }
             val staged = ArrayList<Long>()
             try {
                 for (i in 0 until arr.length()) {
@@ -343,7 +371,13 @@ object SettingsBackup {
                 ?: return "备份里的本地标签部分格式不对，设置没有改动。"
             // Structural check only; LocalLabels.replaceAll
             // drops anything it cannot parse per-entry.
-            if (obj.optJSONArray("labels") == null) {
+            val labelsArr = obj.optJSONArray("labels")
+            if (labelsArr == null) {
+                return "备份里的本地标签部分格式不对，设置没有改动。"
+            }
+            // Size cap (v0.9.49, T4), same reasoning as the
+            // local-pins cap above.
+            if (labelsArr.length() > 200) {
                 return "备份里的本地标签部分格式不对，设置没有改动。"
             }
             localLabels = obj
@@ -361,6 +395,11 @@ object SettingsBackup {
         if (root.has("proxies")) {
             val arr = root.optJSONArray("proxies")
                 ?: return "备份里的代理列表格式不对，设置没有改动。"
+            // Size cap (v0.9.49, T4), same reasoning as the
+            // local-pins cap above.
+            if (arr.length() > 200) {
+                return "备份里的代理列表格式不对，设置没有改动。"
+            }
             val staged = ArrayList<StagedProxy>()
             try {
                 for (i in 0 until arr.length()) {

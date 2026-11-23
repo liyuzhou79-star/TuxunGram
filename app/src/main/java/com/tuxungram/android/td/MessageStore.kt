@@ -711,6 +711,14 @@ object MessageStore {
     private val _draftLoaded = MutableStateFlow(false)
     val draftLoaded: StateFlow<Boolean> = _draftLoaded
 
+    /** Bumped when the open chat's draft changes on the
+     *  server side (updateChatDraftMessage — e.g. edited on
+     *  another device; v0.9.49, T2). The UI applies the new
+     *  text only while the input box holds no unsaved local
+     *  edits, so a remote draft can never clobber typing. */
+    private val _draftRevision = MutableStateFlow(0)
+    val draftRevision: StateFlow<Int> = _draftRevision
+
     @Volatile
     private var lastSavedDraft: String? = null
 
@@ -3486,6 +3494,37 @@ object MessageStore {
                 ) {
                     refreshAccess()
                 }
+            }
+            "updateChatDraftMessage" -> {
+                // Cross-device draft sync (v0.9.49, T2): the
+                // draft changed on the server (edited or
+                // cleared on another device). ChatStore already
+                // refreshes the chat-list preview from the same
+                // update; here the OPEN chat's input baseline
+                // follows. Before draftLoaded the getChat in
+                // open() is the authority, so early updates are
+                // ignored. The UI decides whether the new text
+                // may enter the box (only with no unsaved local
+                // edits) — this store never touches the input.
+                if (update.optLong("chat_id") != currentChatId) {
+                    return
+                }
+                if (!_draftLoaded.value) return
+                val content = update.optJSONObject("draft_message")
+                    ?.optJSONObject("content")
+                val newText = if (
+                    content != null &&
+                    content.optString("@type") ==
+                    "draftMessageContentText"
+                ) {
+                    content.optJSONObject("text")
+                        ?.optString("text") ?: ""
+                } else {
+                    ""
+                }
+                if (newText == _draftText.value) return
+                _draftText.value = newText
+                _draftRevision.value += 1
             }
             "updateChatReplyMarkup" -> {
                 // The live reply keyboard changed (W2). A null

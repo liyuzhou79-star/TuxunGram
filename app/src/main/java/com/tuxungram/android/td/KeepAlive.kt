@@ -240,6 +240,15 @@ object Notifier {
     private val linesByChat =
         java.util.concurrent.ConcurrentHashMap<Long, Pair<String, String>>()
 
+    /** Recent message lines per chat (v0.9.49, T6): a chat
+     *  whose notification is updated by several new messages
+     *  shows them stacked (newest last, capped at 5) instead
+     *  of only ever showing the newest one. Cleared wherever
+     *  linesByChat is cleared. */
+    private val recentLinesByChat =
+        java.util.concurrent.ConcurrentHashMap<
+            Long, java.util.ArrayDeque<String>>()
+
     /** Newest incoming message id per chat: viewMessages on it
      *  advances the chat's read position (mark-read action). */
     private val lastMessageIdByChat =
@@ -471,11 +480,34 @@ object Notifier {
         val readAction = NotificationCompat.Action.Builder(
             android.R.drawable.ic_menu_view, "标记已读", readPending
         ).build()
+        // Per-chat line stack (v0.9.49, T6): same notification
+        // id as before, so a new message UPDATES this chat's
+        // notification instead of stacking shade entries; with
+        // more than one unseen line the body becomes an inbox
+        // of the recent lines rather than just the newest.
+        val recent = recentLinesByChat.getOrPut(chatId) {
+            java.util.ArrayDeque()
+        }
+        val recentSnapshot = synchronized(recent) {
+            recent.addLast(text)
+            while (recent.size > 5) recent.removeFirst()
+            recent.toList()
+        }
+        val style = if (recentSnapshot.size > 1) {
+            NotificationCompat.InboxStyle()
+                .setBigContentTitle(title)
+                .setSummaryText("共 ${recentSnapshot.size} 条新消息")
+                .also { s ->
+                    recentSnapshot.forEach { s.addLine(it) }
+                }
+        } else {
+            NotificationCompat.BigTextStyle().bigText(text)
+        }
         val notif = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
             .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setStyle(style)
             .setAutoCancel(true)
             .setContentIntent(pending)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -548,6 +580,7 @@ object Notifier {
         } catch (t: Throwable) {
         }
         linesByChat.clear()
+        recentLinesByChat.clear()
         lastMessageIdByChat.clear()
         // Background accounts (v0.9.10): the same rule
         // extended to every slot — an account switch restarts
@@ -567,6 +600,7 @@ object Notifier {
      *  marked read, or replied to) and refresh the summary. */
     fun dismissForChat(ctx: Context, chatId: Long) {
         linesByChat.remove(chatId)
+        recentLinesByChat.remove(chatId)
         try {
             NotificationManagerCompat.from(ctx).cancel(chatId.hashCode())
         } catch (t: Throwable) {
