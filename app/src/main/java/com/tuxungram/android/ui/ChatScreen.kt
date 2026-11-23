@@ -7980,6 +7980,34 @@ fun AudioBubbleContent(msg: MsgItem) {
                 }
             }
         }
+        if (active) {
+            // Speed chip (v0.9.52, W1): audio files ride the
+            // same VoicePlayer and the same global speed as
+            // voice notes, so the card gets the same chip the
+            // voice bubble has — one speed choice everywhere.
+            val speed by UiSettings.voiceSpeed.collectAsState()
+            Spacer(Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .background(
+                        if (msg.outgoing) {
+                            Color.White.copy(alpha = 0.20f)
+                        } else {
+                            Color.Black.copy(alpha = 0.07f)
+                        },
+                        RoundedCornerShape(8.dp)
+                    )
+                    .clickable { VoicePlayer.cycleSpeed() }
+                    .padding(horizontal = 7.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    "${trimSpeed(speed)}x",
+                    color = mainText,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
         if (msg.text.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
             Text(
