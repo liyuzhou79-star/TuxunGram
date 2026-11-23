@@ -395,9 +395,10 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
             )
             Spacer(Modifier.height(4.dp))
             if (albums.isEmpty()) {
-                Text(
-                    "还没有相册。回列表顶部可以新建一个，把动态分门别类放好。",
-                    fontSize = 13.5.sp, color = Color.Gray
+                EmptyStateMini(
+                    icon = ImageIcon,
+                    title = "还没有相册",
+                    subtitle = "回列表顶部可以新建一个，把动态分门别类放好。"
                 )
             } else if (!story.canBeAddedToAlbum &&
                 story.albumIds.isEmpty()
@@ -697,12 +698,11 @@ private fun AlbumsSection(
             }
         }
         if (albums.isEmpty()) {
-            Text(
-                "还没有相册。建一个，把发过的动态按主题收好，别人看你的资料页时能按相册翻。",
-                fontSize = 13.sp, color = Color.Gray,
-                modifier = Modifier.padding(
-                    start = 16.dp, end = 16.dp, bottom = 8.dp
-                )
+            EmptyStateMini(
+                icon = ImageIcon,
+                title = "还没有相册",
+                subtitle = "建一个，把发过的动态按主题收好，" +
+                    "别人看你的资料页时能按相册翻。"
             )
         } else {
             LazyRow(

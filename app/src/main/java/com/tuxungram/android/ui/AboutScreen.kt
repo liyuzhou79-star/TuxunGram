@@ -84,13 +84,14 @@ fun AboutScreen(onBack: () -> Unit) {
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(36.dp))
+            Spacer(Modifier.height(40.dp))
             Text(
                 "Tuxun",
                 fontSize = 34.sp, fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.5.sp,
                 color = palette.textPrimary
             )
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(28.dp))
             Image(
                 painter = painterResource(R.drawable.about_support_qr),
                 contentDescription = "支持我们",
@@ -98,31 +99,54 @@ fun AboutScreen(onBack: () -> Unit) {
                     .width(280.dp)
                     .clip(RoundedCornerShape(12.dp))
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(16.dp))
             Text(
                 "-支持我们-",
                 fontSize = 15.sp,
+                letterSpacing = 1.sp,
                 color = palette.textSecondary
             )
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(36.dp))
+            // Info lines (spacing / type polish only,
+            // v0.9.46): the layout is the owner's own —
+            // same order, same lines — but each line now
+            // reads label (secondary) + value (primary)
+            // the way the Github line already did, so the
+            // three lines share one hierarchy.
             Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "版本号：${BuildConfig.VERSION_NAME}",
-                    fontSize = 15.sp,
-                    color = palette.textPrimary
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "我们的作者：LZQ",
-                    fontSize = 15.sp,
-                    color = palette.textPrimary
-                )
-                Spacer(Modifier.height(10.dp))
+                Row {
+                    Text(
+                        "版本号：",
+                        fontSize = 15.sp,
+                        color = palette.textSecondary
+                    )
+                    Text(
+                        BuildConfig.VERSION_NAME,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = palette.textPrimary
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Row {
+                    Text(
+                        "我们的作者：",
+                        fontSize = 15.sp,
+                        color = palette.textSecondary
+                    )
+                    Text(
+                        "LZQ",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = palette.textPrimary
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
                 Row {
                     Text(
                         "Github：",
                         fontSize = 15.sp,
-                        color = palette.textPrimary
+                        color = palette.textSecondary
                     )
                     Text(
                         "https://github.com/liyuzhou79-star/TuxunGram",

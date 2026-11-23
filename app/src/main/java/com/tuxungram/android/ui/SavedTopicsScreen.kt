@@ -257,7 +257,11 @@ private fun SavedTopicHistoryScreen(
                 Text("正在加载…", color = Color.Gray)
             }
             history.isEmpty() -> CenterColumn {
-                Text("这个话题里还没有消息。", color = Color.Gray)
+                EmptyStateMini(
+                    icon = ChatBubbleIcon,
+                    title = "这个话题里还没有消息",
+                    subtitle = "从这个对话收藏过来的消息会显示在这里。"
+                )
             }
             else -> {
                 LazyColumn(

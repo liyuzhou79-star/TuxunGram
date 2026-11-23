@@ -1332,7 +1332,11 @@ fun ThreadScreen(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                Text("还没有评论，来发第一条", color = Color.Gray)
+                EmptyStateMini(
+                    icon = ChatBubbleIcon,
+                    title = "还没有评论",
+                    subtitle = "来发第一条评论吧。"
+                )
             }
         } else {
             // Run tails for the bubbles below (v0.9.18, Y3).
@@ -1792,15 +1796,26 @@ fun TagSearchPanel(
                     .fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    if (exhausted) {
-                        "这里还没有带这个标签的消息"
-                    } else {
-                        "正在搜索…"
-                    },
-                    color = Color.Gray,
-                    fontSize = 14.sp
-                )
+                if (exhausted) {
+                    EmptyState(
+                        icon = SearchIcon,
+                        title = "这里还没有带这个标签的消息",
+                        subtitle = "等这个范围里有人用上这个标签，" +
+                            "消息就会出现在这里。"
+                    )
+                } else {
+                    Column(
+                        horizontalAlignment =
+                            Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "正在搜索…",
+                            color = Color.Gray, fontSize = 14.sp
+                        )
+                    }
+                }
             }
         } else {
             LazyColumn(

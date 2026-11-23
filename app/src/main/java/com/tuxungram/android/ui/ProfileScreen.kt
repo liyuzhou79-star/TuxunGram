@@ -1440,76 +1440,120 @@ fun ProfileScreen(
                                     fontSize = 13.sp, color = Color.Gray
                                 )
                                 else -> {
-                                    Text(
-                                        "当前等级 ${st.level} 级 · " +
-                                            "已有 ${st.boostCount} 次助力",
-                                        fontSize = 14.sp
-                                    )
-                                    if (st.giftCodeBoostCount > 0) {
-                                        Text(
-                                            "其中 ${st.giftCodeBoostCount} 次" +
-                                                "来自礼物码和赠送活动。",
-                                            fontSize = 12.sp,
-                                            color = Color.Gray,
-                                            modifier = Modifier
-                                                .padding(top = 2.dp)
-                                        )
-                                    }
-                                    if (st.nextLevelBoostCount > 0) {
-                                        val span = st.nextLevelBoostCount -
-                                            st.currentLevelBoostCount
-                                        val done = st.boostCount -
-                                            st.currentLevelBoostCount
-                                        val frac = if (span > 0) {
-                                            (done.toFloat() / span)
-                                                .coerceIn(0f, 1f)
+                                    // Level ring (v0.9.46):
+                                    // the level as a ring —
+                                    // its arc is the way
+                                    // through the current
+                                    // level toward the next,
+                                    // the level number sits
+                                    // in the middle, and the
+                                    // counts ride alongside
+                                    // as captions. Replaces
+                                    // the single thin bar
+                                    // this section used to
+                                    // show under the counts.
+                                    val frac =
+                                        if (st.nextLevelBoostCount > 0) {
+                                            val span =
+                                                st.nextLevelBoostCount -
+                                                    st.currentLevelBoostCount
+                                            val done =
+                                                st.boostCount -
+                                                    st.currentLevelBoostCount
+                                            if (span > 0) {
+                                                (done.toFloat() /
+                                                    span)
+                                                    .coerceIn(0f, 1f)
+                                            } else {
+                                                0f
+                                            }
                                         } else {
-                                            0f
+                                            1f
                                         }
-                                        Box(
+                                    Row(
+                                        verticalAlignment =
+                                            Alignment.CenterVertically
+                                    ) {
+                                        ProgressRing(
+                                            fraction = frac,
                                             modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(top = 8.dp)
-                                                .height(8.dp)
-                                                .background(
-                                                    // Theme track
-                                                    // (v0.9.41, H3):
-                                                    // the hard-coded
-                                                    // light gray was
-                                                    // a bright bar in
-                                                    // dark mode.
-                                                    MaterialTheme
-                                                        .colorScheme
-                                                        .surfaceVariant,
-                                                    RoundedCornerShape(4.dp)
-                                                )
+                                                .size(76.dp),
+                                            strokeWidthDp = 8f,
+                                            arcColor =
+                                                profilePalette.accent
                                         ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth(frac)
-                                                    .height(8.dp)
-                                                    .background(
-                                                        profilePalette.accent,
-                                                        RoundedCornerShape(4.dp)
-                                                    )
-                                            )
+                                            Column(
+                                                horizontalAlignment =
+                                                    Alignment
+                                                        .CenterHorizontally
+                                            ) {
+                                                Text(
+                                                    "${st.level}",
+                                                    fontSize = 20.sp,
+                                                    fontWeight =
+                                                        FontWeight
+                                                            .Bold
+                                                )
+                                                Text(
+                                                    "级",
+                                                    fontSize = 10.sp,
+                                                    color = Color.Gray
+                                                )
+                                            }
                                         }
-                                        Text(
-                                            "距离 ${st.level + 1} 级还差 " +
-                                                "${st.nextLevelBoostCount - st.boostCount} 次助力。",
-                                            fontSize = 12.sp,
-                                            color = Color.Gray,
-                                            modifier = Modifier
-                                                .padding(top = 4.dp)
-                                        )
-                                    } else {
-                                        Text(
-                                            "已经是最高等级了。",
-                                            fontSize = 12.sp,
-                                            color = Color.Gray,
-                                            modifier = Modifier
-                                                .padding(top = 4.dp)
-                                        )
+                                        Spacer(Modifier.width(14.dp))
+                                        Column {
+                                            Text(
+                                                "已有 ${st.boostCount} 次助力",
+                                                fontSize = 14.5.sp,
+                                                fontWeight =
+                                                    FontWeight
+                                                        .SemiBold
+                                            )
+                                            if (st
+                                                    .nextLevelBoostCount > 0
+                                            ) {
+                                                Text(
+                                                    "距离 " +
+                                                        "${st.level + 1} 级还差 " +
+                                                        "${st.nextLevelBoostCount - st.boostCount} 次助力。",
+                                                    fontSize = 12.5.sp,
+                                                    color = Color.Gray,
+                                                    modifier =
+                                                        Modifier
+                                                            .padding(
+                                                                top = 3.dp
+                                                            )
+                                                )
+                                            } else {
+                                                Text(
+                                                    "已经是最高等级了。",
+                                                    fontSize = 12.5.sp,
+                                                    color = Color.Gray,
+                                                    modifier =
+                                                        Modifier
+                                                            .padding(
+                                                                top = 3.dp
+                                                            )
+                                                )
+                                            }
+                                            if (st
+                                                    .giftCodeBoostCount > 0
+                                            ) {
+                                                Text(
+                                                    "其中 " +
+                                                        "${st.giftCodeBoostCount} 次" +
+                                                        "来自礼物码和赠送活动。",
+                                                    fontSize = 12.sp,
+                                                    color = Color.Gray,
+                                                    modifier =
+                                                        Modifier
+                                                            .padding(
+                                                                top = 2.dp
+                                                            )
+                                                )
+                                            }
+                                        }
                                     }
                                     if (st.premiumMemberCount > 0) {
                                         Text(

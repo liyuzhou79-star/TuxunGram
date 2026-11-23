@@ -313,6 +313,7 @@ fun AccessDockBar(
     val palette = OfficialTheme.current()
     @Composable
     fun bar(
+        icon: androidx.compose.ui.graphics.vector.ImageVector,
         title: String,
         sub: String = "",
         actionLabel: String? = null,
@@ -325,6 +326,26 @@ fun AccessDockBar(
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Leading icon disc (v0.9.46): every dock state
+            // leads with its glyph on a soft accent disc, so
+            // the bar reads as a finished component instead
+            // of two lines of text floating on the panel.
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(
+                        palette.accent.copy(alpha = 0.12f),
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon, contentDescription = null,
+                    tint = palette.accent,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     title,
@@ -348,6 +369,11 @@ fun AccessDockBar(
     return when (access.kind) {
         com.tuxungram.android.td.ChatAccessKind.JOINABLE -> {
             bar(
+                icon = if (access.isChannel) {
+                    MegaphoneIcon
+                } else {
+                    PeopleIcon
+                },
                 title = if (access.isChannel) {
                     "你还没订阅这个频道"
                 } else {
@@ -365,6 +391,7 @@ fun AccessDockBar(
         }
         com.tuxungram.android.td.ChatAccessKind.JOIN_REQUESTED -> {
             bar(
+                icon = ClockIcon,
                 title = "已申请加入，等待管理员批准",
                 sub = "通过后就能查看和发言",
                 actionLabel = "取消申请",
@@ -374,6 +401,7 @@ fun AccessDockBar(
         }
         com.tuxungram.android.td.ChatAccessKind.NO_SEND_ALL_MUTED -> {
             bar(
+                icon = MuteBellIcon,
                 title = "此群组不能发",
                 sub = "管理员已禁止成员发言"
             )
@@ -381,6 +409,7 @@ fun AccessDockBar(
         }
         com.tuxungram.android.td.ChatAccessKind.NO_SEND_PERSONAL -> {
             bar(
+                icon = MuteBellIcon,
                 title = "你已被禁言",
                 sub = if (access.untilSec > 0) {
                     "到 ${formatViewDate(access.untilSec)} 解禁"
@@ -392,6 +421,7 @@ fun AccessDockBar(
         }
         com.tuxungram.android.td.ChatAccessKind.NO_SEND_BANNED -> {
             bar(
+                icon = BlockIcon,
                 title = "你已被移出这个群组",
                 sub = if (access.untilSec > 0) {
                     "到 ${formatViewDate(access.untilSec)} 后可重新申请加入"
@@ -403,6 +433,7 @@ fun AccessDockBar(
         }
         com.tuxungram.android.td.ChatAccessKind.NO_SEND_CHANNEL -> {
             bar(
+                icon = MegaphoneIcon,
                 title = "你已订阅这个频道",
                 sub = "只有管理员能发消息"
             )
@@ -10051,10 +10082,10 @@ private fun MediaPanel(
             }
             else -> {
                 if (animations.isEmpty()) {
-                    Text(
-                        "还没有保存的 GIF。在 Telegram 里存过 GIF 后会出现在这里。",
-                        color = Color.Gray, fontSize = 13.sp,
-                        modifier = Modifier.padding(16.dp)
+                    EmptyStateMini(
+                        icon = ImageIcon,
+                        title = "还没有保存的 GIF",
+                        subtitle = "在 Telegram 里存过 GIF 后会出现在这里。"
                     )
                 } else {
                     LazyVerticalGrid(

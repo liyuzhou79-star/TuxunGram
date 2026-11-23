@@ -367,14 +367,18 @@ fun SettingsScreen(
                         .height(300.dp)
                         .verticalScroll(crashScroll)
                 ) {
-                    Text(
-                        if (newest != null) {
-                            CrashLog.read(newest)
-                        } else {
-                            "没有记录。"
-                        },
-                        fontSize = 12.sp
-                    )
+                    if (newest != null) {
+                        Text(
+                            CrashLog.read(newest),
+                            fontSize = 12.sp
+                        )
+                    } else {
+                        EmptyStateMini(
+                            icon = ShieldIcon,
+                            title = "没有崩溃记录",
+                            subtitle = "这是好事——说明最近没有闪退过。"
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -576,9 +580,10 @@ fun SettingsScreen(
         )
         Spacer(Modifier.height(8.dp))
         if (proxyEntries.isEmpty()) {
-            Text(
-                "还没有代理，点下面添加一个。",
-                color = Color.Gray, fontSize = 13.sp
+            EmptyStateMini(
+                icon = GlobeIcon,
+                title = "还没有代理",
+                subtitle = "点下面添加一个，连不上时可以切着用。"
             )
         }
         for ((entryIndex, entry) in proxyEntries.withIndex()) {
@@ -1897,6 +1902,254 @@ fun SettingsScreen(
                     Text(
                         "下载的文件", fontSize = 11.sp,
                         color = Color.Gray
+                    )
+                }
+            }
+        }
+        // Per-chat breakdown (v0.9.46): TDLib's own
+        // accounting of the file cache — composition by
+        // file type as a stacked bar with a legend, then
+        // the largest chats with avatars and their own
+        // bars. Loaded lazily alongside the numbers above;
+        // the call can take a while on a big cache, so it
+        // carries its own loading / retry lines and never
+        // blocks the rest of the section.
+        SettingsDivider()
+        val breakdownState by com.tuxungram.android.td
+            .StorageStore.breakdownState.collectAsState()
+        val breakdown by com.tuxungram.android.td
+            .StorageStore.breakdown.collectAsState()
+        LaunchedEffect(Unit) {
+            com.tuxungram.android.td.StorageStore.loadBreakdown()
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 10.dp)
+        ) {
+            Icon(
+                StorageIcon, contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "各对话占用", fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        when (breakdownState) {
+            1 -> Text(
+                "正在统计…", color = Color.Gray, fontSize = 13.sp,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+            3 -> Text(
+                "这次没统计出来，点这里重试。",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .clickable {
+                        com.tuxungram.android.td.StorageStore
+                            .loadBreakdown()
+                    }
+                    .padding(top = 6.dp)
+            )
+            2 -> {
+                val bd = breakdown
+                if (bd == null || bd.byChat.isEmpty()) {
+                    Text(
+                        "还没有哪个对话占着下载缓存。",
+                        color = Color.Gray, fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                } else {
+                    val typeTotal = bd.byType.sumOf { it.second }
+                    if (bd.byType.size > 1 && typeTotal > 0) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(10.dp)
+                                .clip(RoundedCornerShape(5.dp))
+                                .background(
+                                    MaterialTheme.colorScheme
+                                        .surfaceVariant
+                                )
+                        ) {
+                            bd.byType.forEachIndexed {
+                                    index, pair ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(
+                                            pair.second.toFloat()
+                                        )
+                                        .height(10.dp)
+                                        .background(
+                                            TILE_PALETTE[
+                                                index %
+                                                    TILE_PALETTE.size
+                                            ]
+                                        )
+                                )
+                            }
+                        }
+                        for ((index, pair) in
+                            bd.byType.withIndex()) {
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(
+                                            TILE_PALETTE[
+                                                index %
+                                                    TILE_PALETTE.size
+                                            ],
+                                            androidx.compose
+                                                .foundation.shape
+                                                .CircleShape
+                                        )
+                                )
+                                Spacer(Modifier.width(7.dp))
+                                Text(pair.first, fontSize = 12.sp)
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    "${pair.second * 100 / typeTotal}%" +
+                                        " · " +
+                                        formatBytes(pair.second),
+                                    fontSize = 12.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                        }
+                    }
+                    val topChats = bd.byChat.take(8)
+                    val maxChatSize = topChats.maxOfOrNull {
+                        it.sizeBytes
+                    }?.coerceAtLeast(1L) ?: 1L
+                    Spacer(Modifier.height(10.dp))
+                    for (cs in topChats) {
+                        val item = com.tuxungram.android.td
+                            .ChatStore.itemOf(cs.chatId)
+                        Row(
+                            verticalAlignment =
+                                Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp)
+                        ) {
+                            val photo = item?.photoPath
+                            if (photo != null) {
+                                AvatarImage(
+                                    path = photo, sizeDp = 36
+                                )
+                            } else {
+                                val pair = OfficialTheme
+                                    .avatarColors(
+                                        cs.chatId,
+                                        OfficialTheme.dark
+                                    )
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .background(
+                                            androidx.compose.ui
+                                                .graphics.Brush
+                                                .verticalGradient(
+                                                    listOf(
+                                                        pair.first,
+                                                        pair.second
+                                                    )
+                                                ),
+                                            androidx.compose
+                                                .foundation.shape
+                                                .CircleShape
+                                        ),
+                                    contentAlignment =
+                                        Alignment.Center
+                                ) {
+                                    Text(
+                                        (item?.title ?: "")
+                                            .trim()
+                                            .firstOrNull()
+                                            ?.toString() ?: "?",
+                                        color = Color.White,
+                                        fontWeight =
+                                            FontWeight.Bold,
+                                        fontSize = 15.sp
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    item?.title ?: "对话",
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = androidx.compose
+                                        .ui.text.style.TextOverflow
+                                        .Ellipsis
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(
+                                            RoundedCornerShape(2.dp)
+                                        )
+                                        .background(
+                                            MaterialTheme
+                                                .colorScheme
+                                                .surfaceVariant
+                                        )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(
+                                                (cs.sizeBytes
+                                                    .toFloat() /
+                                                    maxChatSize)
+                                                    .coerceIn(0f, 1f)
+                                            )
+                                            .height(4.dp)
+                                            .background(
+                                                MaterialTheme
+                                                    .colorScheme
+                                                    .primary,
+                                                RoundedCornerShape(
+                                                    2.dp
+                                                )
+                                            )
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                formatBytes(cs.sizeBytes),
+                                fontSize = 12.5.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+                    if (bd.chatCount > topChats.size) {
+                        Text(
+                            "只列占用最大的 ${topChats.size} 个对话。",
+                            color = Color.Gray, fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    Text(
+                        "这一段按 Telegram 核心的统计口径，" +
+                            "只算下载到本机的文件缓存；" +
+                            "和上面按文件夹量的口径不同，" +
+                            "数字对不上是正常的。",
+                        color = Color.Gray, fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 6.dp)
                     )
                 }
             }

@@ -67,6 +67,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -1902,6 +1903,27 @@ fun FolderPickerDialog(chatId: Long, onDismiss: () -> Unit) {
     )
 }
 
+/** Label colour disc (v0.9.46): the label's colour as a
+ *  soft disc with a solid core, leading the label rows in
+ *  the picker and manager dialogs — replacing the bare
+ *  10 dp dot they used to lead with. */
+@Composable
+private fun LabelDisc(colorIndex: Int) {
+    val color = Color(LocalLabels.PALETTE[colorIndex])
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .background(color.copy(alpha = 0.16f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(12.dp)
+                .background(color, CircleShape)
+        )
+    }
+}
+
 /** Local label picker (v0.9.25, R5): checkboxes for every
  *  label plus create/delete. Everything here is local-only —
  *  the dialog says so in plain words, because Telegram's own
@@ -1937,9 +1959,10 @@ fun LabelPickerDialog(chatId: Long, onDismiss: () -> Unit) {
                 )
                 Spacer(Modifier.height(8.dp))
                 if (labels.isEmpty()) {
-                    Text(
-                        "还没有标签，在下面建一个。",
-                        fontSize = 13.sp, color = Color.Gray
+                    EmptyStateMini(
+                        icon = PaletteIcon,
+                        title = "还没有标签",
+                        subtitle = "在下面建一个，就能给对话分类了。"
                     )
                 }
                 for (label in labels) {
@@ -1959,19 +1982,8 @@ fun LabelPickerDialog(chatId: Long, onDismiss: () -> Unit) {
                                 LocalLabels.toggle(chatId, label.id)
                             }
                         )
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .background(
-                                    Color(
-                                        LocalLabels.PALETTE[
-                                            label.colorIndex
-                                        ]
-                                    ),
-                                    CircleShape
-                                )
-                        )
-                        Spacer(Modifier.width(8.dp))
+                        LabelDisc(label.colorIndex)
+                        Spacer(Modifier.width(10.dp))
                         if (renamingId == label.id) {
                             OutlinedTextField(
                                 value = renameText,
@@ -1991,21 +2003,35 @@ fun LabelPickerDialog(chatId: Long, onDismiss: () -> Unit) {
                                 Text("保存", fontSize = 12.sp)
                             }
                         } else {
-                            Text(
-                                label.name, fontSize = 14.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(onClick = {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(label.name, fontSize = 14.5.sp)
+                                Text(
+                                    "${assignments.values.count { label.id in it }} 个对话",
+                                    fontSize = 11.5.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                            IconButton(onClick = {
                                 renamingId = label.id
                                 renameText = label.name
                             }) {
-                                Text("改名", fontSize = 12.sp)
+                                Icon(
+                                    Icons.Filled.Edit,
+                                    contentDescription = "改名",
+                                    tint = Color.Gray,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
-                        TextButton(onClick = {
+                        IconButton(onClick = {
                             LocalLabels.delete(label.id)
                         }) {
-                            Text("删除", fontSize = 12.sp)
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = "删除",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 }
@@ -2057,6 +2083,7 @@ fun LabelPickerDialog(chatId: Long, onDismiss: () -> Unit) {
 @Composable
 fun LabelManageDialog(onDismiss: () -> Unit) {
     val labels by LocalLabels.labels.collectAsState()
+    val assignments by LocalLabels.assignments.collectAsState()
     var renamingId by remember { mutableStateOf(0L) }
     var renameText by remember { mutableStateOf("") }
     AlertDialog(
@@ -2078,9 +2105,10 @@ fun LabelManageDialog(onDismiss: () -> Unit) {
                 )
                 Spacer(Modifier.height(8.dp))
                 if (labels.isEmpty()) {
-                    Text(
-                        "还没有标签。长按任意对话，选「标签（本地）」可以新建。",
-                        fontSize = 13.sp, color = Color.Gray
+                    EmptyStateMini(
+                        icon = PaletteIcon,
+                        title = "还没有标签",
+                        subtitle = "长按任意对话，选「标签（本地）」可以新建。"
                     )
                 }
                 for (label in labels) {
@@ -2090,19 +2118,8 @@ fun LabelManageDialog(onDismiss: () -> Unit) {
                             .fillMaxWidth()
                             .padding(vertical = 4.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .background(
-                                    Color(
-                                        LocalLabels.PALETTE[
-                                            label.colorIndex
-                                        ]
-                                    ),
-                                    CircleShape
-                                )
-                        )
-                        Spacer(Modifier.width(8.dp))
+                        LabelDisc(label.colorIndex)
+                        Spacer(Modifier.width(10.dp))
                         if (renamingId == label.id) {
                             OutlinedTextField(
                                 value = renameText,
@@ -2122,21 +2139,35 @@ fun LabelManageDialog(onDismiss: () -> Unit) {
                                 Text("保存", fontSize = 12.sp)
                             }
                         } else {
-                            Text(
-                                label.name, fontSize = 14.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(onClick = {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(label.name, fontSize = 14.5.sp)
+                                Text(
+                                    "${assignments.values.count { label.id in it }} 个对话",
+                                    fontSize = 11.5.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                            IconButton(onClick = {
                                 renamingId = label.id
                                 renameText = label.name
                             }) {
-                                Text("改名", fontSize = 12.sp)
+                                Icon(
+                                    Icons.Filled.Edit,
+                                    contentDescription = "改名",
+                                    tint = Color.Gray,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
-                        TextButton(onClick = {
+                        IconButton(onClick = {
                             LocalLabels.delete(label.id)
                         }) {
-                            Text("删除", fontSize = 12.sp)
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = "删除",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 }

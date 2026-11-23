@@ -330,17 +330,38 @@ fun ChangelogScreen(onBack: () -> Unit) {
                     Column {
                         Spacer(Modifier.height(14.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.DateRange,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
+                            // Version chip (v0.9.46): the
+                            // version number as a small
+                            // filled capsule instead of a
+                            // calendar glyph, so each entry
+                            // head reads version → title.
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        MaterialTheme.colorScheme
+                                            .primaryContainer,
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .padding(
+                                        horizontal = 8.dp,
+                                        vertical = 3.dp
+                                    )
+                            ) {
+                                Text(
+                                    release.version,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme
+                                        .colorScheme
+                                        .onPrimaryContainer
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
                             Text(
-                                "${release.version} · ${release.title}",
+                                release.title,
                                 fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
