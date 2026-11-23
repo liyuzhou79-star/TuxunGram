@@ -1,7 +1,9 @@
 package com.tuxungram.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -237,9 +239,44 @@ fun CreateChatScreen(
                                 }
                             }
                         )
-                        AvatarImage(
-                            path = contact.photoPath, sizeDp = 46
-                        )
+                        if (contact.photoPath != null) {
+                            AvatarImage(
+                                path = contact.photoPath,
+                                sizeDp = 46
+                            )
+                        } else {
+                            // Same gradient initial disc the
+                            // contacts page draws (OfficialTheme
+                            // avatar colors, v0.9.17 palette).
+                            val pair = OfficialTheme.avatarColors(
+                                contact.userId, OfficialTheme.dark
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .background(
+                                        androidx.compose.ui.graphics
+                                            .Brush.verticalGradient(
+                                                listOf(
+                                                    pair.first,
+                                                    pair.second
+                                                )
+                                            ),
+                                        androidx.compose.foundation
+                                            .shape.CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    contact.name.trim()
+                                        .firstOrNull()?.toString()
+                                        ?: "?",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(contact.name, fontSize = 16.sp)
