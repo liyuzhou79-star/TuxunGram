@@ -181,6 +181,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenSessions: () -> Unit = {},
     onOpenStickerSets: () -> Unit = {},
+    onOpenWallpapers: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
     onOpenNetworkStats: () -> Unit = {},
     onOpenEditProfile: () -> Unit = {},
@@ -1015,7 +1016,54 @@ fun SettingsScreen(
         Text("聊天背景", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
         Text(
-            "只换聊天页的底色，浅色和深色模式各有一套配好的颜色。",
+            "优先级：单个对话的专属壁纸 ＞ 全局背景图片" +
+                "（官方图库或相册自选，两者只留一个）＞ 图库" +
+                "纯色 ＞ 下面的预设纯色 ＞ 默认涂鸦背景。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenWallpapers() }
+                .padding(vertical = 10.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("官方壁纸图库", fontSize = 15.sp)
+                Text(
+                    "Telegram 官方背景和你用过的背景，设好会" +
+                        "同步到你账号的其他客户端。",
+                    color = Color.Gray, fontSize = 12.5.sp
+                )
+            }
+            Text(
+                "›", color = Color.Gray, fontSize = 18.sp
+            )
+        }
+        val chatBgFill by UiSettings.chatBgFill.collectAsState()
+        if (chatBgFill != 0L) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .background(Color(chatBgFill), CircleShape)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "当前全局背景是图库纯色",
+                    fontSize = 13.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { UiSettings.setChatBgFill(0L) }) {
+                    Text("清除")
+                }
+            }
+        }
+        Text(
+            "预设纯色（浅色和深色模式各有一套配好的颜色）：",
             color = Color.Gray, fontSize = 13.sp
         )
         val chatBg by UiSettings.chatBg.collectAsState()

@@ -174,6 +174,10 @@ fun ProfileScreen(
     var blockNotice by remember { mutableStateOf<String?>(null) }
     var deleteContactConfirm by remember { mutableStateOf(false) }
     var contactNotice by remember { mutableStateOf<String?>(null) }
+    // User note editor (v0.9.38, E2): null = closed;
+    // otherwise the draft text the dialog opened with.
+    var noteDraft by remember { mutableStateOf<String?>(null) }
+    var noteNotice by remember { mutableStateOf<String?>(null) }
     var boostExpanded by remember { mutableStateOf(false) }
     var boostSelection by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var boostNotice by remember { mutableStateOf<String?>(null) }
@@ -540,6 +544,8 @@ fun ProfileScreen(
                 p.username.isNotEmpty() ||
                 p.birthday.isNotEmpty() ||
                 p.description.isNotEmpty() ||
+                (p.userId != 0L && p.userId != me.id &&
+                    (p.note.isNotEmpty() || p.isContact)) ||
                 p.commonGroups > 0 ||
                 p.memberCount > 0 ||
                 p.adminCount > 0 ||
@@ -636,6 +642,33 @@ fun ProfileScreen(
                                 icon = Icons.Filled.Info,
                                 label = "简介",
                                 value = p.description
+                            )
+                        }
+                        if (p.userId != 0L && p.userId != me.id &&
+                            (p.note.isNotEmpty() || p.isContact)
+                        ) {
+                            // Note (v0.9.38, E2): my private
+                            // note about this user — an
+                            // annotation under its own label,
+                            // never a replacement for the
+                            // name. Tap edits it on the
+                            // server (setUserNote).
+                            ProfileInfoRow(
+                                icon = Icons.Filled.Edit,
+                                label = "备注（只有你能看到）",
+                                value = p.note.ifEmpty { "添加备注" },
+                                valueAccent = p.note.isEmpty(),
+                                onClick = { noteDraft = p.note }
+                            )
+                        }
+                        if (noteNotice != null) {
+                            Text(
+                                noteNotice!!,
+                                color = Color.Gray, fontSize = 12.5.sp,
+                                modifier = Modifier.padding(
+                                    start = 56.dp, end = 16.dp,
+                                    top = 2.dp, bottom = 6.dp
+                                )
                             )
                         }
                     }
@@ -2652,6 +2685,55 @@ fun ProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { deleteContactConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+    val noteDraftState = noteDraft
+    if (noteDraftState != null && current != null &&
+        current.userId != 0L
+    ) {
+        var text by remember(current.userId) {
+            mutableStateOf(noteDraftState)
+        }
+        AlertDialog(
+            onDismissRequest = { noteDraft = null },
+            title = { Text("备注") },
+            text = {
+                Column {
+                    Text(
+                        "写给自己看的备注，存在服务器上、只有你" +
+                            "能看到；它只是附注，不会改对方的名字。",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("比如：客户、同学…") }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = current.userId
+                    noteDraft = null
+                    ProfileStore.setUserNote(target, text) { error ->
+                        noteNotice = error
+                            ?: if (text.isBlank()) {
+                                "备注已清除。"
+                            } else {
+                                "备注已保存。"
+                            }
+                    }
+                }) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { noteDraft = null }) {
                     Text("取消")
                 }
             }

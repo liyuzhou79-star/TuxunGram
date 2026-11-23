@@ -21,6 +21,7 @@ object UiSettings {
     private const val KEY_ACCENT_MODE = "accent_mode"
     private const val KEY_CHAT_BG = "chat_bg"
     private const val KEY_CHAT_BG_IMAGE = "chat_bg_image"
+    private const val KEY_CHAT_BG_FILL = "chat_bg_fill"
     private const val KEY_CHAT_BG_PER_CHAT = "chat_bg_per_chat"
     private const val KEY_BUBBLE_STYLE = "bubble_style"
     private const val KEY_FONT_SIZE = "font_size"
@@ -114,6 +115,18 @@ object UiSettings {
     private val _chatBgImage = MutableStateFlow("")
     val chatBgImage: StateFlow<String> = _chatBgImage
 
+    /** Custom solid chat background color (v0.9.38, E1):
+     *  an ARGB long picked from the official wallpaper
+     *  gallery's fill-type backgrounds — a color none of
+     *  the six preset solids matches, so it cannot ride
+     *  the index above. 0 = unset. Priority among the
+     *  global choices (per-chat overrides sit above all
+     *  of them): picture > this fill > preset solid >
+     *  default doodle. Picture and fill are alternatives:
+     *  setting one clears the other. */
+    private val _chatBgFill = MutableStateFlow(0L)
+    val chatBgFill: StateFlow<Long> = _chatBgFill
+
     /** Per-chat wallpaper overrides (v0.9.16, W5): chat id
      *  -> local picture path, persisted as one JSON object.
      *  An override wins over the global picture and the
@@ -185,6 +198,7 @@ object UiSettings {
         val bg = prefs.getInt(KEY_CHAT_BG, 0)
         _chatBg.value = if (bg in CHAT_BG_COLORS.indices) bg else 0
         _chatBgImage.value = prefs.getString(KEY_CHAT_BG_IMAGE, "") ?: ""
+        _chatBgFill.value = prefs.getLong(KEY_CHAT_BG_FILL, 0L)
         _chatWallpapers.value = parseChatWallpapers(
             prefs.getString(KEY_CHAT_BG_PER_CHAT, "") ?: ""
         )
@@ -212,10 +226,28 @@ object UiSettings {
     }
 
     /** Set (or, with an empty path, clear) the custom chat
-     *  wallpaper picture (v0.9.4, N4). */
+     *  wallpaper picture (v0.9.4, N4). A real picture also
+     *  clears the gallery fill color (v0.9.38, E1): the
+     *  two are alternatives, and a stale fill must not
+     *  resurface when the picture is later removed. */
     fun setChatBgImage(path: String) {
         _chatBgImage.value = path
         persist { it.putString(KEY_CHAT_BG_IMAGE, path) }
+        if (path.isNotEmpty() && _chatBgFill.value != 0L) {
+            setChatBgFill(0L)
+        }
+    }
+
+    /** Set (or, with 0, clear) the gallery fill color
+     *  (v0.9.38, E1). A real color also clears the global
+     *  picture — same alternative rule as setChatBgImage. */
+    fun setChatBgFill(argb: Long) {
+        _chatBgFill.value = argb
+        persist { it.putLong(KEY_CHAT_BG_FILL, argb) }
+        if (argb != 0L && _chatBgImage.value.isNotEmpty()) {
+            _chatBgImage.value = ""
+            persist { it.putString(KEY_CHAT_BG_IMAGE, "") }
+        }
     }
 
     /** The wallpaper picture one chat actually shows

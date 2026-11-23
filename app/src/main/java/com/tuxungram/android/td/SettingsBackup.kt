@@ -61,6 +61,10 @@ object SettingsBackup {
             // Wallpaper paths only — never the picture files
             // (see the header note).
             put("chat_bg_image", UiSettings.chatBgImage.value)
+            // Gallery fill color (v0.9.38, E1): by the
+            // UiSettings invariant at most one of
+            // chat_bg_image / chat_bg_fill is set.
+            put("chat_bg_fill", UiSettings.chatBgFill.value)
             // Background keep-alive (v0.9.16, W6 audit: a
             // local setting older than the backup itself
             // that was never included).
@@ -167,6 +171,7 @@ object SettingsBackup {
         var fontSize: Int? = null
         var voiceSpeed: Float? = null
         var chatBgImage: String? = null
+        var chatBgFill: Long? = null
         var chatWallpapers: Map<Long, String>? = null
         var keepAlive: Boolean? = null
         var soundFx: Boolean? = null
@@ -238,6 +243,9 @@ object SettingsBackup {
                 }
                 if (uiObj.has("chat_bg_image")) {
                     chatBgImage = uiObj.getString("chat_bg_image")
+                }
+                if (uiObj.has("chat_bg_fill")) {
+                    chatBgFill = uiObj.getLong("chat_bg_fill")
                 }
                 if (uiObj.has("keep_alive")) {
                     keepAlive = uiObj.getBoolean("keep_alive")
@@ -392,6 +400,12 @@ object SettingsBackup {
         bubbleStyle?.let { UiSettings.setBubbleStyle(it) }
         fontSize?.let { UiSettings.setFontSize(it) }
         voiceSpeed?.let { UiSettings.setVoiceSpeed(it) }
+        // Fill before image (v0.9.38, E1): the two are
+        // alternatives in UiSettings — a non-empty image
+        // clears the fill, a real fill clears the image —
+        // and a backup carries at most one of them, so
+        // this order restores exactly what was exported.
+        chatBgFill?.let { UiSettings.setChatBgFill(it) }
         chatBgImage?.let { path ->
             // A wallpaper path is applied only when it is a
             // clear ("") or the picture is actually on this

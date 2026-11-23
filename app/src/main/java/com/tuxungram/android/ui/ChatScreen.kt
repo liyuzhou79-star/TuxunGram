@@ -2086,6 +2086,11 @@ fun ChatScreen(
         // there), else the global picture — everything below
         // keeps reading the one effective path.
         val globalBgImage by UiSettings.chatBgImage.collectAsState()
+        // Gallery fill color (v0.9.38, E1): sits between
+        // the global picture and the preset solids in the
+        // priority chain (per-chat override > picture >
+        // fill > preset solid > doodle).
+        val chatBgFill by UiSettings.chatBgFill.collectAsState()
         val chatWallpapers by UiSettings.chatWallpapers
             .collectAsState()
         val chatBgImage = remember(
@@ -2218,6 +2223,12 @@ fun ChatScreen(
                                 alpha = if (darkNow) 0.45f else 0.35f
                             )
                         )
+                )
+            } else if (chatBgFill != 0L) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(chatBgFill))
                 )
             } else if (chatBgArgb != null) {
                 Box(

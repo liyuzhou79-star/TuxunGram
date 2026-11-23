@@ -180,6 +180,7 @@ import com.tuxungram.android.ui.SharedMediaScreen
 import com.tuxungram.android.ui.SplashScreen
 import com.tuxungram.android.ui.InstantViewScreen
 import com.tuxungram.android.ui.StickerSetsScreen
+import com.tuxungram.android.ui.WallpaperScreen
 import com.tuxungram.android.ui.StoryViewerScreen
 import com.tuxungram.android.ui.ThreadScreen
 import com.tuxungram.android.ui.TransitionScreen
@@ -226,6 +227,10 @@ class MainActivity : ComponentActivity() {
         // Touch feedback (v0.9.30, W6): the vibrator holder
         // needs an application context once.
         com.tuxungram.android.td.Haptics.init(applicationContext)
+        // Wallpaper gallery (v0.9.38, E1): applied gallery
+        // pictures are copied into the app files directory.
+        com.tuxungram.android.td.BackgroundStore
+            .init(applicationContext)
         // Live-location background sharing (v0.9.30, W2):
         // watch for my live locations so the foreground
         // service can keep them updated with the app closed.
@@ -535,6 +540,10 @@ private sealed interface Route {
         override val depth = 1
     }
 
+    data object Wallpapers : Route {
+        override val depth = 1
+    }
+
     data object Downloads : Route {
         override val depth = 1
     }
@@ -653,6 +662,7 @@ private fun ReadyHost() {
     var showSessions by remember { mutableStateOf(false) }
     var showQrScan by remember { mutableStateOf(false) }
     var showStickerSets by remember { mutableStateOf(false) }
+    var showWallpapers by remember { mutableStateOf(false) }
     var showDownloads by remember { mutableStateOf(false) }
     var showNetworkStats by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
@@ -797,6 +807,7 @@ private fun ReadyHost() {
         showQrScan -> Route.QrScan
         showSessions -> Route.Sessions
         showStickerSets -> Route.StickerSets
+        showWallpapers -> Route.Wallpapers
         showDownloads -> Route.Downloads
         showNetworkStats -> Route.NetworkStats
         showArchive -> Route.Archive
@@ -890,6 +901,9 @@ private fun ReadyHost() {
                 )
                 is Route.StickerSets -> StickerSetsScreen(
                     onBack = { showStickerSets = false }
+                )
+                is Route.Wallpapers -> WallpaperScreen(
+                    onBack = { showWallpapers = false }
                 )
                 is Route.Downloads -> DownloadsScreen(
                     onBack = { showDownloads = false },
@@ -1043,6 +1057,7 @@ private fun ReadyHost() {
                             onBack = { homeTab = 0 },
                             onOpenSessions = { showSessions = true },
                             onOpenStickerSets = { showStickerSets = true },
+                            onOpenWallpapers = { showWallpapers = true },
                             onOpenDownloads = { showDownloads = true },
                             onOpenNetworkStats = {
                                 showNetworkStats = true
