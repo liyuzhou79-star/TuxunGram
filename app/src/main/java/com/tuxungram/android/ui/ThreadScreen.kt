@@ -3,7 +3,12 @@ package com.tuxungram.android.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -90,6 +95,7 @@ import com.tuxungram.android.td.asPaidPhotoItem
 import com.tuxungram.android.td.asPaidVideoItem
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.ThreadStore
+import com.tuxungram.android.td.summaryText
 import java.io.File
 
 /**
@@ -141,6 +147,12 @@ fun SimpleMessageBubble(
     // old behaviour.
     onOpenMedia: (MsgItem) -> Unit = {},
     onBotCommand: (String) -> Unit = {},
+    // Hashtag / cashtag tap (v0.9.45, P1): the hosting
+    // screen opens its topic-scoped tag search. Until
+    // this version the two simple-bubble hosts never
+    // passed it, so tags rendered highlighted but inert
+    // here (the v0.9.44 N8 downgrade this closes).
+    onHashtag: (String) -> Unit = {},
     // Checklist toggling (v0.9.30, W4): the hosting store
     // (thread / forum topic) marks tasks against its own
     // chat id; the default keeps any other caller read-only.
@@ -464,7 +476,7 @@ fun SimpleMessageBubble(
                 when (msg.kind) {
                     MsgKind.TEXT -> {
                         RichMessageText(
-                            msg, onBotCommand = onBotCommand,
+                            msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
                             fontSize = bubbleTextSize
@@ -488,7 +500,7 @@ fun SimpleMessageBubble(
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
-                            msg, onBotCommand = onBotCommand,
+                            msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
                             fontSize = bubbleTextSize
@@ -516,7 +528,7 @@ fun SimpleMessageBubble(
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
-                            msg, onBotCommand = onBotCommand,
+                            msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
                             fontSize = bubbleTextSize
@@ -537,7 +549,7 @@ fun SimpleMessageBubble(
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
-                            msg, onBotCommand = onBotCommand,
+                            msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
                             fontSize = bubbleTextSize
@@ -549,7 +561,7 @@ fun SimpleMessageBubble(
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
-                            msg, onBotCommand = onBotCommand,
+                            msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
                             fontSize = bubbleTextSize
@@ -561,7 +573,7 @@ fun SimpleMessageBubble(
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
-                            msg, onBotCommand = onBotCommand,
+                            msg, onBotCommand = onBotCommand, onHashtag = onHashtag,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
                             fontSize = bubbleTextSize
@@ -1140,7 +1152,32 @@ fun ThreadScreen(
     val threadFarFromLatest by remember {
         derivedStateOf { !threadAtBottom }
     }
+    // Tag search (v0.9.45, P1): results for the tag the
+    // user tapped in a bubble; the panel overlays the
+    // thread while the query is non-empty.
+    val tagQuery by ThreadStore.searchQuery.collectAsState()
+    val tagResults by ThreadStore.searchResults.collectAsState()
+    val tagTotal by ThreadStore.searchTotal.collectAsState()
+    val tagExhausted by ThreadStore.searchExhausted.collectAsState()
+    val threadDetached by ThreadStore.windowDetached.collectAsState()
+    // Scroll the tag-search jump target into view when
+    // its window lands (v0.9.45, P1): same locate
+    // mechanism as the main chat, plus clearing the flag
+    // so a second jump to the same message scrolls again.
+    val threadLocateId by ThreadStore.locateId.collectAsState()
+    LaunchedEffect(threadLocateId, messages.size) {
+        if (threadLocateId != 0L && messages.isNotEmpty()) {
+            val ascIndex = messages.indexOfFirst {
+                it.id == threadLocateId
+            }
+            if (ascIndex >= 0) {
+                listState.scrollToItem(messages.size - 1 - ascIndex)
+                ThreadStore.clearLocate()
+            }
+        }
+    }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1165,18 +1202,13 @@ fun ThreadScreen(
             )
             return@Column
         }
-        val editPath = editingPhotoPath
-        if (editPath != null) {
-            PhotoEditorScreen(
-                path = editPath,
-                onDone = { edited ->
-                    editingPhotoPath = null
-                    pendingPhoto = edited
-                },
-                onCancel = { editingPhotoPath = null }
-            )
-            return@Column
-        }
+        // The photo editor is an overlay at the root Box
+        // level since v0.9.45 (P2) — see the end of this
+        // composable. It used to sit here, behind the
+        // preview's early return above, which made it
+        // unreachable: the preview returns whenever a
+        // pending photo exists, and editing starts from
+        // exactly that state.
         val fileToSend = pendingFile
         if (fileToSend != null) {
             AlertDialog(
@@ -1242,50 +1274,10 @@ fun ThreadScreen(
             )
             return@Column
         }
-        // Media viewer (v0.9.32, Y6): the context is this
-        // thread's loaded window only; paging to the
-        // oldest end pulls the thread's own older pages.
-        val viewerAnchor = mediaViewer
-        if (viewerAnchor != null) {
-            // Purchased paid-media entries join the viewer
-            // as re-shaped copies (v0.9.35, B1); locked
-            // previews never enter it.
-            val mediaItems = messages.flatMap { m ->
-                when (m.kind) {
-                    MsgKind.PHOTO, MsgKind.VIDEO -> listOf(m)
-                    MsgKind.PAID_MEDIA -> m.paidMedia.mapNotNull { e ->
-                        when (e.kind) {
-                            "photo" -> m.asPaidPhotoItem(e)
-                            "video" -> m.asPaidVideoItem(e)
-                            else -> null
-                        }
-                    }
-                    else -> emptyList()
-                }
-            }
-            val album = if (viewerAnchor.mediaAlbumId != 0L) {
-                messages.filter {
-                    it.mediaAlbumId == viewerAnchor.mediaAlbumId
-                }
-            } else {
-                emptyList()
-            }
-            MediaViewerListScreen(
-                items = mediaItems,
-                anchor = viewerAnchor,
-                albumGroup = album,
-                exhausted = threadAllLoaded,
-                onLoadMore = {
-                    if (!threadAllLoaded) ThreadStore.loadOlder()
-                },
-                onClose = { mediaViewer = null },
-                onPlayVideo = { item ->
-                    mediaViewer = null
-                    videoItem = item
-                }
-            )
-            return@Column
-        }
+        // The media viewer is an overlay at the root Box
+        // level since v0.9.45 (P2) — see the end of this
+        // composable (it was a full-screen replacement
+        // here until then).
         val vItem = videoItem
         if (vItem?.filePath != null) {
             VideoPlayerScreen(
@@ -1373,6 +1365,9 @@ fun ThreadScreen(
                         onOpenVideo = { m -> videoItem = m },
                         onOpenMedia = { m -> mediaViewer = m },
                         onBotCommand = { ThreadStore.sendText(it) },
+                        onHashtag = { tag ->
+                            ThreadStore.searchByTag(tag)
+                        },
                         onToggleChecklistTask = { m, task ->
                             ThreadStore.markChecklistTask(m, task)
                         },
@@ -1385,11 +1380,20 @@ fun ThreadScreen(
                 }
             }
             ScrollToLatestButton(
-                visible = threadFarFromLatest,
+                // After a tag-search jump the window no
+                // longer reaches the newest comment
+                // (v0.9.45, P1): stay visible while detached
+                // even at the jump window's own top, and
+                // reload the window instead of scrolling.
+                visible = threadFarFromLatest || threadDetached,
                 unreadCount = 0,
                 onClick = {
-                    threadScope.launch {
-                        listState.animateScrollToItem(0)
+                    if (threadDetached) {
+                        ThreadStore.backToLatest()
+                    } else {
+                        threadScope.launch {
+                            listState.animateScrollToItem(0)
+                        }
                     }
                 },
                 modifier = Modifier
@@ -1506,6 +1510,118 @@ fun ThreadScreen(
             }
         }
     }
+    // Photo editor overlay (animated v0.9.45, P2): the
+    // Motion crossfade pair with the 0.97 scale, exactly
+    // the main chat media viewer's spec — the photo
+    // preview stays composed underneath and the editor
+    // fades back out onto it, instead of the old
+    // full-screen replacement hard cut. Moving it here
+    // also fixes its reachability (see the note where
+    // the block used to sit).
+    val editPath = editingPhotoPath
+    AnimatedVisibility(
+        visible = editPath != null,
+        enter = fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+            scaleIn(
+                initialScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_IN)
+            ),
+        exit = fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+            scaleOut(
+                targetScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_OUT)
+            )
+    ) {
+        editPath?.let { path ->
+            PhotoEditorScreen(
+                path = path,
+                onDone = { edited ->
+                    editingPhotoPath = null
+                    pendingPhoto = edited
+                },
+                onCancel = { editingPhotoPath = null }
+            )
+        }
+    }
+    // Media viewer overlay (animated v0.9.45, P2): same
+    // spec as the main chat's viewer (v0.9.44, N6), the
+    // thread left composed underneath. The context is
+    // this thread's loaded window only; paging to the
+    // oldest end pulls the thread's own older pages.
+    val viewerAnchor = mediaViewer
+    AnimatedVisibility(
+        visible = viewerAnchor != null,
+        enter = fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+            scaleIn(
+                initialScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_IN)
+            ),
+        exit = fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+            scaleOut(
+                targetScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_OUT)
+            )
+    ) {
+        viewerAnchor?.let { anchor ->
+            // Purchased paid-media entries join the viewer
+            // as re-shaped copies (v0.9.35, B1); locked
+            // previews never enter it.
+            val mediaItems = messages.flatMap { m ->
+                when (m.kind) {
+                    MsgKind.PHOTO, MsgKind.VIDEO -> listOf(m)
+                    MsgKind.PAID_MEDIA -> m.paidMedia.mapNotNull { e ->
+                        when (e.kind) {
+                            "photo" -> m.asPaidPhotoItem(e)
+                            "video" -> m.asPaidVideoItem(e)
+                            else -> null
+                        }
+                    }
+                    else -> emptyList()
+                }
+            }
+            val album = if (anchor.mediaAlbumId != 0L) {
+                messages.filter {
+                    it.mediaAlbumId == anchor.mediaAlbumId
+                }
+            } else {
+                emptyList()
+            }
+            MediaViewerListScreen(
+                items = mediaItems,
+                anchor = anchor,
+                albumGroup = album,
+                exhausted = threadAllLoaded,
+                onLoadMore = {
+                    if (!threadAllLoaded) ThreadStore.loadOlder()
+                },
+                onClose = { mediaViewer = null },
+                onPlayVideo = { item ->
+                    mediaViewer = null
+                    videoItem = item
+                }
+            )
+        }
+    }
+    // Tag search panel (v0.9.45, P1): overlays the thread
+    // while a tag query is active; picking a result jumps
+    // the window to that comment.
+    if (tagQuery.isNotEmpty()) {
+        TagSearchPanel(
+            query = tagQuery,
+            results = tagResults,
+            total = tagTotal,
+            exhausted = tagExhausted,
+            onLoadMore = {
+                ThreadStore.searchByTag(tagQuery, append = true)
+            },
+            onPick = { item ->
+                ThreadStore.exitSearch()
+                ThreadStore.jumpTo(item.id)
+            },
+            onClose = { ThreadStore.exitSearch() }
+        )
+    }
+    }
 }
 
 /** Interactive checklist for the simple bubble hosts
@@ -1603,6 +1719,150 @@ fun SimpleChecklistContent(
                 "只有清单作者能勾选",
                 color = subText, fontSize = 11.sp
             )
+        }
+    }
+}
+
+/** Topic-scoped tag search panel (v0.9.45, P1), shared
+ *  by the thread screen and the forum-topic screen: a
+ *  full-screen overlay listing the hosting store's
+ *  searchChatMessages results for one tag, newest first.
+ *  Tapping a row asks the host to jump its window to that
+ *  message (the host wires onPick to its store's jumpTo)
+ *  and closes the panel. Rows stay plain — sender, day,
+ *  one summary line — the same information the main
+ *  chat's search rows carry, minus navigation chrome
+ *  (a topic window has no search cursor to step). */
+@Composable
+fun TagSearchPanel(
+    query: String,
+    results: List<MsgItem>,
+    total: Int,
+    exhausted: Boolean,
+    onLoadMore: () -> Unit,
+    onPick: (MsgItem) -> Unit,
+    onClose: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onClose) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回"
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    query,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    when {
+                        total > 0 -> "共 $total 条"
+                        total == 0 -> "没有结果"
+                        else -> "正在搜索…"
+                    },
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant)
+        )
+        if (results.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (exhausted) {
+                        "这里还没有带这个标签的消息"
+                    } else {
+                        "正在搜索…"
+                    },
+                    color = Color.Gray,
+                    fontSize = 14.sp
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                items(items = results, key = { it.id }) { item ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(item) }
+                            .padding(
+                                horizontal = 16.dp, vertical = 10.dp
+                            )
+                    ) {
+                        Row(
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            Text(
+                                item.senderName.ifEmpty {
+                                    if (item.outgoing) "我" else ""
+                                },
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                formatDayLabel(item.dateSeconds),
+                                color = Color.Gray,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Text(
+                            item.summaryText(),
+                            fontSize = 14.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(0.5.dp)
+                            .background(
+                                MaterialTheme.colorScheme.outlineVariant
+                            )
+                    )
+                }
+                if (!exhausted) {
+                    item(key = "tag_search_more") {
+                        TextButton(
+                            onClick = onLoadMore,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("加载更多") }
+                    }
+                }
+            }
         }
     }
 }

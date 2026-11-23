@@ -4,6 +4,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -818,7 +823,32 @@ fun ForumTopicView(
     val forumFarFromLatest by remember {
         derivedStateOf { !forumAtBottom }
     }
+    // Tag search (v0.9.45, P1): results for the tag the
+    // user tapped in a bubble; the panel overlays the
+    // topic while the query is non-empty.
+    val tagQuery by ForumStore.searchQuery.collectAsState()
+    val tagResults by ForumStore.searchResults.collectAsState()
+    val tagTotal by ForumStore.searchTotal.collectAsState()
+    val tagExhausted by ForumStore.searchExhausted.collectAsState()
+    val forumDetached by ForumStore.windowDetached.collectAsState()
+    // Scroll the tag-search jump target into view when
+    // its window lands (v0.9.45, P1): same locate
+    // mechanism as the main chat, plus clearing the flag
+    // so a second jump to the same message scrolls again.
+    val forumLocateId by ForumStore.locateId.collectAsState()
+    LaunchedEffect(forumLocateId, messages.size) {
+        if (forumLocateId != 0L && messages.isNotEmpty()) {
+            val ascIndex = messages.indexOfFirst {
+                it.id == forumLocateId
+            }
+            if (ascIndex >= 0) {
+                listState.scrollToItem(messages.size - 1 - ascIndex)
+                ForumStore.clearLocate()
+            }
+        }
+    }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(modifier = Modifier.fillMaxSize()) {
         val photoPath = pendingPhoto
         if (photoPath != null) {
@@ -839,18 +869,13 @@ fun ForumTopicView(
             )
             return@Column
         }
-        val editPath = editingPhotoPath
-        if (editPath != null) {
-            PhotoEditorScreen(
-                path = editPath,
-                onDone = { edited ->
-                    editingPhotoPath = null
-                    pendingPhoto = edited
-                },
-                onCancel = { editingPhotoPath = null }
-            )
-            return@Column
-        }
+        // The photo editor is an overlay at the root Box
+        // level since v0.9.45 (P2) — see the end of this
+        // composable. It used to sit here, behind the
+        // preview's early return above, which made it
+        // unreachable: the preview returns whenever a
+        // pending photo exists, and editing starts from
+        // exactly that state.
         val fileToSend = pendingFile
         if (fileToSend != null) {
             AlertDialog(
@@ -916,50 +941,10 @@ fun ForumTopicView(
             )
             return@Column
         }
-        // Media viewer (v0.9.32, Y6): the context is this
-        // topic's loaded window only; paging to the oldest
-        // end pulls the topic's own older pages.
-        val viewerAnchor = mediaViewer
-        if (viewerAnchor != null) {
-            // Purchased paid-media entries join the viewer
-            // as re-shaped copies (v0.9.35, B1); locked
-            // previews never enter it.
-            val mediaItems = messages.flatMap { m ->
-                when (m.kind) {
-                    MsgKind.PHOTO, MsgKind.VIDEO -> listOf(m)
-                    MsgKind.PAID_MEDIA -> m.paidMedia.mapNotNull { e ->
-                        when (e.kind) {
-                            "photo" -> m.asPaidPhotoItem(e)
-                            "video" -> m.asPaidVideoItem(e)
-                            else -> null
-                        }
-                    }
-                    else -> emptyList()
-                }
-            }
-            val album = if (viewerAnchor.mediaAlbumId != 0L) {
-                messages.filter {
-                    it.mediaAlbumId == viewerAnchor.mediaAlbumId
-                }
-            } else {
-                emptyList()
-            }
-            MediaViewerListScreen(
-                items = mediaItems,
-                anchor = viewerAnchor,
-                albumGroup = album,
-                exhausted = forumAllLoaded,
-                onLoadMore = {
-                    if (!forumAllLoaded) ForumStore.loadOlder()
-                },
-                onClose = { mediaViewer = null },
-                onPlayVideo = { item ->
-                    mediaViewer = null
-                    videoItem = item
-                }
-            )
-            return@Column
-        }
+        // The media viewer is an overlay at the root Box
+        // level since v0.9.45 (P2) — see the end of this
+        // composable (it was a full-screen replacement
+        // here until then).
         val vItem = videoItem
         if (vItem?.filePath != null) {
             VideoPlayerScreen(
@@ -1038,6 +1023,9 @@ fun ForumTopicView(
                         onOpenVideo = { m -> videoItem = m },
                         onOpenMedia = { m -> mediaViewer = m },
                         onBotCommand = { ForumStore.sendText(it) },
+                        onHashtag = { tag ->
+                            ForumStore.searchByTag(tag)
+                        },
                         onToggleChecklistTask = { m, task ->
                             ForumStore.markChecklistTask(m, task)
                         },
@@ -1050,11 +1038,20 @@ fun ForumTopicView(
                 }
             }
             ScrollToLatestButton(
-                visible = forumFarFromLatest,
+                // After a tag-search jump the window no
+                // longer reaches the newest message
+                // (v0.9.45, P1): stay visible while detached
+                // even at the jump window's own top, and
+                // reload the window instead of scrolling.
+                visible = forumFarFromLatest || forumDetached,
                 unreadCount = 0,
                 onClick = {
-                    forumScope.launch {
-                        listState.animateScrollToItem(0)
+                    if (forumDetached) {
+                        ForumStore.backToLatest()
+                    } else {
+                        forumScope.launch {
+                            listState.animateScrollToItem(0)
+                        }
                     }
                 },
                 modifier = Modifier
@@ -1159,6 +1156,118 @@ fun ForumTopicView(
                 modifier = Modifier.padding(16.dp)
             )
         }
+    }
+    // Photo editor overlay (animated v0.9.45, P2): the
+    // Motion crossfade pair with the 0.97 scale, exactly
+    // the main chat media viewer's spec — the photo
+    // preview stays composed underneath and the editor
+    // fades back out onto it, instead of the old
+    // full-screen replacement hard cut. Moving it here
+    // also fixes its reachability (see the note where
+    // the block used to sit).
+    val editPath = editingPhotoPath
+    AnimatedVisibility(
+        visible = editPath != null,
+        enter = fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+            scaleIn(
+                initialScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_IN)
+            ),
+        exit = fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+            scaleOut(
+                targetScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_OUT)
+            )
+    ) {
+        editPath?.let { path ->
+            PhotoEditorScreen(
+                path = path,
+                onDone = { edited ->
+                    editingPhotoPath = null
+                    pendingPhoto = edited
+                },
+                onCancel = { editingPhotoPath = null }
+            )
+        }
+    }
+    // Media viewer overlay (animated v0.9.45, P2): same
+    // spec as the main chat's viewer (v0.9.44, N6), the
+    // topic left composed underneath. The context is
+    // this topic's loaded window only; paging to the
+    // oldest end pulls the topic's own older pages.
+    val viewerAnchor = mediaViewer
+    AnimatedVisibility(
+        visible = viewerAnchor != null,
+        enter = fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+            scaleIn(
+                initialScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_IN)
+            ),
+        exit = fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+            scaleOut(
+                targetScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_OUT)
+            )
+    ) {
+        viewerAnchor?.let { anchor ->
+            // Purchased paid-media entries join the viewer
+            // as re-shaped copies (v0.9.35, B1); locked
+            // previews never enter it.
+            val mediaItems = messages.flatMap { m ->
+                when (m.kind) {
+                    MsgKind.PHOTO, MsgKind.VIDEO -> listOf(m)
+                    MsgKind.PAID_MEDIA -> m.paidMedia.mapNotNull { e ->
+                        when (e.kind) {
+                            "photo" -> m.asPaidPhotoItem(e)
+                            "video" -> m.asPaidVideoItem(e)
+                            else -> null
+                        }
+                    }
+                    else -> emptyList()
+                }
+            }
+            val album = if (anchor.mediaAlbumId != 0L) {
+                messages.filter {
+                    it.mediaAlbumId == anchor.mediaAlbumId
+                }
+            } else {
+                emptyList()
+            }
+            MediaViewerListScreen(
+                items = mediaItems,
+                anchor = anchor,
+                albumGroup = album,
+                exhausted = forumAllLoaded,
+                onLoadMore = {
+                    if (!forumAllLoaded) ForumStore.loadOlder()
+                },
+                onClose = { mediaViewer = null },
+                onPlayVideo = { item ->
+                    mediaViewer = null
+                    videoItem = item
+                }
+            )
+        }
+    }
+    // Tag search panel (v0.9.45, P1): overlays the topic
+    // while a tag query is active; picking a result jumps
+    // the window to that message.
+    if (tagQuery.isNotEmpty()) {
+        TagSearchPanel(
+            query = tagQuery,
+            results = tagResults,
+            total = tagTotal,
+            exhausted = tagExhausted,
+            onLoadMore = {
+                ForumStore.searchByTag(tagQuery, append = true)
+            },
+            onPick = { item ->
+                ForumStore.exitSearch()
+                ForumStore.jumpTo(item.id)
+            },
+            onClose = { ForumStore.exitSearch() }
+        )
+    }
     }
 }
 
