@@ -799,13 +799,24 @@ fun ForumTopicView(
     // per-topic unread counter.
     val forumHistoryLoading by ForumStore.historyLoading.collectAsState()
     val forumScope = rememberCoroutineScope()
-    val forumFarFromLatest by remember {
-        derivedStateOf {
-            val visibleCount =
-                listState.layoutInfo.visibleItemsInfo.size
-            visibleCount > 0 &&
-                listState.firstVisibleItemIndex > visibleCount
+    // At-bottom behaviour (v0.9.44, N5): same rule as the
+    // main chat and threads — button as soon as the newest
+    // message leaves the screen, auto-scroll only from the
+    // bottom (own sends always).
+    var forumAtBottom by remember { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex <= 2 }
+            .collect { forumAtBottom = it }
+    }
+    val forumNewest = messages.lastOrNull()
+    LaunchedEffect(forumNewest?.id) {
+        val newest = forumNewest ?: return@LaunchedEffect
+        if (forumAtBottom || newest.outgoing) {
+            listState.animateScrollToItem(0)
         }
+    }
+    val forumFarFromLatest by remember {
+        derivedStateOf { !forumAtBottom }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {

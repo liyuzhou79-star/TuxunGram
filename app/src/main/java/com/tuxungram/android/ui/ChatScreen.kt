@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
@@ -291,6 +292,124 @@ data class ForcedMention(
     val userId: Long
 )
 
+/** The access dock bar (v0.9.44, N3/N4): renders the bar
+ *  that replaces the composer whenever the access state
+ *  machine says this account cannot (or may not yet) post
+ *  in the open chat, and returns true when it did — the
+ *  caller then skips the composer entirely. Wording
+ *  follows the official client's way of saying it: the
+ *  fact first （此群组不能发 / 你已被禁言）, the detail
+ *  second, a join action only where joining is a real
+ *  action. */
+@Composable
+fun AccessDockBar(
+    access: com.tuxungram.android.td.ChatAccess,
+    historyBlocked: Boolean,
+    onJoin: () -> Unit,
+    onCancelRequest: () -> Unit
+): Boolean {
+    val palette = OfficialTheme.current()
+    @Composable
+    fun bar(
+        title: String,
+        sub: String = "",
+        actionLabel: String? = null,
+        onAction: (() -> Unit)? = null
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(palette.panelBg)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                if (sub.isNotEmpty()) {
+                    Text(
+                        sub,
+                        color = Color.Gray,
+                        fontSize = 12.5.sp
+                    )
+                }
+            }
+            if (actionLabel != null && onAction != null) {
+                Button(onClick = onAction) { Text(actionLabel) }
+            }
+        }
+    }
+    return when (access.kind) {
+        com.tuxungram.android.td.ChatAccessKind.JOINABLE -> {
+            bar(
+                title = if (access.isChannel) {
+                    "你还没订阅这个频道"
+                } else {
+                    "你还不是这个群组的成员"
+                },
+                sub = when {
+                    historyBlocked -> "加入后才能查看里面的内容"
+                    access.isChannel -> "订阅后可以收到新消息"
+                    else -> "加入后可以发言"
+                },
+                actionLabel = if (access.isChannel) "订阅" else "加入",
+                onAction = onJoin
+            )
+            true
+        }
+        com.tuxungram.android.td.ChatAccessKind.JOIN_REQUESTED -> {
+            bar(
+                title = "已申请加入，等待管理员批准",
+                sub = "通过后就能查看和发言",
+                actionLabel = "取消申请",
+                onAction = onCancelRequest
+            )
+            true
+        }
+        com.tuxungram.android.td.ChatAccessKind.NO_SEND_ALL_MUTED -> {
+            bar(
+                title = "此群组不能发",
+                sub = "管理员已禁止成员发言"
+            )
+            true
+        }
+        com.tuxungram.android.td.ChatAccessKind.NO_SEND_PERSONAL -> {
+            bar(
+                title = "你已被禁言",
+                sub = if (access.untilSec > 0) {
+                    "到 ${formatViewDate(access.untilSec)} 解禁"
+                } else {
+                    "管理员解除禁言后才能发言"
+                }
+            )
+            true
+        }
+        com.tuxungram.android.td.ChatAccessKind.NO_SEND_BANNED -> {
+            bar(
+                title = "你已被移出这个群组",
+                sub = if (access.untilSec > 0) {
+                    "到 ${formatViewDate(access.untilSec)} 后可重新申请加入"
+                } else {
+                    "不能再在此群组发言"
+                }
+            )
+            true
+        }
+        com.tuxungram.android.td.ChatAccessKind.NO_SEND_CHANNEL -> {
+            bar(
+                title = "你已订阅这个频道",
+                sub = "只有管理员能发消息"
+            )
+            true
+        }
+        else -> false
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(
@@ -303,7 +422,24 @@ fun ChatScreen(
     val context = LocalContext.current
     val chats by ChatStore.chats.collectAsState()
     val adminCaps by AdminStore.caps.collectAsState()
+    // Resolved-chat fallback (v0.9.44, N4): a chat opened
+    // from a link / search before it appears on any list is
+    // not in the chats flow yet — flatten it from the
+    // resolved cache instead of falling back to the
+    // placeholder title 「对话」.
+    val resolvedTick by ChatStore.resolvedTick.collectAsState()
     val chat = chats.firstOrNull { it.id == chatId }
+        ?: remember(chatId, resolvedTick) {
+            ChatStore.itemOf(chatId)
+        }
+    // Access state machine (v0.9.44, N3/N4): drives the
+    // bottom dock (composer / join bar / cannot-post bar)
+    // and the resolving / error states of the message area.
+    val access by MessageStore.access.collectAsState()
+    val historyBlocked by MessageStore.historyBlocked
+        .collectAsState()
+    val pendingNew by MessageStore.pendingNewCount
+        .collectAsState()
     // Slow mode (v0.9.32, Y4): the group's delay and the
     // server-computed moment this account may post again.
     // The remaining seconds tick locally off that anchor;
@@ -1139,14 +1275,37 @@ fun ChatScreen(
             listState.animateScrollToItem(0)
         }
     }
-    val farFromLatest by remember {
-        derivedStateOf {
-            val visibleCount =
-                listState.layoutInfo.visibleItemsInfo.size
-            !atLatest ||
-                (visibleCount > 0 &&
-                    listState.firstVisibleItemIndex > visibleCount)
+    // At-bottom tracking (v0.9.44, N5): in the reversed
+    // list index 0 is the newest message at the visual
+    // bottom; "at bottom" means it (or the one above it) is
+    // on screen. The store hears every change so its read
+    // marking and new-message counter follow the user's
+    // eyes, and the stick flag below drives auto-scroll.
+    // The threshold of 2 absorbs the index shift a burst
+    // of arrivals causes before the scroll lands.
+    var atBottom by remember(chatId) { mutableStateOf(true) }
+    LaunchedEffect(listState, chatId) {
+        snapshotFlow { listState.firstVisibleItemIndex <= 2 }
+            .collect { atBottom = it }
+    }
+    LaunchedEffect(atBottom, atLatest) {
+        MessageStore.setViewingLatest(atBottom && atLatest)
+    }
+    // Auto-scroll (v0.9.44, N5): a new newest message pulls
+    // the list down only when the user was already at (or
+    // within a message of) the bottom — and always for the
+    // user's own sends. Scrolled further up, the view stays
+    // put and the button's counter grows instead, exactly
+    // the official split of behaviour.
+    val newestMessage = messages.lastOrNull()
+    LaunchedEffect(newestMessage?.id) {
+        val newest = newestMessage ?: return@LaunchedEffect
+        if (atBottom || newest.outgoing) {
+            listState.animateScrollToItem(0)
         }
+    }
+    val farFromLatest by remember {
+        derivedStateOf { !atLatest || !atBottom }
     }
 
     // Root Box so the photo viewer (F2) can overlay the whole
@@ -2328,7 +2487,47 @@ fun ChatScreen(
                 // color always wins (rules unchanged).
                 OfficialChatBackground()
             }
-        if (messages.isEmpty() && showEmptyHistory) {
+        if (messages.isEmpty() && access.kind ==
+            com.tuxungram.android.td.ChatAccessKind.OPEN_ERROR
+        ) {
+            // Unopenable chat (v0.9.44, N4): say why instead
+            // of dressing the failure up as an empty private
+            // chat with a composer.
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    EmptyState(
+                        Icons.Filled.Block,
+                        "打不开这个对话",
+                        access.detail.ifEmpty {
+                            "这个对话不存在，或者已经被删除了。"
+                        }
+                    )
+                    TextButton(onClick = onBack) { Text("返回") }
+                }
+            }
+        } else if (messages.isEmpty() && access.kind ==
+            com.tuxungram.android.td.ChatAccessKind.LOADING
+        ) {
+            // Resolving an unknown chat (v0.9.44, N4): a
+            // loading state, never a flash of the fake
+            // empty chat.
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "正在打开…",
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                }
+            }
+        } else if (messages.isEmpty() && showEmptyHistory) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -2491,6 +2690,14 @@ fun ChatScreen(
                             },
                             onOpenSenderProfile = { userId ->
                                 DeepLink.pendingProfileUser.value = userId
+                            },
+                            onHashtag = { tag ->
+                                // Hashtag tap (v0.9.44, N8):
+                                // open this chat's search on
+                                // the tag.
+                                chatSearchQuery = tag
+                                chatSearchOpen = true
+                                MessageStore.searchInChat(tag)
                             }
                         )
                     } else {
@@ -2542,7 +2749,14 @@ fun ChatScreen(
                                 searchHighlightQuery
                             } else {
                                 ""
-                            }
+                            },
+                        onHashtag = { tag ->
+                            // Hashtag tap (v0.9.44, N8): open
+                            // this chat's search on the tag.
+                            chatSearchQuery = tag
+                            chatSearchOpen = true
+                            MessageStore.searchInChat(tag)
+                        }
                     )
                     }
                 }
@@ -2560,7 +2774,18 @@ fun ChatScreen(
             // Duck bar lives under the whole chat column).
             ScrollToLatestButton(
                 visible = farFromLatest,
-                unreadCount = chat?.unreadCount ?: 0,
+                // Badge count (v0.9.44, N5): while the
+                // window reaches the newest end, the count
+                // is the store's local tally of what arrived
+                // while the user was scrolled up (TDLib's
+                // own unread count is already settled by
+                // then); in a jump window it stays the
+                // chat's server unread count.
+                unreadCount = if (atLatest) {
+                    pendingNew
+                } else {
+                    chat?.unreadCount ?: 0
+                },
                 onClick = {
                     if (atLatest) {
                         chatScope.launch {
@@ -2671,7 +2896,23 @@ fun ChatScreen(
             }
         }
         if (!selectionMode) {
-            if (!canBasic && !canPhotos) {
+            // Access dock (v0.9.44, N3/N4): a join bar, a
+            // request-pending bar or a cannot-post bar takes
+            // the composer's place whenever the access state
+            // machine says so. The old permissions-only text
+            // below stays as the fallback for the states the
+            // machine calls sendable (its both-permissions-
+            // off case is the machine's all-muted state,
+            // which the bar above renders first).
+            val accessBarShown = AccessDockBar(
+                access = access,
+                historyBlocked = historyBlocked,
+                onJoin = { MessageStore.joinCurrentChat() },
+                onCancelRequest = { MessageStore.cancelJoinRequest() }
+            )
+            if (accessBarShown) {
+                // The bar replaced the composer.
+            } else if (!canBasic && !canPhotos) {
             Text(
                 "你不能在这个对话里发言",
                 color = Color.Gray,
@@ -5078,7 +5319,10 @@ fun MessageBubble(
     // In-chat search highlight (v0.9.31, X3): non-empty only
     // on the message the search navigation currently sits
     // on; forwarded to every RichMessageText in the bubble.
-    highlightQuery: String = ""
+    highlightQuery: String = "",
+    // Hashtag tap (v0.9.44, N8): forwarded to every
+    // RichMessageText in the bubble.
+    onHashtag: (String) -> Unit = {}
 ) {
     val outgoing = msg.outgoing
     // Message text size (v0.9.39, F5): the Appearance
@@ -5101,6 +5345,8 @@ fun MessageBubble(
         }
     }
     var menuOpen by remember { mutableStateOf(false) }
+    // Select-text page (v0.9.44, N7).
+    var selectTextOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var reactionOpen by remember { mutableStateOf(false) }
@@ -5499,6 +5745,7 @@ fun MessageBubble(
                         RichMessageText(
                             msg,
                             onBotCommand = { MessageStore.sendText(it) },
+                            onHashtag = onHashtag,
                             highlightQuery = highlightQuery,
                             color = if (outgoing) palette.outText else palette.inText,
                             linkColor = if (outgoing) palette.outText else palette.linkIn,
@@ -5531,6 +5778,7 @@ fun MessageBubble(
                             RichMessageText(
                                 msg,
                                 onBotCommand = { MessageStore.sendText(it) },
+                            onHashtag = onHashtag,
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
@@ -5573,6 +5821,7 @@ fun MessageBubble(
                             RichMessageText(
                                 msg,
                                 onBotCommand = { MessageStore.sendText(it) },
+                            onHashtag = onHashtag,
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
@@ -5587,6 +5836,7 @@ fun MessageBubble(
                             RichMessageText(
                                 msg,
                                 onBotCommand = { MessageStore.sendText(it) },
+                            onHashtag = onHashtag,
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
@@ -5601,6 +5851,7 @@ fun MessageBubble(
                             RichMessageText(
                                 msg,
                                 onBotCommand = { MessageStore.sendText(it) },
+                            onHashtag = onHashtag,
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
@@ -5615,6 +5866,7 @@ fun MessageBubble(
                             RichMessageText(
                                 msg,
                                 onBotCommand = { MessageStore.sendText(it) },
+                            onHashtag = onHashtag,
                                 highlightQuery = highlightQuery,
                                 color = if (outgoing) palette.outText else palette.inText,
                                 linkColor = if (outgoing) palette.outText else palette.linkIn,
@@ -5763,13 +6015,10 @@ fun MessageBubble(
                                 fontSize = 11.sp
                             )
                         }
-                        "failed" -> Text(
-                            "  发送失败，点这里重发",
-                            color = Color(0xFFC62828),
-                            fontSize = 11.sp,
-                            modifier = Modifier.clickable {
-                                MessageStore.resend(msg.id)
-                            }
+                        "failed" -> FailedSendNote(
+                            msg = msg,
+                            onResend = { MessageStore.resend(it) },
+                            onDelete = { deleteOpen = true }
                         )
                     }
                 }
@@ -5777,16 +6026,13 @@ fun MessageBubble(
                 if (mediaOverlay && msg.sendingState == "failed") {
                     // The capsule only flags the failure; the
                     // retry tap stays available under the media.
-                    Text(
-                        "发送失败，点这里重发",
-                        color = Color(0xFFC62828),
-                        fontSize = 11.sp,
+                    FailedSendNote(
+                        msg = msg,
+                        onResend = { MessageStore.resend(it) },
+                        onDelete = { deleteOpen = true },
                         modifier = Modifier
                             .align(Alignment.End)
                             .padding(top = 3.dp)
-                            .clickable {
-                                MessageStore.resend(msg.id)
-                            }
                     )
                 }
                 // Scheduled-send label (v0.9.3, M5): the
@@ -5863,6 +6109,34 @@ fun MessageBubble(
                             menuOpen = false
                             clipboard.setText(AnnotatedString(msg.text))
                         })
+                        // Select part of the text (v0.9.44,
+                        // N7): opens the full text in a page
+                        // with system selection handles.
+                        add(MessageMenuEntry(TextSizeIcon, "选择文字") {
+                            menuOpen = false
+                            selectTextOpen = true
+                        })
+                    }
+                    if (msg.sendingState == "failed") {
+                        // Resend from the menu (v0.9.44, N9):
+                        // same gate as the footer note — a
+                        // failure that can never succeed on a
+                        // resend gets no entry here either.
+                        val failKind = com.tuxungram.android.td
+                            .SendFailure.classify(
+                                msg.failCode, msg.failId,
+                                msg.paidStarsRequired
+                            )
+                        if (com.tuxungram.android.td.SendFailure
+                                .retryable(failKind, msg.canRetry)
+                        ) {
+                            add(MessageMenuEntry(
+                                Icons.Filled.Refresh, "重发"
+                            ) {
+                                menuOpen = false
+                                MessageStore.resend(msg)
+                            })
+                        }
                     }
                     if (msg.sendingState.isEmpty()) {
                         // Copy message link (v0.9.15, V1).
@@ -6021,6 +6295,12 @@ fun MessageBubble(
             )
         }
     }
+    }
+    if (selectTextOpen) {
+        SelectableTextDialog(
+            text = msg.text,
+            onDismiss = { selectTextOpen = false }
+        )
     }
     if (editOpen) {
         var draft by remember(msg.id) { mutableStateOf(msg.text) }
@@ -6399,7 +6679,9 @@ fun AlbumBubble(
     onReply: (MsgItem) -> Unit,
     onForward: (List<MsgItem>) -> Unit,
     onDeleteSelected: (List<MsgItem>) -> Unit,
-    onOpenSenderProfile: (Long) -> Unit
+    onOpenSenderProfile: (Long) -> Unit,
+    // Hashtag tap (v0.9.44, N8), forwarded to the caption.
+    onHashtag: (String) -> Unit = {}
 ) {
     val first = items.first()
     val last = items.last()
@@ -6612,6 +6894,7 @@ fun AlbumBubble(
                         RichMessageText(
                             captionItem,
                             onBotCommand = { MessageStore.sendText(it) },
+                            onHashtag = onHashtag,
                             color = if (outgoing) {
                                 palette.outText
                             } else {
@@ -6661,12 +6944,24 @@ fun AlbumBubble(
                             )
                         }
                     }
-                    if (last.sendingState == "failed") {
+                    if (items.any { it.sendingState == "failed" }) {
                         Spacer(Modifier.width(4.dp))
-                        Text(
-                            "发送失败",
-                            color = Color(0xFFC62828),
-                            fontSize = 11.sp
+                        // Album resend (v0.9.44, N1): every
+                        // failed member is resent, not just
+                        // the anchor — each album member is
+                        // its own message to TDLib.
+                        FailedSendNote(
+                            msg = items.first {
+                                it.sendingState == "failed"
+                            },
+                            onResend = {
+                                items.filter {
+                                    it.sendingState == "failed"
+                                }.forEach { failed ->
+                                    MessageStore.resend(failed)
+                                }
+                            },
+                            onDelete = { onDeleteSelected(items) }
                         )
                     }
                 }

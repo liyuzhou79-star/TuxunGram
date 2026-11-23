@@ -73,6 +73,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -456,3 +458,117 @@ fun PagingSpinnerRow() {
     }
 }
 
+
+/** The failed-send note under a bubble (v0.9.44, N1/N2),
+ *  shared by the main chat, threads and forum topics.
+ *  What it offers follows the typed classification of the
+ *  failure (see SendFailure): a failure TDLib says can be
+ *  resent gets the classic 「发送失败，点这里重发」 tap; one
+ *  that can never succeed on a resend (no posting rights,
+ *  a paid send) shows the short reason instead, and its
+ *  tap opens a detail dialog with the full explanation
+ *  and a delete action — never a fake retry. */
+@Composable
+fun FailedSendNote(
+    msg: com.tuxungram.android.td.MsgItem,
+    onResend: (com.tuxungram.android.td.MsgItem) -> Unit,
+    onDelete: (com.tuxungram.android.td.MsgItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val kind = com.tuxungram.android.td.SendFailure.classify(
+        msg.failCode, msg.failId, msg.paidStarsRequired
+    )
+    val retryable = com.tuxungram.android.td.SendFailure
+        .retryable(kind, msg.canRetry)
+    var detailOpen by remember(msg.id) { mutableStateOf(false) }
+    Text(
+        if (retryable) {
+            "  发送失败，点这里重发"
+        } else {
+            "  发送失败：" + com.tuxungram.android.td.SendFailure
+                .shortReason(kind, msg.retryAfterSec)
+        },
+        color = Color(0xFFC62828),
+        fontSize = 11.sp,
+        modifier = modifier.clickable {
+            if (retryable) {
+                onResend(msg)
+            } else {
+                detailOpen = true
+            }
+        }
+    )
+    if (detailOpen) {
+        AlertDialog(
+            onDismissRequest = { detailOpen = false },
+            title = { Text("发送失败") },
+            text = {
+                Text(
+                    com.tuxungram.android.td.SendFailure
+                        .fullText(
+                            kind, msg.retryAfterSec,
+                            msg.failCode, msg.failId
+                        )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { detailOpen = false }) {
+                    Text("知道了")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    detailOpen = false
+                    onDelete(msg)
+                }) {
+                    Text("删除这条", color = Color(0xFFC62828))
+                }
+            }
+        )
+    }
+}
+
+/** Full-text selection page (v0.9.44, N7): the message's
+ *  whole text inside a SelectionContainer, so the user
+ *  can drag the system handles and copy any portion —
+ *  the bubble itself only offers whole-message copy.
+ *  In-place selection inside the scrolling bubble list
+ *  was not verifiable without a device (selection drags
+ *  fight the list's scroll and the swipe-to-reply drag),
+ *  so the deterministic page is the shipped path in all
+ *  three hosts; the long-press menu entry opens it. */
+@Composable
+fun SelectableTextDialog(
+    text: String,
+    onDismiss: () -> Unit
+) {
+    val clipboard = LocalClipboardManager.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择文字") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(360.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                androidx.compose.foundation.text.selection
+                    .SelectionContainer {
+                        Text(text, fontSize = 15.sp)
+                    }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                clipboard.setText(
+                    androidx.compose.ui.text.AnnotatedString(text)
+                )
+                onDismiss()
+            }) { Text("复制全文") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        }
+    )
+}

@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -158,6 +159,8 @@ fun SimpleMessageBubble(
     val clipboard = LocalClipboardManager.current
     var menuOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
+    // Select-text page (v0.9.44, N7).
+    var selectTextOpen by remember { mutableStateOf(false) }
     // Per-user reaction list (v0.9.39, F1).
     var addedReactionsOpen by remember { mutableStateOf(false) }
     val outgoing = msg.outgoing
@@ -695,13 +698,10 @@ fun SimpleMessageBubble(
                                 fontSize = 11.sp
                             )
                         }
-                        "failed" -> Text(
-                            "  发送失败，点这里重发",
-                            color = Color(0xFFC62828),
-                            fontSize = 11.sp,
-                            modifier = Modifier.clickable {
-                                onResend(msg)
-                            }
+                        "failed" -> FailedSendNote(
+                            msg = msg,
+                            onResend = onResend,
+                            onDelete = { deleteOpen = true }
                         )
                     }
                 }
@@ -726,6 +726,32 @@ fun SimpleMessageBubble(
                                 AnnotatedString(msg.text)
                             )
                         })
+                        // Select part of the text (v0.9.44,
+                        // N7): same full-text selection page
+                        // as the main chat.
+                        add(MessageMenuEntry(TextSizeIcon, "选择文字") {
+                            menuOpen = false
+                            selectTextOpen = true
+                        })
+                    }
+                    if (msg.sendingState == "failed") {
+                        // Resend from the menu (v0.9.44, N9):
+                        // same retryable gate as the footer.
+                        val failKind = com.tuxungram.android.td
+                            .SendFailure.classify(
+                                msg.failCode, msg.failId,
+                                msg.paidStarsRequired
+                            )
+                        if (com.tuxungram.android.td.SendFailure
+                                .retryable(failKind, msg.canRetry)
+                        ) {
+                            add(MessageMenuEntry(
+                                Icons.Filled.Refresh, "重发"
+                            ) {
+                                menuOpen = false
+                                onResend(msg)
+                            })
+                        }
                     }
                     if (msg.text.isNotEmpty() &&
                         msg.sendingState.isEmpty()
@@ -774,6 +800,12 @@ fun SimpleMessageBubble(
         }
     }
     } // swipe-to-reply wrapper Box (v0.9.43, M2)
+    if (selectTextOpen) {
+        SelectableTextDialog(
+            text = msg.text,
+            onDismiss = { selectTextOpen = false }
+        )
+    }
     if (deleteOpen) {
         AlertDialog(
             onDismissRequest = { deleteOpen = false },
@@ -1088,13 +1120,25 @@ fun ThreadScreen(
     // per-thread unread counter.
     val threadHistoryLoading by ThreadStore.historyLoading.collectAsState()
     val threadScope = rememberCoroutineScope()
-    val threadFarFromLatest by remember {
-        derivedStateOf {
-            val visibleCount =
-                listState.layoutInfo.visibleItemsInfo.size
-            visibleCount > 0 &&
-                listState.firstVisibleItemIndex > visibleCount
+    // At-bottom behaviour (v0.9.44, N5): same rule as the
+    // main chat — the button appears as soon as the newest
+    // comment leaves the screen (not after a full screen of
+    // scrolling), and a new comment auto-scrolls only when
+    // the user was already at the bottom (own sends always).
+    var threadAtBottom by remember { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex <= 2 }
+            .collect { threadAtBottom = it }
+    }
+    val threadNewest = messages.lastOrNull()
+    LaunchedEffect(threadNewest?.id) {
+        val newest = threadNewest ?: return@LaunchedEffect
+        if (threadAtBottom || newest.outgoing) {
+            listState.animateScrollToItem(0)
         }
+    }
+    val threadFarFromLatest by remember {
+        derivedStateOf { !threadAtBottom }
     }
 
     Column(

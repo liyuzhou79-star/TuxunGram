@@ -48,7 +48,9 @@ import kotlinx.coroutines.withContext
  * until tapped, and the link family (url, textUrl, mention,
  * mentionName, botCommand, email, phone) clickable in the
  * accent color, the way mature clients render them. Hashtags
- * and cashtags are accent-colored without an action.
+ * and cashtags are clickable too (v0.9.44, N8): the host
+ * supplies [onHashtag], which opens the in-chat search for
+ * the tag — the official behaviour for a tapped tag.
  *
  * One builder for every surface: the main chat, comment
  * threads, forum topics and any preview that shows a MsgItem's
@@ -64,6 +66,10 @@ fun RichMessageText(
     msg: MsgItem,
     fontSize: TextUnit = 15.sp,
     onBotCommand: (String) -> Unit = {},
+    // Hashtag / cashtag tap (v0.9.44, N8): the host opens
+    // its in-chat search for the tag. Preview surfaces keep
+    // the default no-op, so list previews stay inert.
+    onHashtag: (String) -> Unit = {},
     // Secondary surfaces (shared-media rows, the photo
     // viewer's caption — regression fix R4, v0.9.6) render the
     // same built text but in their own color and line budget.
@@ -313,9 +319,26 @@ fun RichMessageText(
                         start, end
                     )
                 }
-                "hashtag", "cashtag" -> addStyle(
-                    SpanStyle(color = effectiveLinkColor), start, end
-                )
+                "hashtag", "cashtag" -> {
+                    // Tappable tags (v0.9.44, N8): the tap
+                    // hands the tag text (with its # / $) to
+                    // the host, which searches this chat for
+                    // it — the official client's behaviour,
+                    // and the user's channel-post complaint.
+                    addLink(
+                        LinkAnnotation.Clickable(
+                            tag = "tag",
+                            styles = TextLinkStyles(
+                                style = SpanStyle(
+                                    color = effectiveLinkColor
+                                )
+                            )
+                        ) {
+                            onHashtag(rangeText)
+                        },
+                        start, end
+                    )
+                }
                 // customEmoji: rendered as an inline image
                 // through appendInlineContent above, no span
                 // styling. "plain": nothing to do.
@@ -396,7 +419,8 @@ fun RichEntityText(
     entities: List<TextEntityUi>,
     fontSize: TextUnit = 15.sp,
     color: Color = Color.Unspecified,
-    linkColor: Color = Color.Unspecified
+    linkColor: Color = Color.Unspecified,
+    onHashtag: (String) -> Unit = {}
 ) {
     val carrier = remember(text, entities) {
         MsgItem(
@@ -419,7 +443,8 @@ fun RichEntityText(
         carrier,
         fontSize = fontSize,
         color = color,
-        linkColor = linkColor
+        linkColor = linkColor,
+        onHashtag = onHashtag
     )
 }
 
