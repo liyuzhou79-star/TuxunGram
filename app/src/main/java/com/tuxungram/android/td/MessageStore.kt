@@ -3809,15 +3809,36 @@ object MessageStore {
      *  Rules: only ranges NOT covered by any server entity
      *  are scanned (server entities always win; nothing is
      *  detected inside code / pre / spoiler / link spans);
-     *  a match glued to a word character, @, . , _ or - on
-     *  its left is the tail of a longer token (an email's
-     *  domain part, a file name) and is skipped; trailing
-     *  sentence punctuation (CJK included) is trimmed, and
-     *  a closing parenthesis is trimmed unless the link
-     *  opened one itself. Detected shapes: scheme URLs,
-     *  www. hosts, bare t.me-family hosts with paths, and
-     *  bare domains over a common-TLD list (so version
-     *  strings, IPs and file names stay plain).
+     *  a match glued to an ASCII token character, @, . , _
+     *  or - on its left is the tail of a longer token (an
+     *  email's domain part, a file name) and is skipped;
+     *  trailing sentence punctuation (CJK included) is
+     *  trimmed, and a closing parenthesis is trimmed
+     *  unless the link opened one itself. Detected shapes:
+     *  scheme URLs, www. hosts, bare t.me-family hosts
+     *  with paths, and bare domains over a common-TLD list
+     *  (so version strings, IPs and file names stay plain).
+     *
+     *  Boundary tightening (v0.9.48, S2 — a 30-case sample
+     *  table was verified against this exact logic, see
+     *  the checkpoint): matching is case-insensitive (T.ME
+     *  and EXAMPLE.COM are links; LinkRouter lowercases
+     *  the host anyway); the left-glue test only counts
+     *  ASCII token characters, because a CJK character in
+     *  front is prose, not part of the token (a link pasted
+     *  straight after Chinese text still counts); a bare
+     *  domain whose "TLD" is only the prefix of a longer
+     *  label — example.commercial, x.com3, and the
+     *  photo.jpg -> photo.jp misfire — is not a link at
+     *  all; a CJK sentence punctuation inside a match is
+     *  prose separation and ends the match, with scanning
+     *  resuming at the cut so a second link after the
+     *  comma is still found; a CJK ideograph ends a match
+     *  in the authority part (a host glued to prose) and
+     *  anywhere in a t.me-family match (its paths are
+     *  ASCII by construction), while CJK in a generic path
+     *  stays (the wiki-style case); CJK closing brackets
+     *  join the trailing trim set.
      *
      *  parseTextEntities is deliberately not used: it is an
      *  asynchronous TDLib request whose documented parse
@@ -3835,20 +3856,103 @@ object MessageStore {
         fun isCovered(start: Int, end: Int): Boolean =
             covered.any { start < it.last && it.first < end }
         val out = ArrayList<TextEntityUi>()
-        for (match in LOCAL_LINK_REGEX.findAll(text)) {
+        var pos = 0
+        while (pos < text.length) {
+            val match = LOCAL_LINK_REGEX.find(text, pos) ?: break
             val start = match.range.first
-            var end = match.range.last + 1
-            if (start > 0) {
-                val prev = text[start - 1]
-                if (prev.isLetterOrDigit() || prev == '@' ||
-                    prev == '.' || prev == '_' || prev == '-'
+            val rawEnd = match.range.last + 1
+            // Where scanning resumes: past the raw match —
+            // or, when a mid-match cut below shortened the
+            // link, at the cut, so the prose after it (and
+            // any second link) is still scanned.
+            var resume = rawEnd
+            var end = rawEnd
+            val matched = match.value
+            val prefixed =
+                matched.startsWith("http://", true) ||
+                    matched.startsWith("https://", true) ||
+                    matched.startsWith("www.", true) ||
+                    matched.startsWith("t.me/", true) ||
+                    matched.startsWith("telegram.me/", true) ||
+                    matched.startsWith("telegram.dog/", true)
+            // Bare-domain prefix-of-a-label rejection
+            // (v0.9.48, S2): a letter, digit or hyphen right
+            // after the raw match means the TLD was only
+            // the head of a longer label.
+            if (!prefixed && rawEnd < text.length) {
+                val nxt = text[rawEnd]
+                if (nxt in 'a'..'z' || nxt in 'A'..'Z' ||
+                    nxt in '0'..'9' || nxt == '-'
                 ) {
+                    pos = resume
                     continue
                 }
             }
+            // Left glue (v0.9.48, S2): ASCII token
+            // characters only — see the rules above.
+            if (start > 0) {
+                val prev = text[start - 1]
+                if (prev in 'a'..'z' || prev in 'A'..'Z' ||
+                    prev in '0'..'9' || prev == '@' ||
+                    prev == '.' || prev == '_' || prev == '-'
+                ) {
+                    pos = resume
+                    continue
+                }
+            }
+            // Mid-match cuts (v0.9.48, S2): CJK sentence
+            // punctuation first (any shape), then the
+            // ideograph rules for the prefixed shapes.
+            var cut = end
+            for (i in start until end) {
+                if (text[i] in "，。；：！？、") {
+                    cut = i
+                    break
+                }
+            }
+            if (prefixed) {
+                // Bounded by the punctuation cut above: an
+                // ideograph BEFORE that punctuation still
+                // ends the link first.
+                val lower = matched.lowercase()
+                val isTme = lower.startsWith("t.me/") ||
+                    lower.startsWith("telegram.me/") ||
+                    lower.startsWith("telegram.dog/")
+                if (isTme) {
+                    for (i in start until cut) {
+                        if (isCjkIdeograph(text[i])) {
+                            cut = i
+                            break
+                        }
+                    }
+                } else {
+                    val schemeEnd = lower.indexOf("://")
+                    val hostStart = if (schemeEnd >= 0) {
+                        start + schemeEnd + 3
+                    } else {
+                        start
+                    }
+                    val slash = text.indexOf('/', hostStart)
+                    val authEnd = if (slash in start until cut) {
+                        slash
+                    } else {
+                        cut
+                    }
+                    for (i in hostStart until authEnd) {
+                        if (isCjkIdeograph(text[i])) {
+                            cut = i
+                            break
+                        }
+                    }
+                }
+            }
+            if (cut < end) {
+                end = cut
+                resume = cut
+            }
             while (end > start) {
                 val c = text[end - 1]
-                if (c in ".,;:!?，。；：！？、…·\"'") {
+                if (c in ".,;:!?，。；：！？、…·\"'」』】") {
                     end--
                 } else if (c == ')' || c == '）') {
                     val seg = text.substring(start, end)
@@ -3864,18 +3968,25 @@ object MessageStore {
                     break
                 }
             }
-            if (end - start < 4) continue
-            if (isCovered(start, end)) continue
-            out.add(
-                TextEntityUi(
-                    offset = start,
-                    length = end - start,
-                    kind = "url"
+            if (end - start >= 4 && !isCovered(start, end)) {
+                out.add(
+                    TextEntityUi(
+                        offset = start,
+                        length = end - start,
+                        kind = "url"
+                    )
                 )
-            )
+            }
+            pos = resume
         }
         return out
     }
+
+    /** CJK ideograph ranges for the link boundary rules
+     *  (v0.9.48, S2): Han, Hiragana/Katakana, Hangul. */
+    private fun isCjkIdeograph(c: Char): Boolean =
+        c in '㐀'..'䶿' || c in '一'..'鿿' ||
+            c in '぀'..'ヿ' || c in '가'..'힯'
 
     private val LOCAL_LINK_REGEX = Regex(
         "(?:https?://|www\\.|t\\.me/|telegram\\.me/|telegram\\.dog/)" +
@@ -3883,7 +3994,8 @@ object MessageStore {
             "|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?" +
             "(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*" +
             "\\.(?:com|net|org|io|me|co|app|dev|site|online|xyz|top|club|info|biz|tv|cc|cn|hk|tw|ru|uk|de|jp|kr|gg|ly|gl|link|live|pro|vip)" +
-            "(?:/[^\\s<>\"'\\u3000]*)?"
+            "(?:/[^\\s<>\"'\\u3000]*)?",
+        RegexOption.IGNORE_CASE
     )
 
     /** Decode a voice note's waveform (v0.9.2, L5): base64 of

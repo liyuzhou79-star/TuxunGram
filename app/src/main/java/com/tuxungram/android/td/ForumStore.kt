@@ -609,6 +609,31 @@ object ForumStore {
     private val _windowDetached = MutableStateFlow(false)
     val windowDetached: StateFlow<Boolean> = _windowDetached
 
+    /** Read gate + new-arrival tally (v0.9.48, S1): the
+     *  same gap ThreadStore had — incoming topic messages
+     *  were force-read on arrival wherever the user was
+     *  scrolled, erasing every trace of them. The screen
+     *  reports its at-bottom state here; arrivals while
+     *  scrolled away only count up, and settling back at
+     *  the bottom marks the newest loaded message read. */
+    @Volatile
+    private var viewingLatest = true
+
+    private val _pendingNew = MutableStateFlow(0)
+    val pendingNewCount: StateFlow<Int> = _pendingNew
+
+    fun setViewingLatest(value: Boolean) {
+        val was = viewingLatest
+        viewingLatest = value
+        if (value && !was) {
+            _pendingNew.value = 0
+            val newest = byId.keys.maxOrNull() ?: return
+            if (topicChatId != 0L) {
+                markRead(topicChatId, newest)
+            }
+        }
+    }
+
     fun openTopic(chatId: Long, topicId: Int) {
         attach()
         topicChatId = chatId
@@ -624,6 +649,8 @@ object ForumStore {
         exitSearch()
         _windowDetached.value = false
         _locateId.value = 0L
+        _pendingNew.value = 0
+        viewingLatest = true
         TdRepository.sendRaw(TdClient.request("openChat").apply {
             put("chat_id", chatId)
         }) {}
@@ -636,6 +663,8 @@ object ForumStore {
         exitSearch()
         _windowDetached.value = false
         _locateId.value = 0L
+        _pendingNew.value = 0
+        viewingLatest = true
         topicChatId = 0L
         openTopicId = 0
         byId.clear()
@@ -897,6 +926,8 @@ object ForumStore {
         olderRetryAnchor = 0L
         _windowDetached.value = false
         _locateId.value = 0L
+        _pendingNew.value = 0
+        viewingLatest = true
         // An in-flight page from the old window would block
         // the reload through the loading guard; its response
         // is generation-stale and only resets the flag, so
@@ -1130,7 +1161,17 @@ object ForumStore {
                 val item = MessageStore.parseMessage(msg)
                 byId[item.id] = item
                 publish()
-                if (!item.outgoing) markRead(chatId, item.id)
+                if (!item.outgoing) {
+                    // Read gate (v0.9.48, S1): at the
+                    // bottom the message is being read;
+                    // scrolled up it only joins the tally
+                    // the back-to-latest button shows.
+                    if (viewingLatest) {
+                        markRead(chatId, item.id)
+                    } else {
+                        _pendingNew.value += 1
+                    }
+                }
             }
             "updateMessageSendSucceeded" -> {
                 val msg = update.optJSONObject("message") ?: return
