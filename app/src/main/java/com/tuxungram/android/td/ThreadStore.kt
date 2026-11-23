@@ -98,6 +98,48 @@ object ThreadStore {
     @Volatile
     private var attached = false
 
+    // ---- Topic-scoped tag search (v0.9.45, P1) ----
+    // searchChatMessages carries a topic_id in this tl
+    // (td_api.tl: searchChatMessages chat_id topic_id:
+    // MessageTopic query ...), so a hashtag tap inside a
+    // thread searches THIS thread only, scoped by
+    // messageTopicThread — the regular path, no local
+    // filtering of the loaded window. Paging mirrors the
+    // main chat's searchInChat (from_message_id cursor +
+    // next_from_message_id from the previous page).
+    private val _searchResults =
+        MutableStateFlow<List<MsgItem>>(emptyList())
+    val searchResults: StateFlow<List<MsgItem>> = _searchResults
+
+    private val _searchTotal = MutableStateFlow(-1)
+    val searchTotal: StateFlow<Int> = _searchTotal
+
+    private val _searchExhausted = MutableStateFlow(true)
+    val searchExhausted: StateFlow<Boolean> = _searchExhausted
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery
+
+    private var searchFromId = 0L
+
+    /** Bumped on every fresh search / exit / open / close;
+     *  a response from a superseded search is dropped. */
+    @Volatile
+    private var searchGeneration = 0
+
+    /** Set by jumpTo once its window lands; the screen
+     *  scrolls the message into view, then clears it. */
+    private val _locateId = MutableStateFlow(0L)
+    val locateId: StateFlow<Long> = _locateId
+
+    /** True while the loaded window is a jump window that
+     *  no longer reaches the newest comment (v0.9.45, P1):
+     *  the back-to-latest button then reloads the window
+     *  instead of only scrolling — the MessageStore
+     *  backToLatest contract, ported to this host. */
+    private val _windowDetached = MutableStateFlow(false)
+    val windowDetached: StateFlow<Boolean> = _windowDetached
+
     // ---- Linked-chat detection for the 评论 entry point ----
 
     private val _linkedChatId = MutableStateFlow(0L)
@@ -154,6 +196,9 @@ object ThreadStore {
         firstPageRetried = false
         historyGeneration++
         olderRetryAnchor = 0L
+        exitSearch()
+        _windowDetached.value = false
+        _locateId.value = 0L
         val gen = historyGeneration
         val query = TdClient.request("getMessageThread").apply {
             put("chat_id", sourceChat)
@@ -197,6 +242,9 @@ object ThreadStore {
     fun close() {
         historyGeneration++
         olderRetryAnchor = 0L
+        exitSearch()
+        _windowDetached.value = false
+        _locateId.value = 0L
         if (threadChatId != 0L) {
             TdRepository.sendRaw(TdClient.request("closeChat").apply {
                 put("chat_id", threadChatId)
@@ -322,6 +370,153 @@ object ThreadStore {
                 markRead(chatId, newestId)
             }
         }
+    }
+
+    /** Search this thread for [query] (v0.9.45, P1): a
+     *  hashtag tap lands here. searchChatMessages scoped
+     *  by messageTopicThread — the server searches the
+     *  whole thread, not just the loaded window. A fresh
+     *  call restarts paging; append pages older hits. */
+    fun searchByTag(query: String, append: Boolean = false) {
+        val chatId = threadChatId
+        val rootId = rootMessageId
+        if (chatId == 0L || rootId == 0L || !_ready.value) return
+        if (!append) {
+            val q = query.trim()
+            searchGeneration++
+            _searchQuery.value = q
+            searchFromId = 0L
+            _searchResults.value = emptyList()
+            _searchTotal.value = -1
+            _searchExhausted.value = q.isEmpty()
+            if (q.isEmpty()) return
+        }
+        val gen = searchGeneration
+        val request = TdClient.request("searchChatMessages").apply {
+            put("chat_id", chatId)
+            put("topic_id", JSONObject().apply {
+                put("@type", "messageTopicThread")
+                put("message_thread_id", rootId)
+            })
+            put("query", _searchQuery.value)
+            put("sender_id", JSONObject.NULL)
+            put("from_message_id", searchFromId)
+            put("offset", 0)
+            put("limit", 30)
+            put(
+                "filter",
+                JSONObject().put("@type", "searchMessagesFilterEmpty")
+            )
+        }
+        TdRepository.sendRaw(request) { response ->
+            if (threadChatId != chatId || rootMessageId != rootId) {
+                return@sendRaw
+            }
+            if (gen != searchGeneration) return@sendRaw
+            if (TdClient.isError(response)) {
+                _searchExhausted.value = true
+                return@sendRaw
+            }
+            val total = response.optInt("total_count", -1)
+            if (total >= 0) _searchTotal.value = total
+            val next = response.optLong("next_from_message_id")
+            searchFromId = next
+            if (next == 0L) _searchExhausted.value = true
+            val arr = response.optJSONArray("messages") ?: JSONArray()
+            if (arr.length() == 0) {
+                _searchExhausted.value = true
+                return@sendRaw
+            }
+            val items = ArrayList<MsgItem>()
+            for (i in 0 until arr.length()) {
+                val msg = arr.optJSONObject(i) ?: continue
+                items.add(MessageStore.parseMessage(msg))
+            }
+            _searchResults.value = _searchResults.value + items
+        }
+    }
+
+    /** Close the tag search (v0.9.45, P1): clears the
+     *  results and invalidates any in-flight page. */
+    fun exitSearch() {
+        searchGeneration++
+        _searchQuery.value = ""
+        _searchResults.value = emptyList()
+        _searchTotal.value = -1
+        _searchExhausted.value = true
+        searchFromId = 0L
+    }
+
+    /** Replace the loaded window with the one around
+     *  [messageId] (v0.9.45, P1) and flag it for the
+     *  screen to scroll to: getMessageThreadHistory with
+     *  a negative offset reaches back from the anchor —
+     *  the same shape as MessageStore.jumpTo. */
+    fun jumpTo(messageId: Long) {
+        val chatId = threadChatId
+        val rootId = rootMessageId
+        if (chatId == 0L || rootId == 0L || messageId == 0L) return
+        historyGeneration++
+        val gen = historyGeneration
+        byId.clear()
+        _messages.value = emptyList()
+        allLoaded = false
+        firstPageRetried = false
+        olderRetryAnchor = 0L
+        _windowDetached.value = true
+        val query = TdClient.request("getMessageThreadHistory").apply {
+            put("chat_id", chatId)
+            put("message_id", rootId)
+            put("from_message_id", messageId)
+            put("offset", -25)
+            put("limit", 50)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (threadChatId != chatId || rootMessageId != rootId) {
+                return@sendRaw
+            }
+            if (gen != historyGeneration) return@sendRaw
+            if (TdClient.isError(response)) return@sendRaw
+            val arr = response.optJSONArray("messages") ?: JSONArray()
+            // A short jump window says nothing about older
+            // history (D1): only an empty window settles the
+            // flag; loadOlder probes the rest.
+            if (arr.length() == 0) allLoaded = true
+            for (i in 0 until arr.length()) {
+                val msg = arr.optJSONObject(i) ?: continue
+                val item = MessageStore.parseMessage(msg)
+                byId[item.id] = item
+            }
+            publish()
+            _locateId.value = messageId
+        }
+    }
+
+    fun clearLocate() {
+        _locateId.value = 0L
+    }
+
+    /** Reload the window from the newest comment
+     *  (v0.9.45, P1), undoing a jumpTo window — the
+     *  back-to-latest button calls this while the window
+     *  is detached, and only scrolls otherwise. */
+    fun backToLatest() {
+        if (threadChatId == 0L || rootMessageId == 0L) return
+        historyGeneration++
+        byId.clear()
+        _messages.value = emptyList()
+        allLoaded = false
+        firstPageRetried = false
+        olderRetryAnchor = 0L
+        _windowDetached.value = false
+        _locateId.value = 0L
+        // An in-flight page from the old window would block
+        // the reload through the loading guard; its response
+        // is generation-stale and only resets the flag, so
+        // clearing it here is safe (MessageStore's wording).
+        loading = false
+        _historyLoading.value = false
+        loadHistory(fromMessageId = 0L)
     }
 
     fun setReplyTarget(item: MsgItem?) {

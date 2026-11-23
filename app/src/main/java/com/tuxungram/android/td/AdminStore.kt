@@ -65,13 +65,51 @@ object AdminStore {
     @Volatile
     private var capsChatId = 0L
 
+    @Volatile
+    private var attached = false
+
+    /** Live caps refresh (v0.9.45, P3): my own member
+     *  status can change while a page gated on these caps
+     *  is open — another admin promotes, demotes or
+     *  restricts me — and updateChatMember is the
+     *  delivery, the same seam MessageStore's access dock
+     *  got in v0.9.44 (N3). The update does not cheaply
+     *  say whether the changed member is me, and member
+     *  changes in one chat are rare, so any of them
+     *  re-fetches the caps of the chat they belong to.
+     *  The refresh does NOT clear first, so management
+     *  entries never flicker out while the re-read is in
+     *  flight; a failed re-read keeps the previous caps.
+     *  This also carries the slow-mode exemption, which
+     *  the chat screen derives from caps.canManage. */
+    private fun attach() {
+        if (attached) return
+        attached = true
+        TdRepository.addUpdateListener { update ->
+            if (update.optString("@type") != "updateChatMember") {
+                return@addUpdateListener
+            }
+            val chatId = capsChatId
+            if (chatId == 0L) return@addUpdateListener
+            if (update.optLong("chat_id") != chatId) {
+                return@addUpdateListener
+            }
+            fetchCaps(chatId, resetFirst = false)
+        }
+    }
+
     fun capsFor(chatId: Long): AdminCaps =
         if (capsChatId == chatId) _caps.value else AdminCaps()
 
     fun loadCaps(chatId: Long) {
+        attach()
         capsChatId = chatId
-        _caps.value = AdminCaps()
         _notice.value = null
+        fetchCaps(chatId, resetFirst = true)
+    }
+
+    private fun fetchCaps(chatId: Long, resetFirst: Boolean) {
+        if (resetFirst) _caps.value = AdminCaps()
         TdRepository.sendRaw(TdClient.request("getMe")) { me ->
             if (TdClient.isError(me)) return@sendRaw
             val myId = me.optLong("id")

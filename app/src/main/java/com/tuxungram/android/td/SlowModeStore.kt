@@ -19,7 +19,9 @@ import org.json.JSONObject
  * updateSupergroupFullInfo is pushed when expires_in
  * changes — polling the full info on the events that can
  * move it (opening the chat, sending a message) is the
- * documented way to stay exact.
+ * documented way to stay exact. Changes to the delay
+ * itself DO arrive as updateSupergroupFullInfo pushes,
+ * and since v0.9.45 (P3) those are applied live too.
  *
  * Scope, per td_api.tl: the delay binds NON-administrator
  * supergroup members. Broadcast channels are excluded
@@ -55,18 +57,35 @@ object SlowModeStore {
         if (attached) return
         attached = true
         TdRepository.addUpdateListener { update ->
-            if (update.optString("@type") !=
-                "updateMessageSendSucceeded"
-            ) {
-                return@addUpdateListener
-            }
-            // A message of mine just landed in the watched
-            // chat: the server's remaining wait starts now,
-            // so re-read it instead of assuming delaySec.
-            if (update.optLong("chat_id") == chatId &&
-                supergroupId != 0L
-            ) {
-                fetchFullInfo()
+            when (update.optString("@type")) {
+                "updateMessageSendSucceeded" -> {
+                    // A message of mine just landed in the
+                    // watched chat: the server's remaining
+                    // wait starts now, so re-read it instead
+                    // of assuming delaySec.
+                    if (update.optLong("chat_id") == chatId &&
+                        supergroupId != 0L
+                    ) {
+                        fetchFullInfo()
+                    }
+                }
+                "updateSupergroupFullInfo" -> {
+                    // The group's full info changed while
+                    // the chat is open (v0.9.45, P3) — an
+                    // admin raising or lowering the slow-mode
+                    // delay is exactly such a change, and the
+                    // tl pushes the whole object for it (only
+                    // expires_in drifting on its own is exempt
+                    // from pushing). Apply the pushed object
+                    // instead of waiting for the next send or
+                    // re-entry to notice.
+                    if (supergroupId != 0L &&
+                        update.optLong("supergroup_id") == supergroupId
+                    ) {
+                        update.optJSONObject("supergroup_full_info")
+                            ?.let { applyFullInfo(it) }
+                    }
+                }
             }
         }
     }
@@ -109,16 +128,26 @@ object SlowModeStore {
             if (TdClient.isError(info) || chatId != forChat) {
                 return@sendRaw
             }
-            _delaySec.value = info.optInt("slow_mode_delay")
-            val expiresIn = info.optDouble(
-                "slow_mode_delay_expires_in", 0.0
-            )
-            _waitUntilMs.value = if (expiresIn > 0.0) {
-                System.currentTimeMillis() +
-                    (expiresIn * 1000.0).toLong()
-            } else {
-                0L
-            }
+            applyFullInfo(info)
+        }
+    }
+
+    /** Fold one supergroupFullInfo object into the two
+     *  countdown flows: the group's delay, and my personal
+     *  wait anchored on the server's expires_in at the
+     *  moment the object was produced. Shared by the
+     *  fetch path and the pushed-update path (v0.9.45,
+     *  P3) so both read the fields the same way. */
+    private fun applyFullInfo(info: JSONObject) {
+        _delaySec.value = info.optInt("slow_mode_delay")
+        val expiresIn = info.optDouble(
+            "slow_mode_delay_expires_in", 0.0
+        )
+        _waitUntilMs.value = if (expiresIn > 0.0) {
+            System.currentTimeMillis() +
+                (expiresIn * 1000.0).toLong()
+        } else {
+            0L
         }
     }
 }
