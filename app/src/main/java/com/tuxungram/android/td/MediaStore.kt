@@ -206,13 +206,23 @@ object MediaStore {
      *  td_api.tl). The result parses exactly like the
      *  recent/favorite lists, so results can be sent by file
      *  id straight from the grid. */
+    /** Search generation (v0.9.52, W3): the panel now searches
+     *  as the user types (debounced), so responses can land
+     *  out of order; only the newest query's answer may
+     *  publish. Clearing the search also bumps the generation,
+     *  which cancels any in-flight answer. */
+    @Volatile
+    private var searchGeneration = 0
+
     fun searchByEmoji(emojis: String) {
         attach()
         val query = emojis.trim()
         if (query.isEmpty()) {
+            searchGeneration++
             _searchResults.value = emptyList()
             return
         }
+        val generation = ++searchGeneration
         TdRepository.sendRaw(TdClient.request("searchStickers").apply {
             put(
                 "sticker_type",
@@ -227,6 +237,7 @@ object MediaStore {
             // ours, not a server rule.
             put("limit", 100)
         }) { response ->
+            if (generation != searchGeneration) return@sendRaw
             if (!TdClient.isError(response)) {
                 _searchResults.value = parseStickers(response)
             }
@@ -234,6 +245,9 @@ object MediaStore {
     }
 
     fun clearSearch() {
+        // Bumping the generation cancels an in-flight answer
+        // (v0.9.52, W3).
+        searchGeneration++
         _searchResults.value = emptyList()
     }
 

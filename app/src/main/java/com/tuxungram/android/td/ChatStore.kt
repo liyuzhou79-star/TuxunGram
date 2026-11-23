@@ -182,6 +182,7 @@ object ChatStore {
         recompute()
         recomputeArchive()
         recomputeFolder()
+        recomputeTabUnread()
     }
 
     // ---- Local pins (v0.9.23, P1) ----
@@ -575,6 +576,48 @@ object ChatStore {
 
     private val _folders = MutableStateFlow<List<FolderTab>>(emptyList())
     val folders: StateFlow<List<FolderTab>> = _folders
+
+    /** Unread counts for the folder tab strip (v0.9.52, W4).
+     *  The tabs carried no badge at all before this version.
+     *  The count is the official folder-counter口径: the
+     *  number of CHATS with unread messages in the folder
+     *  (not the number of unread messages), and muted chats
+     *  do not raise it — a muted chat's unread stays visible
+     *  on its own row only. A chat the user marked as unread
+     *  by hand counts, like its row badge does. Keys are
+     *  folder ids; [allUnreadChats] is the same count over
+     *  the main list for the 全部 tab. Both are pure functions
+     *  of the cache, recomputed with the lists. */
+    private val _folderUnread = MutableStateFlow<Map<Int, Int>>(emptyMap())
+    val folderUnread: StateFlow<Map<Int, Int>> = _folderUnread
+
+    private val _allUnreadChats = MutableStateFlow(0)
+    val allUnreadChats: StateFlow<Int> = _allUnreadChats
+
+    private fun recomputeTabUnread() {
+        var all = 0
+        val perFolder = HashMap<Int, Int>()
+        for (folder in _folders.value) perFolder[folder.id] = 0
+        for (chat in cache.values) {
+            val hasUnread = chat.optInt("unread_count") > 0 ||
+                chat.optBoolean("is_marked_as_unread")
+            if (!hasUnread) continue
+            val muteFor = chat.optJSONObject("notification_settings")
+                ?.optInt("mute_for", 0) ?: 0
+            if (muteFor > 0) continue
+            val main = mainPosition(chat)
+            if (main != null && main.optLong("order") != 0L) all++
+            for (folder in _folders.value) {
+                val p = folderPosition(chat, folder.id) ?: continue
+                if (p.optLong("order") != 0L) {
+                    perFolder[folder.id] =
+                        (perFolder[folder.id] ?: 0) + 1
+                }
+            }
+        }
+        _allUnreadChats.value = all
+        _folderUnread.value = perFolder
+    }
 
     private val _selectedFolder = MutableStateFlow<Int?>(null)
     val selectedFolder: StateFlow<Int?> = _selectedFolder

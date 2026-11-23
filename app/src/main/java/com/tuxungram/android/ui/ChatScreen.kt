@@ -201,6 +201,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableFloatStateOf
@@ -4532,6 +4534,25 @@ fun ChatScreen(
                     }
                 }
             }
+            // Panel height follows the keyboard (v0.9.52, W3):
+            // the official panel is exactly as tall as the
+            // keyboard it replaces. The IME height is only
+            // observable while the keyboard is up (panel and
+            // IME are mutually exclusive), so the last real
+            // height is remembered and reused; 288dp is the
+            // fallback before the keyboard was ever shown.
+            val panelDensity = LocalDensity.current
+            val imeBottomDp = with(panelDensity) {
+                WindowInsets.ime.getBottom(panelDensity).toDp()
+            }
+            var lastKeyboardHeight by remember {
+                mutableStateOf(288.dp)
+            }
+            LaunchedEffect(imeBottomDp) {
+                if (imeBottomDp > 100.dp) {
+                    lastKeyboardHeight = imeBottomDp
+                }
+            }
             // Sticker panel (Phase D steer; v0.9.11, A1):
             // rises out of the keyboard area and sinks back
             // instead of popping in and out.
@@ -4554,6 +4575,8 @@ fun ChatScreen(
                     )
               ) {
                 MediaPanel(
+                    panelHeight = lastKeyboardHeight
+                        .coerceIn(240.dp, 420.dp),
                     onEmoji = { emoji -> input += emoji },
                     onSendEntry = { entry ->
                         MessageStore.clearSendError()
@@ -6479,6 +6502,20 @@ fun MessageBubble(
                         menuOpen = false
                         onForward(listOf(msg))
                     })
+                    // Share out to other apps (v0.9.52, W5):
+                    // only when there is something to hand
+                    // over — a downloaded file, a photo on
+                    // disk, or plain text.
+                    if (msg.filePath != null || msg.photoPath != null ||
+                        (msg.kind == MsgKind.TEXT && msg.text.isNotEmpty())
+                    ) {
+                        add(MessageMenuEntry(
+                            ForwardIcon, "分享到其他应用"
+                        ) {
+                            menuOpen = false
+                            shareMessageExternally(context, msg)
+                        })
+                    }
                     add(MessageMenuEntry(
                         Icons.Filled.Delete, "删除", danger = true
                     ) {
@@ -8545,6 +8582,54 @@ fun ContactBubbleContent(msg: MsgItem) {
     }
 }
 
+/** Share a message out to other apps (v0.9.52, W5): a
+ *  downloaded file goes through the FileProvider with its
+ *  mime type; a text message shares its text. Failures (no
+ *  receiving app, provider mismatch) surface as a toast —
+ *  a silent no-op would read as a broken button. */
+fun shareMessageExternally(
+    context: android.content.Context,
+    msg: MsgItem
+) {
+    try {
+        val path = msg.filePath ?: msg.photoPath
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            if (path != null) {
+                val uri = androidx.core.content.FileProvider
+                    .getUriForFile(
+                        context,
+                        "com.tuxungram.android.fileprovider",
+                        File(path)
+                    )
+                type = msg.fileMime.ifEmpty {
+                    if (msg.kind == MsgKind.PHOTO) {
+                        "image/jpeg"
+                    } else {
+                        "*/*"
+                    }
+                }
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                if (msg.text.isNotEmpty()) {
+                    putExtra(Intent.EXTRA_TEXT, msg.text)
+                }
+            } else {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, msg.text)
+            }
+        }
+        context.startActivity(
+            Intent.createChooser(intent, "分享到其他应用")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    } catch (t: Throwable) {
+        Toast.makeText(
+            context, "分享没发出去，这台手机上可能没有能接收的应用。",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+}
+
 fun openFileWithSystem(context: android.content.Context, path: String, mime: String) {
     try {
         val file = File(path)
@@ -10040,7 +10125,10 @@ private val PANEL_EMOJIS = listOf(
 @Composable
 private fun MediaPanel(
     onEmoji: (String) -> Unit,
-    onSendEntry: (com.tuxungram.android.td.MediaEntry) -> Unit
+    onSendEntry: (com.tuxungram.android.td.MediaEntry) -> Unit,
+    // Height of the last shown keyboard (v0.9.52, W3), so the
+    // panel takes the keyboard's place without a size jump.
+    panelHeight: androidx.compose.ui.unit.Dp = 288.dp
 ) {
     var tab by remember { mutableIntStateOf(1) }
     // null = recent, -1 = favorites, otherwise a set id.
@@ -10059,6 +10147,10 @@ private fun MediaPanel(
     var searchActive by remember { mutableStateOf(false) }
     var previewSet by remember { mutableStateOf<TrendingSetUi?>(null) }
     var previewAdded by remember { mutableStateOf(false) }
+    // Long-press sticker preview (v0.9.52, W3).
+    var previewEntry by remember {
+        mutableStateOf<com.tuxungram.android.td.MediaEntry?>(null)
+    }
     LaunchedEffect(previewSet) {
         val set = previewSet
         if (set != null) {
@@ -10066,10 +10158,25 @@ private fun MediaPanel(
             MediaStore.loadPreviewSet(set.id)
         }
     }
+    // Search as you type (v0.9.52, W3): a 350ms debounce on
+    // the input, and MediaStore's generation guard drops any
+    // answer that lands after a newer query (or a clear).
+    LaunchedEffect(searchText) {
+        if (searchText.isBlank()) {
+            if (searchActive) {
+                searchActive = false
+                MediaStore.clearSearch()
+            }
+            return@LaunchedEffect
+        }
+        delay(350)
+        searchActive = true
+        MediaStore.searchByEmoji(searchText)
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(288.dp)
+            .height(panelHeight)
     ) {
         Row(modifier = Modifier.padding(horizontal = 8.dp)) {
             for ((index, label) in listOf("表情", "贴纸", "GIF").withIndex()) {
@@ -10145,7 +10252,10 @@ private fun MediaPanel(
                             gridItems(
                                 searchResults, key = { it.fileId }
                             ) { entry ->
-                                MediaPickerCell(entry) { onSendEntry(entry) }
+                                MediaPickerCell(
+                                    entry,
+                                    onLongClick = { previewEntry = entry }
+                                ) { onSendEntry(entry) }
                             }
                         }
                     }
@@ -10213,7 +10323,10 @@ private fun MediaPanel(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         gridItems(entries, key = { it.fileId }) { entry ->
-                            MediaPickerCell(entry) { onSendEntry(entry) }
+                            MediaPickerCell(
+                                entry,
+                                onLongClick = { previewEntry = entry }
+                            ) { onSendEntry(entry) }
                         }
                     }
                 }
@@ -10231,7 +10344,10 @@ private fun MediaPanel(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         gridItems(animations, key = { it.fileId }) { entry ->
-                            MediaPickerCell(entry) { onSendEntry(entry) }
+                            MediaPickerCell(
+                                entry,
+                                onLongClick = { previewEntry = entry }
+                            ) { onSendEntry(entry) }
                         }
                     }
                 }
@@ -10295,6 +10411,68 @@ private fun MediaPanel(
             }
         )
     }
+    // Long-press sticker preview (v0.9.52, W3): the entry at
+    // full size with its emoji, and a send button — looking
+    // before sending, like the official panel.
+    val entryPreview = previewEntry
+    if (entryPreview != null) {
+        val previewPath = entryPreview.previewPath
+        val previewBitmap by produceState<android.graphics.Bitmap?>(
+            initialValue = null, previewPath
+        ) {
+            value = if (previewPath == null) {
+                null
+            } else {
+                withContext(Dispatchers.IO) {
+                    decodeCached(previewPath, 640)
+                }
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { previewEntry = null },
+            title = {
+                Text(
+                    entryPreview.emoji.ifEmpty { "贴纸" }
+                )
+            },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val bmp = previewBitmap
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = entryPreview.emoji,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Text(
+                            entryPreview.emoji.ifEmpty { "…" },
+                            fontSize = 64.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    previewEntry = null
+                    onSendEntry(entryPreview)
+                }) {
+                    Text("发送")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { previewEntry = null }) {
+                    Text("关闭")
+                }
+            }
+        )
+    }
 }
 
 /** One trending set cover in the discovery row (v0.9.4,
@@ -10348,8 +10526,13 @@ private fun TrendingSetCell(set: TrendingSetUi, onClick: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaPickerCell(entry: MediaEntry, onClick: () -> Unit) {
+private fun MediaPickerCell(
+    entry: MediaEntry,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit
+) {
     val path = entry.previewPath
     val bitmap by produceState<android.graphics.Bitmap?>(
         initialValue = null, path
@@ -10363,7 +10546,10 @@ private fun MediaPickerCell(entry: MediaEntry, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(72.dp)
-            .clickable { onClick() }
+            .combinedClickable(
+                onClick = { onClick() },
+                onLongClick = onLongClick
+            )
             .padding(6.dp),
         contentAlignment = Alignment.Center
     ) {

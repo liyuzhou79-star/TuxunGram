@@ -322,6 +322,115 @@ fun ForwardPickerScreen(
     }
 }
 
+/** Chat-list-as-picker for content shared INTO the app from
+ *  another app's share sheet (v0.9.52, W5). Mirrors the
+ *  forward picker's shape — Saved Messages pinned on top,
+ *  the same rows — and stays open until TDLib answers, so a
+ *  failure is shown here instead of vanishing. On success
+ *  [onSent] opens the target chat so the user sees the
+ *  content land. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SharePickerScreen(
+    content: com.tuxungram.android.td.SharedContent,
+    onCancel: () -> Unit,
+    onSent: (Long) -> Unit
+) {
+    val chats by ChatStore.chats.collectAsState()
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val pickerListState = rememberLazyListState()
+    var savedChatId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(Unit) {
+        ContactsStore.openSavedMessages { savedChatId = it }
+    }
+    fun sendTo(targetId: Long) {
+        busy = true
+        error = null
+        com.tuxungram.android.td.MessageStore.sendSharedTo(
+            targetId, content.text, content.files
+        ) { failure ->
+            if (failure == null) {
+                onSent(targetId)
+            } else {
+                busy = false
+                error = failure
+            }
+        }
+    }
+    BackHandler { if (!busy) onCancel() }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { if (!busy) onCancel() }) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "取消"
+                )
+            }
+            Text(
+                "分享到…",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Text(
+            when {
+                content.files.isEmpty() -> "一段文字"
+                content.text.isEmpty() ->
+                    "${content.files.size} 个文件"
+                else ->
+                    "${content.files.size} 个文件 + 一段文字"
+            },
+            color = Color.Gray,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+        )
+        if (error != null) {
+            Text(
+                error!!,
+                color = Color(0xFFC62828),
+                fontSize = 14.sp,
+                modifier = Modifier.padding(
+                    horizontal = 16.dp, vertical = 6.dp
+                )
+            )
+        }
+        if (busy) {
+            CenterColumn {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(12.dp))
+                Text("正在发送…", color = Color.Gray)
+            }
+        } else {
+            LazyColumn(
+                state = pickerListState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .lazyListScrollbar(pickerListState)
+            ) {
+                val savedId = savedChatId
+                if (savedId != null) {
+                    item(key = "saved_messages") {
+                        SavedMessagesRow(onClick = { sendTo(savedId) })
+                    }
+                }
+                items(items = chats, key = { it.id }) { chat ->
+                    Box(
+                        modifier = Modifier.animateItemPlacement(
+                            Motion.tween(Motion.LIST_PLACEMENT)
+                        )
+                    ) {
+                        ChatRow(chat, onClick = { sendTo(chat.id) })
+                    }
+                }
+            }
+        }
+    }
+}
+
 fun formatChatTime(dateSeconds: Int): String {
     if (dateSeconds <= 0) return ""
     val now = java.util.Calendar.getInstance()
@@ -375,6 +484,8 @@ fun ChatListScreen(
     val archived by ChatStore.archivedChats.collectAsState()
     LaunchedEffect(Unit) { ChatStore.loadArchived() }
     val folders by ChatStore.folders.collectAsState()
+    val folderUnread by ChatStore.folderUnread.collectAsState()
+    val allUnreadChats by ChatStore.allUnreadChats.collectAsState()
     val selectedFolder by ChatStore.selectedFolder.collectAsState()
     val folderChats by ChatStore.folderChats.collectAsState()
     val folderLoaded by ChatStore.folderLoaded.collectAsState()
@@ -551,12 +662,14 @@ fun ChatListScreen(
                 FolderTab(
                     label = "全部",
                     selected = selectedFolder == null,
+                    badge = allUnreadChats,
                     onClick = { ChatStore.selectFolder(null) }
                 )
                 for (folder in folders) {
                     FolderTab(
                         label = folder.name.ifEmpty { "文件夹" },
                         selected = selectedFolder == folder.id,
+                        badge = folderUnread[folder.id] ?: 0,
                         onClick = { ChatStore.selectFolder(folder.id) },
                         onLongClick = { folderEditTarget = folder.id }
                     )
@@ -1092,7 +1205,12 @@ fun ChatListScreen(
                 if (selectedFolder == null && archived.isNotEmpty()) {
                     item(key = "archive_entry") {
                         ArchiveEntryRow(
-                            unread = archived.sumOf { it.unreadCount },
+                            // Muted chats stay out of the
+                            // counter (v0.9.52, W4), the same
+                            //口径 as the folder tab badges.
+                            unread = archived
+                                .filter { !it.isMuted }
+                                .sumOf { it.unreadCount },
                             onClick = onOpenArchive
                         )
                     }
@@ -2495,7 +2613,11 @@ fun FolderTab(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)? = null,
+    // Unread-chat counter (v0.9.52, W4): the official folder
+    // tab badge — number of chats with unread in the folder,
+    // muted chats excluded (ChatStore.recomputeTabUnread).
+    badge: Int = 0
 ) {
     val palette = OfficialTheme.current()
     // Selection underline progress (v0.9.22, AC1b): the
@@ -2531,25 +2653,51 @@ fun FolderTab(
             .width(IntrinsicSize.Max),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            label,
-            color = if (selected) {
-                palette.accent
-            } else {
-                palette.textSecondary
-            },
-            fontSize = 15.sp,
-            fontWeight = if (selected) {
-                FontWeight.SemiBold
-            } else {
-                FontWeight.Normal
-            },
-            overflow = TextOverflow.Ellipsis,
-            maxLines = 1,
-            // 12dp (v0.9.33, Z5): tab touch height lands at
-            // ~47dp including the underline, up from ~43dp.
-            modifier = Modifier.padding(vertical = 12.dp)
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                label,
+                color = if (selected) {
+                    palette.accent
+                } else {
+                    palette.textSecondary
+                },
+                fontSize = 15.sp,
+                fontWeight = if (selected) {
+                    FontWeight.SemiBold
+                } else {
+                    FontWeight.Normal
+                },
+                overflow = TextOverflow.Ellipsis,
+                maxLines = 1,
+                // 12dp (v0.9.33, Z5): tab touch height lands at
+                // ~47dp including the underline, up from ~43dp.
+                modifier = Modifier.padding(vertical = 12.dp)
+            )
+            if (badge > 0) {
+                Spacer(Modifier.width(5.dp))
+                // Same pill as the chat rows' unread capsule
+                // (X3): accent fill, white semibold count,
+                // the user's badge cap applies.
+                Box(
+                    modifier = Modifier
+                        .height(18.dp)
+                        .defaultMinSize(minWidth = 18.dp)
+                        .background(
+                            palette.unreadBadge,
+                            RoundedCornerShape(9.dp)
+                        )
+                        .padding(horizontal = 5.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        UiSettings.badgeText(badge),
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
         // Official indicator: accent, 3 dp, flush with the
         // strip's bottom edge (the hairline divider sits
         // directly below the strip).
