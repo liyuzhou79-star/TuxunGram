@@ -53,6 +53,23 @@ object ForumStore {
         if (forumCheckedFor == chatId) return
         forumCheckedFor = chatId
         _isForum.value = false
+        // Open-path fast lane (v0.9.47, R3): the chat list
+        // already caches this chat's type object. A cached
+        // non-supergroup settles the question with no request
+        // at all; a cached supergroup skips straight to
+        // getSupergroup. Only an uncached chat pays the old
+        // getChat -> getSupergroup chain — one of three
+        // duplicate getChat calls this screen used to fire
+        // per open (MessageStore and BotStore fetch it too).
+        val cachedType = ChatStore.typeOfChat(chatId)
+        if (cachedType != null) {
+            if (cachedType.optString("@type") ==
+                "chatTypeSupergroup"
+            ) {
+                loadIsForum(chatId, cachedType.optLong("supergroup_id"))
+            }
+            return
+        }
         val query = TdClient.request("getChat").apply {
             put("chat_id", chatId)
         }
@@ -62,13 +79,17 @@ object ForumStore {
             if (type.optString("@type") != "chatTypeSupergroup") {
                 return@sendRaw
             }
-            val sg = TdClient.request("getSupergroup").apply {
-                put("supergroup_id", type.optLong("supergroup_id"))
-            }
-            TdRepository.sendRaw(sg) { info ->
-                if (!TdClient.isError(info) && forumCheckedFor == chatId) {
-                    _isForum.value = info.optBoolean("is_forum")
-                }
+            loadIsForum(chatId, type.optLong("supergroup_id"))
+        }
+    }
+
+    private fun loadIsForum(chatId: Long, supergroupId: Long) {
+        val sg = TdClient.request("getSupergroup").apply {
+            put("supergroup_id", supergroupId)
+        }
+        TdRepository.sendRaw(sg) { info ->
+            if (!TdClient.isError(info) && forumCheckedFor == chatId) {
+                _isForum.value = info.optBoolean("is_forum")
             }
         }
     }

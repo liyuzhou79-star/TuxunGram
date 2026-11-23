@@ -779,6 +779,14 @@ object MessageStore {
 
     private var searchQuery = ""
     private var searchFromId = 0L
+    // In-chat search generation (v0.9.47, R7): bumped by
+    // every fresh (non-append) search and by open(); a
+    // response from an older generation is dropped, so a
+    // slow answer to a superseded query or filter can no
+    // longer append its hits into the current result list.
+    // The global SearchStore has had the same guard since
+    // its first version; this store was missing it.
+    private var searchGeneration = 0
     /** A navigation target waiting for the next results page
      *  (X3): set when the user steps past the loaded end;
      *  consumed by the search response handler. */
@@ -1062,6 +1070,7 @@ object MessageStore {
         val chatId = currentChatId
         if (chatId == 0L) return
         if (!append) {
+            searchGeneration++
             searchQuery = query.trim()
             searchFromId = 0L
             _searchFilter.value = filter
@@ -1072,6 +1081,7 @@ object MessageStore {
             _searchExhausted.value = searchQuery.isEmpty()
             if (searchQuery.isEmpty()) return
         }
+        val gen = searchGeneration
         val q = TdClient.request("searchChatMessages").apply {
             put("chat_id", chatId)
             put("topic_id", JSONObject.NULL)
@@ -1087,6 +1097,10 @@ object MessageStore {
         }
         TdRepository.sendRaw(q) { response ->
             if (currentChatId != chatId) return@sendRaw
+            // Stale search (v0.9.47, R7): a newer query or
+            // filter superseded this request while it was in
+            // flight; its hits belong to the old search.
+            if (gen != searchGeneration) return@sendRaw
             if (TdClient.isError(response)) {
                 _searchExhausted.value = true
                 searchPendingNav = -1
@@ -1690,6 +1704,9 @@ object MessageStore {
         _searchExhausted.value = true
         _searchTotal.value = -1
         _searchFilter.value = ChatSearchFilter.ALL
+        // Any in-flight search belongs to the previous chat
+        // (v0.9.47, R7).
+        searchGeneration++
         clearSearchNav()
         _pinnedMessages.value = emptyList()
         _replyKb.value = ReplyKb.Hidden
@@ -3762,8 +3779,112 @@ object MessageStore {
                 )
             )
         }
+        // Bare-link fill-in (v0.9.47, R2): links the server
+        // shipped without an entity are detected locally over
+        // the ranges no server entity covers. See
+        // detectLocalLinks for the root cause and rules.
+        val rawText = formatted?.optString("text") ?: ""
+        if (rawText.isNotEmpty()) {
+            out.addAll(detectLocalLinks(rawText, out))
+        }
         return out
     }
+
+    /** Bare-link detection for text the server left bare
+     *  (v0.9.47, R2). Root cause: the server auto-detects
+     *  entities in user-sent text, but bot-API messages sent
+     *  without explicit entities arrive with NO url entity
+     *  for their links — and a 1:1 entity mapping then
+     *  renders those links as dead plain text (the user's
+     *  screenshot: a t.me/<bot>?start=… link inside a bot
+     *  message, fully visible but untappable and unstyled).
+     *  The official clients linkify such text locally; this
+     *  does the same at the app's single parse point, so
+     *  every host picks the links up with the usual url
+     *  styling and LinkRouter behaviour (t.me bot links run
+     *  the start flow, other t.me links resolve in-app,
+     *  external links go to the browser). Chat-list previews
+     *  render plain summaries and stay inert, as before.
+     *
+     *  Rules: only ranges NOT covered by any server entity
+     *  are scanned (server entities always win; nothing is
+     *  detected inside code / pre / spoiler / link spans);
+     *  a match glued to a word character, @, . , _ or - on
+     *  its left is the tail of a longer token (an email's
+     *  domain part, a file name) and is skipped; trailing
+     *  sentence punctuation (CJK included) is trimmed, and
+     *  a closing parenthesis is trimmed unless the link
+     *  opened one itself. Detected shapes: scheme URLs,
+     *  www. hosts, bare t.me-family hosts with paths, and
+     *  bare domains over a common-TLD list (so version
+     *  strings, IPs and file names stay plain).
+     *
+     *  parseTextEntities is deliberately not used: it is an
+     *  asynchronous TDLib request whose documented parse
+     *  modes cover markup entities rather than bare-URL
+     *  detection, while parseMessage is a synchronous bulk
+     *  path (a full history page at a time). */
+    private fun detectLocalLinks(
+        text: String,
+        existing: List<TextEntityUi>
+    ): List<TextEntityUi> {
+        if (text.isEmpty()) return emptyList()
+        val covered = existing.map {
+            it.offset until (it.offset + it.length)
+        }
+        fun isCovered(start: Int, end: Int): Boolean =
+            covered.any { start < it.last && it.first < end }
+        val out = ArrayList<TextEntityUi>()
+        for (match in LOCAL_LINK_REGEX.findAll(text)) {
+            val start = match.range.first
+            var end = match.range.last + 1
+            if (start > 0) {
+                val prev = text[start - 1]
+                if (prev.isLetterOrDigit() || prev == '@' ||
+                    prev == '.' || prev == '_' || prev == '-'
+                ) {
+                    continue
+                }
+            }
+            while (end > start) {
+                val c = text[end - 1]
+                if (c in ".,;:!?，。；：！？、…·\"'") {
+                    end--
+                } else if (c == ')' || c == '）') {
+                    val seg = text.substring(start, end)
+                    if (seg.count { it == '(' || it == '（' } >=
+                        seg.count { it == ')' || it == '）' }
+                    ) {
+                        break
+                    }
+                    end--
+                } else if (c == ']' || c == '}' || c == '>') {
+                    end--
+                } else {
+                    break
+                }
+            }
+            if (end - start < 4) continue
+            if (isCovered(start, end)) continue
+            out.add(
+                TextEntityUi(
+                    offset = start,
+                    length = end - start,
+                    kind = "url"
+                )
+            )
+        }
+        return out
+    }
+
+    private val LOCAL_LINK_REGEX = Regex(
+        "(?:https?://|www\\.|t\\.me/|telegram\\.me/|telegram\\.dog/)" +
+            "[^\\s<>\"'\\u3000]+" +
+            "|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?" +
+            "(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*" +
+            "\\.(?:com|net|org|io|me|co|app|dev|site|online|xyz|top|club|info|biz|tv|cc|cn|hk|tw|ru|uk|de|jp|kr|gg|ly|gl|link|live|pro|vip)" +
+            "(?:/[^\\s<>\"'\\u3000]*)?"
+    )
 
     /** Decode a voice note's waveform (v0.9.2, L5): base64 of
      *  5-bit amplitudes packed LSB-first — the exact inverse
@@ -4073,7 +4194,15 @@ object MessageStore {
                     photoFileId = fileId,
                     photoPath = if (downloaded) local?.optString("path") else null,
                     photoWidth = size?.optInt("width", 0) ?: 0,
-                    photoHeight = size?.optInt("height", 0) ?: 0
+                    photoHeight = size?.optInt("height", 0) ?: 0,
+                    // Progressive rendering (v0.9.47, R5):
+                    // the photo's inline minithumbnail, the
+                    // same field videos already ride — the
+                    // bubble shows it (soft, scaled up) until
+                    // the picked size lands, instead of a
+                    // text-only placeholder.
+                    miniThumbData = photo?.optJSONObject("minithumbnail")
+                        ?.optString("data") ?: ""
                 )
             }
             "messageDocument" -> {

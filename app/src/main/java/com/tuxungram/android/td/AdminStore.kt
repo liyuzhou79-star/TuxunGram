@@ -110,53 +110,68 @@ object AdminStore {
 
     private fun fetchCaps(chatId: Long, resetFirst: Boolean) {
         if (resetFirst) _caps.value = AdminCaps()
+        // Open-path fast lane (v0.9.47, R3): my own id is
+        // process-wide knowledge (MeStore refreshes it on
+        // Ready and keeps it current via updateUser); only
+        // pay the getMe round trip while it is still unknown.
+        // This also shortens every updateChatMember-driven
+        // silent refetch (v0.9.45, P3) to the one request
+        // that actually changed.
+        val knownId = MeStore.me.value.id
+        if (knownId != 0L) {
+            fetchCapsFor(chatId, knownId)
+            return
+        }
         TdRepository.sendRaw(TdClient.request("getMe")) { me ->
             if (TdClient.isError(me)) return@sendRaw
-            val myId = me.optLong("id")
-            val query = TdClient.request("getChatMember").apply {
-                put("chat_id", chatId)
-                put(
-                    "member_id",
-                    JSONObject()
-                        .put("@type", "messageSenderUser")
-                        .put("user_id", myId)
-                )
+            fetchCapsFor(chatId, me.optLong("id"))
+        }
+    }
+
+    private fun fetchCapsFor(chatId: Long, myId: Long) {
+        val query = TdClient.request("getChatMember").apply {
+            put("chat_id", chatId)
+            put(
+                "member_id",
+                JSONObject()
+                    .put("@type", "messageSenderUser")
+                    .put("user_id", myId)
+            )
+        }
+        TdRepository.sendRaw(query) { member ->
+            if (TdClient.isError(member) || capsChatId != chatId) {
+                return@sendRaw
             }
-            TdRepository.sendRaw(query) { member ->
-                if (TdClient.isError(member) || capsChatId != chatId) {
-                    return@sendRaw
+            val status = member.optJSONObject("status")
+                ?: return@sendRaw
+            _caps.value = when (status.optString("@type")) {
+                "chatMemberStatusCreator" ->
+                    AdminCaps(
+                        true, true, true, true, true,
+                        canInvite = true, canManageSettings = true,
+                        isCreator = true, canManageTags = true
+                    )
+                "chatMemberStatusAdministrator" -> {
+                    val rights = status.optJSONObject("rights")
+                    AdminCaps(
+                        canManage = true,
+                        canChangeInfo =
+                            rights?.optBoolean("can_change_info") == true,
+                        canDeleteAny =
+                            rights?.optBoolean("can_delete_messages") == true,
+                        canRestrict =
+                            rights?.optBoolean("can_restrict_members") == true,
+                        canPromote =
+                            rights?.optBoolean("can_promote_members") == true,
+                        canInvite =
+                            rights?.optBoolean("can_invite_users") == true,
+                        canManageSettings =
+                            rights?.optBoolean("can_change_info") == true,
+                        canManageTags =
+                            rights?.optBoolean("can_manage_tags") == true
+                    )
                 }
-                val status = member.optJSONObject("status")
-                    ?: return@sendRaw
-                _caps.value = when (status.optString("@type")) {
-                    "chatMemberStatusCreator" ->
-                        AdminCaps(
-                            true, true, true, true, true,
-                            canInvite = true, canManageSettings = true,
-                            isCreator = true, canManageTags = true
-                        )
-                    "chatMemberStatusAdministrator" -> {
-                        val rights = status.optJSONObject("rights")
-                        AdminCaps(
-                            canManage = true,
-                            canChangeInfo =
-                                rights?.optBoolean("can_change_info") == true,
-                            canDeleteAny =
-                                rights?.optBoolean("can_delete_messages") == true,
-                            canRestrict =
-                                rights?.optBoolean("can_restrict_members") == true,
-                            canPromote =
-                                rights?.optBoolean("can_promote_members") == true,
-                            canInvite =
-                                rights?.optBoolean("can_invite_users") == true,
-                            canManageSettings =
-                                rights?.optBoolean("can_change_info") == true,
-                            canManageTags =
-                                rights?.optBoolean("can_manage_tags") == true
-                        )
-                    }
-                    else -> AdminCaps()
-                }
+                else -> AdminCaps()
             }
         }
     }
@@ -339,52 +354,61 @@ object AdminStore {
     fun loadInviteLinks(chatId: Long) {
         inviteChatId = chatId
         _inviteLinks.value = emptyList()
+        // Same known-id fast lane as fetchCaps (v0.9.47, R3).
+        val knownId = MeStore.me.value.id
+        if (knownId != 0L) {
+            collectInviteLinks(chatId, knownId)
+            return
+        }
         TdRepository.sendRaw(TdClient.request("getMe")) { me ->
             if (TdClient.isError(me) || inviteChatId != chatId) {
                 return@sendRaw
             }
-            val myId = me.optLong("id")
-            val collected = ArrayList<InviteLinkUi>()
-            var pending = 2
-            fun fetch(revoked: Boolean) {
-                val query = TdClient.request("getChatInviteLinks").apply {
-                    put("chat_id", chatId)
-                    put("creator_user_id", myId)
-                    put("is_revoked", revoked)
-                    put("offset_date", 0)
-                    put("offset_invite_link", "")
-                    put("limit", 50)
-                }
-                TdRepository.sendRaw(query) { response ->
-                    if (!TdClient.isError(response)) {
-                        val links = response.optJSONArray("invite_links")
-                        if (links != null) {
-                            for (i in 0 until links.length()) {
-                                val l = links.optJSONObject(i) ?: continue
-                                collected.add(
-                                    InviteLinkUi(
-                                        link = l.optString("invite_link"),
-                                        name = l.optString("name"),
-                                        isPrimary = l.optBoolean("is_primary"),
-                                        isRevoked = l.optBoolean("is_revoked"),
-                                        memberCount = l.optInt("member_count")
-                                    )
+            collectInviteLinks(chatId, me.optLong("id"))
+        }
+    }
+
+    private fun collectInviteLinks(chatId: Long, myId: Long) {
+        val collected = ArrayList<InviteLinkUi>()
+        var pending = 2
+        fun fetch(revoked: Boolean) {
+            val query = TdClient.request("getChatInviteLinks").apply {
+                put("chat_id", chatId)
+                put("creator_user_id", myId)
+                put("is_revoked", revoked)
+                put("offset_date", 0)
+                put("offset_invite_link", "")
+                put("limit", 50)
+            }
+            TdRepository.sendRaw(query) { response ->
+                if (!TdClient.isError(response)) {
+                    val links = response.optJSONArray("invite_links")
+                    if (links != null) {
+                        for (i in 0 until links.length()) {
+                            val l = links.optJSONObject(i) ?: continue
+                            collected.add(
+                                InviteLinkUi(
+                                    link = l.optString("invite_link"),
+                                    name = l.optString("name"),
+                                    isPrimary = l.optBoolean("is_primary"),
+                                    isRevoked = l.optBoolean("is_revoked"),
+                                    memberCount = l.optInt("member_count")
                                 )
-                            }
+                            )
                         }
                     }
-                    pending--
-                    if (pending == 0 && inviteChatId == chatId) {
-                        _inviteLinks.value = collected.sortedWith(
-                            compareBy<InviteLinkUi> { it.isRevoked }
-                                .thenByDescending { it.isPrimary }
-                        )
-                    }
+                }
+                pending--
+                if (pending == 0 && inviteChatId == chatId) {
+                    _inviteLinks.value = collected.sortedWith(
+                        compareBy<InviteLinkUi> { it.isRevoked }
+                            .thenByDescending { it.isPrimary }
+                    )
                 }
             }
-            fetch(revoked = false)
-            fetch(revoked = true)
         }
+        fetch(revoked = false)
+        fetch(revoked = true)
     }
 
     fun createInviteLink(chatId: Long, name: String) {

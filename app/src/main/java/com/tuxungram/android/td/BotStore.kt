@@ -67,6 +67,15 @@ object BotStore {
         if (_state.value?.chatId == chatId) return
         if (loadingChat == chatId) return
         loadingChat = chatId
+        // Open-path fast lane (v0.9.47, R3): dispatch on the
+        // chat list's cached type object when there is one,
+        // instead of a duplicate getChat for the same data
+        // MessageStore.open is fetching in parallel anyway.
+        val cachedType = ChatStore.typeOfChat(chatId)
+        if (cachedType != null) {
+            dispatchOnType(chatId, cachedType)
+            return
+        }
         val query = TdClient.request("getChat").apply {
             put("chat_id", chatId)
         }
@@ -75,31 +84,34 @@ object BotStore {
                 loadingChat = 0L
                 return@sendRaw
             }
-            val type = response.optJSONObject("type")
-            when (type?.optString("@type")) {
-                "chatTypePrivate" -> loadPrivateBot(
-                    chatId, type.optLong("user_id")
-                )
-                "chatTypeBasicGroup" -> loadGroupBots(
-                    chatId,
-                    TdClient.request("getBasicGroupFullInfo").apply {
-                        put("basic_group_id", type.optLong("basic_group_id"))
-                    }
-                )
-                "chatTypeSupergroup" -> {
-                    if (type.optBoolean("is_channel")) {
-                        publish(BotUi(chatId = chatId))
-                    } else {
-                        loadGroupBots(
-                            chatId,
-                            TdClient.request("getSupergroupFullInfo").apply {
-                                put("supergroup_id", type.optLong("supergroup_id"))
-                            }
-                        )
-                    }
+            dispatchOnType(chatId, response.optJSONObject("type"))
+        }
+    }
+
+    private fun dispatchOnType(chatId: Long, type: JSONObject?) {
+        when (type?.optString("@type")) {
+            "chatTypePrivate" -> loadPrivateBot(
+                chatId, type.optLong("user_id")
+            )
+            "chatTypeBasicGroup" -> loadGroupBots(
+                chatId,
+                TdClient.request("getBasicGroupFullInfo").apply {
+                    put("basic_group_id", type.optLong("basic_group_id"))
                 }
-                else -> publish(BotUi(chatId = chatId))
+            )
+            "chatTypeSupergroup" -> {
+                if (type.optBoolean("is_channel")) {
+                    publish(BotUi(chatId = chatId))
+                } else {
+                    loadGroupBots(
+                        chatId,
+                        TdClient.request("getSupergroupFullInfo").apply {
+                            put("supergroup_id", type.optLong("supergroup_id"))
+                        }
+                    )
+                }
             }
+            else -> publish(BotUi(chatId = chatId))
         }
     }
 

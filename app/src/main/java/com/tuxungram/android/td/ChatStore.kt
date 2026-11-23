@@ -358,6 +358,15 @@ object ChatStore {
     fun titleOf(chatId: Long): String =
         cache[chatId]?.optString("title") ?: ""
 
+    /** The cached chat's raw type object (chatTypePrivate /
+     *  BasicGroup / Supergroup / Secret), or null when the
+     *  chat is not in the cache. Lets the chat-open path
+     *  (BotStore, ForumStore — v0.9.47, R3) dispatch on data
+     *  the list already holds instead of paying a duplicate
+     *  getChat round trip for the same object. */
+    fun typeOfChat(chatId: Long): JSONObject? =
+        cache[chatId]?.optJSONObject("type")
+
     /** The other user's id for a private chat (from the
      *  cached chatTypePrivate), 0 for anything else or when
      *  the chat is not cached. Web App keyboard buttons in
