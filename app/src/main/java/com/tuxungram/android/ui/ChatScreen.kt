@@ -430,10 +430,14 @@ fun ChatScreen(
     // resolved cache instead of falling back to the
     // placeholder title 「对话」.
     val resolvedTick by ChatStore.resolvedTick.collectAsState()
+    // Hoisted out of the elvis below: remember must run on
+    // every composition, or the slot table shifts when a
+    // chat moves from unresolved to listed.
+    val resolvedChat = remember(chatId, resolvedTick) {
+        ChatStore.itemOf(chatId)
+    }
     val chat = chats.firstOrNull { it.id == chatId }
-        ?: remember(chatId, resolvedTick) {
-            ChatStore.itemOf(chatId)
-        }
+        ?: resolvedChat
     // Access state machine (v0.9.44, N3/N4): drives the
     // bottom dock (composer / join bar / cannot-post bar)
     // and the resolving / error states of the message area.
