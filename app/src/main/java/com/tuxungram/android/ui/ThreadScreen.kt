@@ -67,6 +67,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -269,23 +271,92 @@ fun SimpleMessageBubble(
                     )
                     .padding(horizontal = 11.dp, vertical = 8.dp)
             ) {
-                if (isGroup && !outgoing && msg.senderName.isNotEmpty()) {
-                    Text(
-                        msg.senderName,
-                        color = OfficialTheme.nameColor(
-                            msg.senderUserId, OfficialTheme.dark
-                        ),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = if (msg.senderUserId != 0L) {
-                            Modifier.clickable {
-                                DeepLink.pendingProfileUser.value =
-                                    msg.senderUserId
-                            }
-                        } else {
-                            Modifier
+                // Bubble header row (v0.9.39, F3 + F2):
+                // same layout as the main chat — sender
+                // name, "via @bot" provenance, and the
+                // sender's administrator custom title at
+                // the right edge; each part only when its
+                // data exists.
+                val showSenderName = isGroup && !outgoing &&
+                    msg.senderName.isNotEmpty()
+                val showVia = msg.viaBotLabel.isNotEmpty() &&
+                    msg.viaBotUserId != msg.senderUserId
+                if (showSenderName || showVia ||
+                    msg.senderTag.isNotEmpty()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (showSenderName) {
+                            Text(
+                                msg.senderName,
+                                color = OfficialTheme.nameColor(
+                                    msg.senderUserId,
+                                    OfficialTheme.dark
+                                ),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = (
+                                    if (msg.senderUserId != 0L) {
+                                        Modifier.clickable {
+                                            DeepLink
+                                                .pendingProfileUser
+                                                .value =
+                                                msg.senderUserId
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+                                    ).then(
+                                        if (msg.senderTag.isNotEmpty()) {
+                                            Modifier.weight(
+                                                1f, fill = false
+                                            )
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                            )
                         }
-                    )
+                        if (showVia) {
+                            if (showSenderName) {
+                                Spacer(Modifier.width(5.dp))
+                            }
+                            Text(
+                                "via ${msg.viaBotLabel}",
+                                color = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                modifier = Modifier.clickable {
+                                    DeepLink.pendingProfileUser
+                                        .value = msg.viaBotUserId
+                                }
+                            )
+                        }
+                        if (msg.senderTag.isNotEmpty()) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                msg.senderTag,
+                                color = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                 }
                 if (msg.replyToId != 0L) {
                     Row(modifier = Modifier.height(IntrinsicSize.Min)) {

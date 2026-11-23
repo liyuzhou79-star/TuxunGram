@@ -273,6 +273,22 @@ data class MsgItem(
     val entities: List<TextEntityUi> = emptyList(),
     val senderName: String,
     val senderUserId: Long,
+    // Inline-bot provenance (v0.9.39, F3): message
+    // .via_bot_user_id — non-zero when the message was
+    // sent through an inline bot. [viaBotLabel] is the
+    // resolved display ("@botname" when the bot has a
+    // public username, else its display name), filled at
+    // parse time from the user caches and backfilled by
+    // publish() like the sender name.
+    val viaBotUserId: Long = 0L,
+    val viaBotLabel: String = "",
+    // Sender's member tag at send time (message
+    // .sender_tag, v0.9.39, F2 display side): in
+    // supergroups this is the sender's administrator
+    // custom title when they have one. Rendered at the
+    // right of the bubble header row, as the official
+    // client does; empty everywhere else.
+    val senderTag: String = "",
     // Sender's small profile photo (group chats render it
     // beside the bubble, v0.9.9 W0); resolved through
     // AvatarStore and backfilled by publish() as it lands.
@@ -1430,6 +1446,12 @@ object MessageStore {
 
     private val byId = ConcurrentHashMap<Long, MsgItem>()
     private val userNames = ConcurrentHashMap<Long, String>()
+
+    /** Public usernames by user id (v0.9.39, F3): filled
+     *  from the same getUser / updateUser payloads as
+     *  [userNames]; the via-bot label prefers the handle
+     *  ("via @bot") and falls back to the display name. */
+    private val userHandles = ConcurrentHashMap<Long, String>()
     private val userFetchPending = ConcurrentHashMap.newKeySet<Long>()
 
     @Volatile
@@ -2933,9 +2955,12 @@ object MessageStore {
             "updateUser" -> {
                 val user = update.optJSONObject("user") ?: return
                 AvatarStore.noteUser(user)
+                val handleChanged = noteUserHandle(user)
                 val name = userNameOf(user)
                 if (name.isNotEmpty()) {
                     userNames[user.optLong("id")] = name
+                    publish()
+                } else if (handleChanged) {
                     publish()
                 }
             }
@@ -2946,6 +2971,35 @@ object MessageStore {
         val first = user.optString("first_name")
         val last = user.optString("last_name")
         return listOf(first, last).filter { it.isNotEmpty() }.joinToString(" ")
+    }
+
+    /** Record a user's public handle (usernames
+     *  .active_usernames[0]) into [userHandles]; returns
+     *  true when the stored value changed (v0.9.39, F3). */
+    private fun noteUserHandle(user: JSONObject): Boolean {
+        val userId = user.optLong("id")
+        if (userId == 0L) return false
+        val handle = user.optJSONObject("usernames")
+            ?.optJSONArray("active_usernames")
+            ?.optString(0) ?: ""
+        if (handle.isEmpty() || userHandles[userId] == handle) {
+            return false
+        }
+        userHandles[userId] = handle
+        return true
+    }
+
+    /** The via-bot label for one message (v0.9.39, F3):
+     *  "@handle" when the bot has a public username (the
+     *  official form), else its display name, else "" while
+     *  a fetch is in flight — publish() backfills it once
+     *  the user lands, exactly like sender names. */
+    private fun viaBotLabelFor(viaBotUserId: Long): String {
+        if (viaBotUserId == 0L) return ""
+        userHandles[viaBotUserId]?.let { return "@$it" }
+        userNames[viaBotUserId]?.let { return it }
+        fetchUser(viaBotUserId)
+        return ""
     }
 
     private fun senderNameFor(sender: JSONObject?): String {
@@ -2970,6 +3024,7 @@ object MessageStore {
             userFetchPending.remove(userId)
             if (TdClient.isError(response)) return@sendRaw
             AvatarStore.noteUser(response)
+            noteUserHandle(response)
             val name = userNameOf(response)
             if (name.isNotEmpty()) {
                 userNames[userId] = name
@@ -3091,6 +3146,9 @@ object MessageStore {
             senderUserId = msg.optJSONObject("sender_id")
                 ?.takeIf { it.optString("@type") == "messageSenderUser" }
                 ?.optLong("user_id") ?: 0L,
+            viaBotUserId = msg.optLong("via_bot_user_id"),
+            viaBotLabel = viaBotLabelFor(msg.optLong("via_bot_user_id")),
+            senderTag = msg.optString("sender_tag"),
             // Resolved at parse time when the sender's photo is
             // already on disk; the main store's publish() keeps
             // backfilling it afterwards (W0).
@@ -5477,18 +5535,31 @@ object MessageStore {
             } else {
                 item
             }
+            // Backfill the via-bot label the same way
+            // (v0.9.39, F3): the bot's handle or name may
+            // land after the message was first parsed.
+            val viaLabel = if (named.viaBotUserId != 0L) {
+                viaBotLabelFor(named.viaBotUserId)
+            } else {
+                ""
+            }
+            val withVia = if (viaLabel != named.viaBotLabel) {
+                named.copy(viaBotLabel = viaLabel)
+            } else {
+                named
+            }
             // Backfill the sender's avatar path the same way
             // (group bubbles, W0); null until AvatarStore has
             // the file on disk.
-            val senderPath = if (named.senderUserId != 0L) {
-                AvatarStore.pathForUser(named.senderUserId)
+            val senderPath = if (withVia.senderUserId != 0L) {
+                AvatarStore.pathForUser(withVia.senderUserId)
             } else {
                 null
             }
-            val withName = if (senderPath != named.senderPhotoPath) {
-                named.copy(senderPhotoPath = senderPath)
+            val withName = if (senderPath != withVia.senderPhotoPath) {
+                withVia.copy(senderPhotoPath = senderPath)
             } else {
-                named
+                withVia
             }
             // Delivery ticks follow the chat's read position, not a
             // one-off flag set at send time.

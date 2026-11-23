@@ -154,7 +154,9 @@ import com.tuxungram.android.td.SendModifiers
 import com.tuxungram.android.td.EffectUi
 import com.tuxungram.android.td.EffectsStore
 import com.tuxungram.android.td.ChecklistTaskUi
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import com.tuxungram.android.td.SuggestStore
 import com.tuxungram.android.td.SuggestUser
 import com.tuxungram.android.td.TextEntityUi
@@ -5326,24 +5328,100 @@ fun MessageBubble(
                     )
                     .padding(horizontal = 11.dp, vertical = 8.dp)
             ) {
-                if (isGroup && !outgoing && msg.senderName.isNotEmpty()) {
-                    Text(
-                        msg.senderName,
-                        // avatar_nameInMessage* by sender id
-                        // (v0.9.17, X2).
-                        color = OfficialTheme.nameColor(
-                            msg.senderUserId, OfficialTheme.dark
-                        ),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = if (msg.senderUserId != 0L) {
-                            Modifier.clickable {
-                                onOpenSenderProfile(msg.senderUserId)
-                            }
-                        } else {
-                            Modifier
+                // Bubble header row (v0.9.39, F3 + F2):
+                // the sender name (group chats, as before),
+                // the "via @bot" provenance of an inline-bot
+                // message next to it, and the sender's
+                // administrator custom title (sender_tag)
+                // at the row's right edge — the official
+                // header layout. Each part renders only
+                // when its data exists; the row itself
+                // appears when any part does (a via line or
+                // a title also shows on own messages and
+                // outside group chats, as in the official
+                // client).
+                val showSenderName = isGroup && !outgoing &&
+                    msg.senderName.isNotEmpty()
+                val showVia = msg.viaBotLabel.isNotEmpty() &&
+                    msg.viaBotUserId != msg.senderUserId
+                if (showSenderName || showVia ||
+                    msg.senderTag.isNotEmpty()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (showSenderName) {
+                            Text(
+                                msg.senderName,
+                                // avatar_nameInMessage* by sender
+                                // id (v0.9.17, X2).
+                                color = OfficialTheme.nameColor(
+                                    msg.senderUserId,
+                                    OfficialTheme.dark
+                                ),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = (
+                                    if (msg.senderUserId != 0L) {
+                                        Modifier.clickable {
+                                            onOpenSenderProfile(
+                                                msg.senderUserId
+                                            )
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+                                    ).then(
+                                        if (msg.senderTag.isNotEmpty()) {
+                                            Modifier.weight(
+                                                1f, fill = false
+                                            )
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                            )
                         }
-                    )
+                        if (showVia) {
+                            if (showSenderName) {
+                                Spacer(Modifier.width(5.dp))
+                            }
+                            Text(
+                                "via ${msg.viaBotLabel}",
+                                color = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                modifier = Modifier.clickable {
+                                    onOpenSenderProfile(
+                                        msg.viaBotUserId
+                                    )
+                                }
+                            )
+                        }
+                        if (msg.senderTag.isNotEmpty()) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                msg.senderTag,
+                                color = if (outgoing) {
+                                    palette.outTime
+                                } else {
+                                    palette.inTime
+                                },
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                 }
                 if (msg.replyToId != 0L) {
                     // Official reply bar (v0.9.17, X2): a 3 dp
@@ -6357,23 +6435,72 @@ fun AlbumBubble(
                 if (isGroup && !outgoing &&
                     first.senderName.isNotEmpty()
                 ) {
-                    Text(
-                        first.senderName,
-                        color = OfficialTheme.nameColor(
-                            first.senderUserId, OfficialTheme.dark
-                        ),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
+                    // Album header (v0.9.39, F3 + F2): the
+                    // name row gains the same via-bot line
+                    // and sender title as single bubbles.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
+                            .fillMaxWidth()
                             .padding(horizontal = 4.dp)
-                            .clickable {
-                                if (first.senderUserId != 0L) {
+                    ) {
+                        Text(
+                            first.senderName,
+                            color = OfficialTheme.nameColor(
+                                first.senderUserId,
+                                OfficialTheme.dark
+                            ),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .clickable {
+                                    if (first.senderUserId != 0L) {
+                                        onOpenSenderProfile(
+                                            first.senderUserId
+                                        )
+                                    }
+                                }
+                                .then(
+                                    if (first.senderTag.isNotEmpty()) {
+                                        Modifier.weight(
+                                            1f, fill = false
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                        )
+                        if (first.viaBotLabel.isNotEmpty() &&
+                            first.viaBotUserId != first.senderUserId
+                        ) {
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                "via ${first.viaBotLabel}",
+                                color = palette.inTime,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                modifier = Modifier.clickable {
                                     onOpenSenderProfile(
-                                        first.senderUserId
+                                        first.viaBotUserId
                                     )
                                 }
-                            }
-                    )
+                            )
+                        }
+                        if (first.senderTag.isNotEmpty()) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                first.senderTag,
+                                color = palette.inTime,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(4.dp))
                 }
                 if (first.replyToId != 0L) {
