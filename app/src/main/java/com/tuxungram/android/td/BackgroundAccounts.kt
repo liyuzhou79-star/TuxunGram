@@ -171,6 +171,25 @@ object BackgroundAccounts {
                 ProxyStore.activeProxyQuery()?.let { query ->
                     session.client.send(query) {}
                 }
+                // Storage optimizer (v0.9.42, K2): the option
+                // lives in each account's own database, so the
+                // device-level choice is re-asserted here too —
+                // a background database otherwise sits at
+                // TDLib's built-in default (off) forever while
+                // its files pile up from notification traffic.
+                val optimizer = TdClient.request("setOption").apply {
+                    put("name", "use_storage_optimizer")
+                    put(
+                        "value",
+                        JSONObject()
+                            .put("@type", "optionValueBoolean")
+                            .put(
+                                "value",
+                                UiSettings.storageOptimizer.value
+                            )
+                    )
+                }
+                session.client.send(optimizer) {}
                 // Kick the main chat list so TDLib syncs the
                 // account and starts pushing unread totals.
                 loadChatsChain(session, 0)

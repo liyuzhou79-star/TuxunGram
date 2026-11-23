@@ -27,17 +27,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tuxungram.android.BuildConfig
 import com.tuxungram.android.td.ContactsStore
+import com.tuxungram.android.td.CrashLog
 import com.tuxungram.android.td.MeStore
 
 /**
@@ -78,6 +84,18 @@ fun MeScreen(
 ) {
     BackHandler(enabled = onBack != null) { onBack?.invoke() }
     val me by MeStore.me.collectAsState()
+    // Unseen crash-record dot (v0.9.42, K4): the About
+    // entry below carries a small red dot while a crash
+    // recorded on this phone has not been looked at yet.
+    // The records themselves live in Settings (the crash
+    // row there carries the same dot); opening them there
+    // is what clears it. Nothing pops up and nothing is
+    // uploaded — this is only a marker.
+    val meContext = LocalContext.current
+    var crashUnseen by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        crashUnseen = CrashLog.hasUnseen(meContext)
+    }
     val palette = OfficialTheme.current()
     Column(
         modifier = Modifier
@@ -247,7 +265,22 @@ fun MeScreen(
             IconRow(
                 Icons.Filled.Info, "关于",
                 "关于我们这个软件",
-                onClick = onOpenAbout
+                onClick = onOpenAbout,
+                trailing = if (crashUnseen) {
+                    {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    androidx.compose.material3
+                                        .MaterialTheme.colorScheme.error,
+                                    CircleShape
+                                )
+                        )
+                    }
+                } else {
+                    null
+                }
             )
         }
         Spacer(Modifier.height(16.dp))

@@ -219,9 +219,28 @@ object TdRepository {
                     AuthState.WaitOtherDevice(state.optString("link"))
             "authorizationStateReady" -> {
                 _authState.value = AuthState.Ready
+                // K3 hardening (v0.9.42): a session that reached
+                // Ready is by definition not the one that logged
+                // out, so any logout-restart intent still
+                // standing is stale. The flag is consumed in
+                // the Closed branch below in every reachable
+                // flow today; clearing it here as well keeps
+                // the invariant "the flag names the CURRENT
+                // session's logout" true even if a future path
+                // re-authenticates in-process — otherwise a
+                // later unrelated Closed (e.g. this session
+                // being terminated from another device) would
+                // clear the NEW account's local pins/labels
+                // and restart as if it had logged out.
+                restartAfterLogout = false
                 // The saved proxy must be (re-)applied before chats
                 // start loading so the first sync already uses it.
                 ProxyStore.applySavedOnStart()
+                // Storage optimizer (v0.9.42, K2): re-assert
+                // the device-level choice on this account's
+                // database (the option is stored per database
+                // by TDLib, so this is a cheap no-op once set).
+                applyStorageOptimizer()
                 // Auto-failover probe (v0.9.14, U6): once per
                 // client, shortly after the saved proxy lands.
                 ProxyStore.scheduleStartFailoverCheck()
@@ -348,6 +367,36 @@ object TdRepository {
             put("application_version", BuildConfig.VERSION_NAME)
         }
         send(params)
+    }
+
+    /** Push the storage-optimizer choice (v0.9.42, K2) to
+     *  the foreground client as the TDLib option
+     *  "use_storage_optimizer". Called on every Ready and
+     *  immediately when the user flips the switch in
+     *  Settings → 存储空间. TDLib stores the option in the
+     *  account's own database; with it on, TDLib's
+     *  StorageManager schedules periodic cleanups of old
+     *  downloaded cache files (verified in the bundled
+     *  TDLib source: StorageManager refuses to schedule any
+     *  cleanup while the option is off). The sibling option
+     *  name "ignore_background_restrictions" does not exist
+     *  in this TDLib build at all (checked against the
+     *  bundled source and scheme), so no switch is offered
+     *  for it — background message timeliness here is the
+     *  keep-alive service's and the system battery settings'
+     *  business, which the notification settings already
+     *  explain in plain words. */
+    fun applyStorageOptimizer() {
+        val query = TdClient.request("setOption").apply {
+            put("name", "use_storage_optimizer")
+            put(
+                "value",
+                JSONObject()
+                    .put("@type", "optionValueBoolean")
+                    .put("value", UiSettings.storageOptimizer.value)
+            )
+        }
+        sendRaw(query) { }
     }
 
     fun setPhone(phoneNumber: String) {

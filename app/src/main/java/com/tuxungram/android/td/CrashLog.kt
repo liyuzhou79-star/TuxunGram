@@ -107,4 +107,35 @@ object CrashLog {
             }
         }
     }
+
+    // ---- Unseen-record marker (v0.9.42, K4) ----
+    // A record counts as unseen while the newest file on
+    // disk is newer than the watermark the user last
+    // acknowledged by opening the records dialog. The
+    // watermark is a plain timestamp in this app's own
+    // preferences — nothing about the records leaves the
+    // device, and there is no popup: the settings crash
+    // row and the Me page's About entry just carry a dot.
+
+    private const val SEEN_PREFS = "crash_log_seen"
+    private const val KEY_SEEN_TS = "seen_ts"
+
+    /** True when a crash was recorded since the user last
+     *  looked at the records. */
+    fun hasUnseen(context: Context): Boolean {
+        val newest = files(context).firstOrNull() ?: return false
+        val seen = context
+            .getSharedPreferences(SEEN_PREFS, Context.MODE_PRIVATE)
+            .getLong(KEY_SEEN_TS, 0L)
+        return newest.lastModified() > seen
+    }
+
+    /** Acknowledge everything currently on disk (called
+     *  when the records dialog opens and after a clear). */
+    fun markSeen(context: Context) {
+        context.getSharedPreferences(SEEN_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_SEEN_TS, System.currentTimeMillis())
+            .apply()
+    }
 }

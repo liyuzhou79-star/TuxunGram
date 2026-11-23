@@ -29,6 +29,7 @@ object UiSettings {
     private const val KEY_DUCK_BAR = "duck_bar"
     private const val KEY_LABEL_DOTS = "label_dots"
     private const val KEY_SOUND_FX = "sound_fx"
+    private const val KEY_STORAGE_OPTIMIZER = "storage_optimizer"
     private const val KEY_VOICE_SPEED = "voice_speed"
     private const val KEY_SEEN_VERSION = "seen_version"
 
@@ -105,6 +106,21 @@ object UiSettings {
      *  default like in the official client. */
     private val _soundFx = MutableStateFlow(true)
     val soundFx: StateFlow<Boolean> = _soundFx
+
+    /** TDLib storage optimizer (v0.9.42, K2): when on, the
+     *  choice is pushed to every client as the TDLib option
+     *  "use_storage_optimizer" and TDLib periodically deletes
+     *  old downloaded cache files by itself. On by default —
+     *  the official clients enable the same option; before
+     *  this version the app never set it, so the option sat
+     *  at TDLib's built-in default (off) and the cache only
+     *  ever shrank when the user cleared it by hand. The
+     *  option is stored per account database by TDLib; this
+     *  preference is the device-level choice that
+     *  TdRepository (foreground) and BackgroundAccounts
+     *  (background slots) re-assert on every Ready. */
+    private val _storageOptimizer = MutableStateFlow(true)
+    val storageOptimizer: StateFlow<Boolean> = _storageOptimizer
 
     private val _themeMode = MutableStateFlow(THEME_SYSTEM)
     val themeMode: StateFlow<Int> = _themeMode
@@ -195,6 +211,8 @@ object UiSettings {
         _unreadCap.value = if (saved in UNREAD_CAPS) saved else 999
         _keepAlive.value = prefs.getBoolean(KEY_KEEP_ALIVE, true)
         _soundFx.value = prefs.getBoolean(KEY_SOUND_FX, true)
+        _storageOptimizer.value =
+            prefs.getBoolean(KEY_STORAGE_OPTIMIZER, true)
         val mode = prefs.getInt(KEY_THEME_MODE, THEME_SYSTEM)
         _themeMode.value =
             if (mode in THEME_SYSTEM..THEME_DARK) mode else THEME_SYSTEM
@@ -405,6 +423,11 @@ object UiSettings {
     fun setSoundFx(on: Boolean) {
         _soundFx.value = on
         persist { it.putBoolean(KEY_SOUND_FX, on) }
+    }
+
+    fun setStorageOptimizer(on: Boolean) {
+        _storageOptimizer.value = on
+        persist { it.putBoolean(KEY_STORAGE_OPTIMIZER, on) }
     }
 
     fun setKeepAlive(on: Boolean) {

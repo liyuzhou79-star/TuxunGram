@@ -72,6 +72,8 @@ object SettingsBackup {
             put("keep_alive", UiSettings.keepAlive.value)
             // In-app message sounds (v0.9.29, V1).
             put("sound_fx", UiSettings.soundFx.value)
+            // TDLib storage optimizer switch (v0.9.42, K2).
+            put("storage_optimizer", UiSettings.storageOptimizer.value)
             // Bottom navigation bar switch (v0.9.19, Z5).
             put("duck_bar", UiSettings.duckBar.value)
             // Chat-row label dots (v0.9.28, U4; backup
@@ -177,6 +179,7 @@ object SettingsBackup {
         var chatWallpapers: Map<Long, String>? = null
         var keepAlive: Boolean? = null
         var soundFx: Boolean? = null
+        var storageOptimizer: Boolean? = null
         var duckBar: Boolean? = null
         var labelDots: Boolean? = null
         var localPins: List<Long>? = null
@@ -261,6 +264,9 @@ object SettingsBackup {
                 }
                 if (uiObj.has("sound_fx")) {
                     soundFx = uiObj.getBoolean("sound_fx")
+                }
+                if (uiObj.has("storage_optimizer")) {
+                    storageOptimizer = uiObj.getBoolean("storage_optimizer")
                 }
                 if (uiObj.has("duck_bar")) {
                     duckBar = uiObj.getBoolean("duck_bar")
@@ -433,6 +439,13 @@ object SettingsBackup {
         localLabels?.let { LocalLabels.replaceAll(it) }
         keepAlive?.let { UiSettings.setKeepAlive(it) }
         soundFx?.let { UiSettings.setSoundFx(it) }
+        storageOptimizer?.let {
+            UiSettings.setStorageOptimizer(it)
+            // The TDLib option lives in the account database;
+            // push the restored choice to the live client now
+            // instead of waiting for the next Ready (v0.9.42).
+            TdRepository.applyStorageOptimizer()
+        }
         duckBar?.let { UiSettings.setDuckBar(it) }
         labelDots?.let { UiSettings.setLabelDots(it) }
         proxyAutoFailover?.let { ProxyStore.setAutoFailover(it) }

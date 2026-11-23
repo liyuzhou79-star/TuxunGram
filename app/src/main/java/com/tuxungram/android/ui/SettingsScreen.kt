@@ -344,8 +344,15 @@ fun SettingsScreen(
     // launch anyway); the dialog offers view / copy / clear.
     var crashDialogOpen by remember { mutableStateOf(false) }
     var crashCount by remember { mutableStateOf(0) }
+    // Unseen-record dot (v0.9.42, K4): a crash recorded
+    // since the records were last opened shows as a small
+    // red dot here and on the Me page's About entry;
+    // opening the dialog acknowledges it. No popup, and
+    // (as ever) nothing is uploaded.
+    var crashUnseen by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         crashCount = CrashLog.files(settingsContext).size
+        crashUnseen = CrashLog.hasUnseen(settingsContext)
     }
     val crashClipboard = LocalClipboardManager.current
     if (crashDialogOpen) {
@@ -383,7 +390,9 @@ fun SettingsScreen(
                 Row {
                     TextButton(onClick = {
                         CrashLog.clear(settingsContext)
+                        CrashLog.markSeen(settingsContext)
                         crashCount = 0
+                        crashUnseen = false
                         crashDialogOpen = false
                     }) { Text("清除") }
                     TextButton(onClick = { crashDialogOpen = false }) {
@@ -2016,6 +2025,42 @@ fun SettingsScreen(
                 modifier = Modifier.padding(top = 8.dp)
             )
         }
+        // TDLib storage optimizer (v0.9.42, K2): the option
+        // "use_storage_optimizer", which this app never set
+        // before — it sat at TDLib's built-in default (off),
+        // so downloaded cache files were only ever removed
+        // by the manual clear below. On (the default, as in
+        // the official clients) TDLib itself periodically
+        // deletes old cache files. Chat history and the
+        // database are never touched; a deleted picture or
+        // file simply downloads again when next opened.
+        SettingsDivider()
+        val storageOptimizer by UiSettings.storageOptimizer
+            .collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                StorageIcon, contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(23.dp)
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("自动清理缓存")
+                Text(
+                    "开着时 Telegram 核心会定期自动删掉旧的下载缓存文件腾空间；" +
+                        "聊天记录和数据库不动，被删的图片、文件下次打开时会重新下载。" +
+                        "关掉则只在你手动清理时才删。",
+                    color = Color.Gray, fontSize = 12.sp
+                )
+            }
+            Switch(
+                checked = storageOptimizer,
+                onCheckedChange = { on ->
+                    UiSettings.setStorageOptimizer(on)
+                    TdRepository.applyStorageOptimizer()
+                }
+            )
+        }
         var confirmClear by remember { mutableStateOf(false) }
         var clearedTip by remember { mutableStateOf<String?>(null) }
         SettingsDivider()
@@ -2255,13 +2300,33 @@ fun SettingsScreen(
             IconRow(
                 icon = Icons.Filled.Warning,
                 title = "上次崩溃记录（$crashCount）",
-                onClick = { crashDialogOpen = true },
+                onClick = {
+                    // Opening the records is the acknowledgement
+                    // the unseen dot waits for (v0.9.42, K4).
+                    CrashLog.markSeen(settingsContext)
+                    crashUnseen = false
+                    crashDialogOpen = true
+                },
                 trailing = {
-                Icon(
-                    Icons.Filled.KeyboardArrowRight,
-                    contentDescription = null, tint = Color.Gray,
-                    modifier = Modifier.size(20.dp)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (crashUnseen) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.error,
+                                    androidx.compose.foundation.shape
+                                        .CircleShape
+                                )
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Icon(
+                        Icons.Filled.KeyboardArrowRight,
+                        contentDescription = null, tint = Color.Gray,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
             )
             Text(
