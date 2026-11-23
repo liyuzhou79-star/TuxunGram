@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, ANIMATED_EMOJI, CHECKLIST, PAID_MEDIA, SERVICE, GIVEAWAY, AUDIO, INVOICE, SHARED, OTHER }
+enum class MsgKind { TEXT, PHOTO, DOCUMENT, VIDEO, VOICE, STICKER, ANIMATION, POLL, LOCATION, CONTACT, VIDEO_NOTE, DICE, GAME, ANIMATED_EMOJI, CHECKLIST, PAID_MEDIA, SERVICE, GIVEAWAY, AUDIO, INVOICE, SHARED, RICH_MESSAGE, OTHER }
 
 /** One poll option, flattened from pollOption. */
 data class PollOptionUi(
@@ -464,7 +464,17 @@ data class MsgItem(
     // the names inside the message itself, so the card
     // needs no lookups.
     val sharedHeader: String = "",
-    val sharedEntries: List<SharedEntryUi> = emptyList()
+    val sharedEntries: List<SharedEntryUi> = emptyList(),
+    // Rich message payload (RICH_MESSAGE kind, v0.9.40,
+    // G4): messageRichMessage carries a PageBlock list —
+    // the same block type Instant View pages use — parsed
+    // once here through InstantViewStore.parseBlocks. The
+    // bubble renders the text-bearing blocks with basic
+    // styles; media and table blocks degrade to labelled
+    // placeholder lines (see RichBlocksBubbleContent).
+    // [text] holds the blocks' plain-text skeleton for
+    // previews, quotes and search.
+    val richBlocks: List<IvBlock> = emptyList()
 ) {
     val paidPurchased: Boolean
         get() = paidMedia.any {
@@ -3781,6 +3791,26 @@ object MessageStore {
                     )
                 )
             }
+            "messageRichMessage" -> {
+                // Rich message (v0.9.40, G4): the last of
+                // the four content types the v0.9.37 audit
+                // left on OTHER. Its payload is a richMessage
+                // { blocks: PageBlock[] } — the same block
+                // list an Instant View page carries — so the
+                // blocks parse through InstantViewStore and
+                // the bubble renders the text skeleton with
+                // basic block styles; media / table blocks
+                // degrade to labelled placeholder lines.
+                val rich = content.optJSONObject("message")
+                val blocks = InstantViewStore.parseBlocks(
+                    rich?.optJSONArray("blocks")
+                )
+                base.copy(
+                    kind = MsgKind.RICH_MESSAGE,
+                    text = InstantViewStore.blocksPlainText(blocks),
+                    richBlocks = blocks
+                )
+            }
             // The whole service family (v0.9.37, D4):
             // until this version every one of these fell
             // to OTHER and rendered as a bare "[消息]"
@@ -5409,6 +5439,22 @@ object MessageStore {
                 val caption = content.optJSONObject("caption")
                     ?.optString("text") ?: ""
                 if (caption.isEmpty()) "[付费媒体]" else "[付费媒体] $caption"
+            }
+            "messageRichMessage" -> {
+                // Same skeleton the full parse stores
+                // (v0.9.40, G4): first words of the post,
+                // or the bare label when it is all media.
+                val blocks = InstantViewStore.parseBlocks(
+                    content.optJSONObject("message")
+                        ?.optJSONArray("blocks")
+                )
+                val plain = InstantViewStore.blocksPlainText(blocks)
+                    .replace('\n', ' ')
+                if (plain.isEmpty()) {
+                    "[富文本消息]"
+                } else {
+                    plain.take(60)
+                }
             }
             "messageVoiceNote" -> "[语音]"
             "messageAnimation" -> "[动图]"

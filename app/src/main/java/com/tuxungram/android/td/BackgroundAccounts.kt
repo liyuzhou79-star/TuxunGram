@@ -65,6 +65,20 @@ object BackgroundAccounts {
      *  are offline (or never started) are simply absent. */
     val unreadBySlot: StateFlow<Map<Int, Int>> = _unreadBySlot
 
+    private val _onlineBackground = MutableStateFlow(0)
+
+    /** How many background slots are fully online right
+     *  now (their session reached authorizationStateReady).
+     *  The settings account section shows the total so the
+     *  memory cost of simultaneous online is stated in the
+     *  open, not just implied (v0.9.40, G3). */
+    val onlineBackgroundCount: StateFlow<Int> = _onlineBackground
+
+    private fun refreshOnlineCount() {
+        _onlineBackground.value =
+            sessions.values.count { it.ready }
+    }
+
     @Volatile
     private var appContext: Context? = null
 
@@ -149,6 +163,7 @@ object BackgroundAccounts {
             }
             "authorizationStateReady" -> {
                 session.ready = true
+                refreshOnlineCount()
                 // The proxy list is app-global by design; a
                 // background client on this network needs the
                 // same active proxy as the foreground one or
@@ -175,6 +190,7 @@ object BackgroundAccounts {
     private fun dropSession(session: Session) {
         if (sessions.remove(session.slot, session)) {
             _unreadBySlot.value = _unreadBySlot.value - session.slot
+            refreshOnlineCount()
             try {
                 session.client.close()
             } catch (t: Throwable) {

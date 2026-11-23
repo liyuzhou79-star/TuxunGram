@@ -113,6 +113,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.provider.ContactsContract
@@ -138,6 +139,8 @@ import com.tuxungram.android.td.ATTACH_CHAT_USER
 import com.tuxungram.android.td.AttachBotUi
 import com.tuxungram.android.td.AttachBotsStore
 import com.tuxungram.android.td.AnimEffect
+import com.tuxungram.android.td.IvBlock
+import com.tuxungram.android.td.LinkRouter
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
 import com.tuxungram.android.td.PaidMediaUi
@@ -5597,6 +5600,9 @@ fun MessageBubble(
                         }
                     }
                     MsgKind.CHECKLIST -> ChecklistBubbleContent(msg)
+                    MsgKind.RICH_MESSAGE -> RichBlocksBubbleContent(
+                        msg, bubbleTextSize
+                    )
                     MsgKind.GIVEAWAY -> GiveawayBubbleContent(msg)
                     MsgKind.AUDIO -> AudioBubbleContent(msg)
                     MsgKind.INVOICE -> InvoiceBubbleContent(msg)
@@ -7423,6 +7429,335 @@ fun AudioBubbleContent(msg: MsgItem) {
  *  product and the total and says plainly that paying
  *  happens elsewhere — there is deliberately no pay
  *  button to tap. */
+/** Rich message body (v0.9.40, G4): renders a
+ *  messageRichMessage's PageBlock list inside the bubble —
+ *  the text-bearing blocks with basic styles (title /
+ *  headers / paragraphs / quotes / lists / preformatted /
+ *  details), while media blocks and tables degrade to
+ *  labelled placeholder lines, exactly as scoped: the
+ *  bubble is a reading skeleton, not a full article page.
+ *  Colors come from the bubble palette like every other
+ *  card; [bodySize] is the Appearance message-text size. */
+@Composable
+fun RichBlocksBubbleContent(msg: MsgItem, bodySize: TextUnit) {
+    val palette = OfficialTheme.current()
+    val mainText = if (msg.outgoing) palette.outText else palette.inText
+    val subText = if (msg.outgoing) palette.outTime else palette.inTime
+    val linkText = if (msg.outgoing) palette.outText else palette.linkIn
+    Column(modifier = Modifier.widthIn(max = 280.dp)) {
+        msg.richBlocks.forEachIndexed { index, block ->
+            if (index > 0) Spacer(Modifier.height(6.dp))
+            RichBlockView(block, mainText, subText, linkText, bodySize)
+        }
+        if (msg.richBlocks.isEmpty()) {
+            Text("[富文本消息]", color = subText, fontSize = 14.sp)
+        }
+    }
+}
+
+@Composable
+private fun RichBlockView(
+    block: IvBlock,
+    mainText: Color,
+    subText: Color,
+    linkText: Color,
+    bodySize: TextUnit
+) {
+    val context = LocalContext.current
+    when (block.kind) {
+        "title" -> RichEntityText(
+            block.rich?.text ?: "",
+            block.rich?.entities ?: emptyList(),
+            fontSize = 17.sp, color = mainText, linkColor = linkText
+        )
+        "subtitle" -> RichEntityText(
+            block.rich?.text ?: "",
+            block.rich?.entities ?: emptyList(),
+            fontSize = 15.sp, color = subText, linkColor = linkText
+        )
+        "author" -> {
+            val dateText = if (block.dateSeconds > 0) {
+                java.text.SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm", java.util.Locale.getDefault()
+                ).format(java.util.Date(block.dateSeconds * 1000L))
+            } else {
+                ""
+            }
+            Text(
+                listOf(block.rich?.text ?: "", dateText)
+                    .filter { it.isNotEmpty() }.joinToString(" · "),
+                fontSize = 12.5.sp, color = subText
+            )
+        }
+        "kicker" -> RichEntityText(
+            block.rich?.text ?: "",
+            block.rich?.entities ?: emptyList(),
+            fontSize = 12.5.sp, color = linkText, linkColor = linkText
+        )
+        "header" -> RichEntityText(
+            block.rich?.text ?: "",
+            block.rich?.entities ?: emptyList(),
+            fontSize = 16.5.sp, color = mainText, linkColor = linkText
+        )
+        "subheader" -> RichEntityText(
+            block.rich?.text ?: "",
+            block.rich?.entities ?: emptyList(),
+            fontSize = 15.5.sp, color = mainText, linkColor = linkText
+        )
+        "paragraph" -> RichEntityText(
+            block.rich?.text ?: "",
+            block.rich?.entities ?: emptyList(),
+            fontSize = bodySize, color = mainText, linkColor = linkText
+        )
+        "footer" -> RichEntityText(
+            block.rich?.text ?: "",
+            block.rich?.entities ?: emptyList(),
+            fontSize = 12.5.sp, color = subText, linkColor = linkText
+        )
+        "pre" -> Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    subText.copy(alpha = 0.12f),
+                    RoundedCornerShape(8.dp)
+                )
+                .padding(10.dp)
+        ) {
+            Text(
+                block.rich?.text ?: "",
+                fontSize = 13.sp, color = mainText,
+                fontFamily = androidx.compose.ui.text.font.FontFamily
+                    .Monospace
+            )
+        }
+        "divider" -> Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .height(0.5.dp)
+                .background(subText.copy(alpha = 0.4f))
+        )
+        "quote", "pullquote" -> {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .height(48.dp)
+                        .background(linkText, RoundedCornerShape(2.dp))
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    block.rich?.let {
+                        RichEntityText(
+                            it.text, it.entities,
+                            fontSize = bodySize, color = mainText,
+                            linkColor = linkText
+                        )
+                    }
+                    block.children.forEach { child ->
+                        Spacer(Modifier.height(6.dp))
+                        RichBlockView(
+                            child, mainText, subText, linkText, bodySize
+                        )
+                    }
+                    block.credit?.let { credit ->
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            credit.text,
+                            fontSize = 12.5.sp, color = subText,
+                            fontStyle = androidx.compose.ui.text.font
+                                .FontStyle.Italic
+                        )
+                    }
+                }
+            }
+        }
+        "list" -> {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                block.listItems.forEach { item ->
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        val marker = when {
+                            item.checked != null ->
+                                if (item.checked) "☑ " else "☐ "
+                            item.label.isNotEmpty() ->
+                                item.label + " "
+                            else -> "• "
+                        }
+                        Text(
+                            marker,
+                            fontSize = bodySize, color = mainText
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            item.blocks.forEachIndexed { i, child ->
+                                if (i > 0) {
+                                    Spacer(Modifier.height(4.dp))
+                                }
+                                RichBlockView(
+                                    child, mainText, subText,
+                                    linkText, bodySize
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
+        }
+        "details" -> {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                block.rich?.let {
+                    RichEntityText(
+                        it.text, it.entities,
+                        fontSize = 15.5.sp, color = mainText,
+                        linkColor = linkText
+                    )
+                }
+                block.children.forEach { child ->
+                    Spacer(Modifier.height(6.dp))
+                    RichBlockView(
+                        child, mainText, subText, linkText, bodySize
+                    )
+                }
+            }
+        }
+        "group" -> {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                block.children.forEachIndexed { i, child ->
+                    if (i > 0) Spacer(Modifier.height(6.dp))
+                    RichBlockView(
+                        child, mainText, subText, linkText, bodySize
+                    )
+                }
+                block.caption?.let { caption ->
+                    if (caption.text.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        RichEntityText(
+                            caption.text, caption.entities,
+                            fontSize = 12.5.sp, color = subText,
+                            linkColor = linkText
+                        )
+                    }
+                }
+            }
+        }
+        "table" -> {
+            // Degraded on purpose (v0.9.40, G4 scope): the
+            // cell texts ride the message's plain-text
+            // skeleton (previews / quotes keep the words),
+            // but the grid itself is not drawn in a bubble.
+            Column(modifier = Modifier.fillMaxWidth()) {
+                block.rich?.let {
+                    if (it.text.isNotEmpty()) {
+                        RichEntityText(
+                            it.text, it.entities,
+                            fontSize = 14.sp, color = mainText,
+                            linkColor = linkText
+                        )
+                        Spacer(Modifier.height(2.dp))
+                    }
+                }
+                Text(
+                    "[表格] 表格内容暂不在气泡中展开",
+                    fontSize = 12.5.sp, color = subText
+                )
+            }
+        }
+        "photo" -> {
+            // Media embed placeholder (v0.9.40, G4 scope):
+            // the picture itself is not rendered inside a
+            // rich-message bubble; its caption still shows.
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text("[图片]", fontSize = 13.5.sp, color = subText)
+                block.caption?.let { caption ->
+                    if (caption.text.isNotEmpty()) {
+                        Spacer(Modifier.height(2.dp))
+                        RichEntityText(
+                            caption.text, caption.entities,
+                            fontSize = 12.5.sp, color = subText,
+                            linkColor = linkText
+                        )
+                    }
+                }
+            }
+        }
+        "weblink" -> {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "嵌入内容（点此在浏览器打开）",
+                    fontSize = 14.sp, color = linkText,
+                    modifier = Modifier.clickable {
+                        if (block.linkUrl.isNotEmpty()) {
+                            LinkRouter.open(context, block.linkUrl)
+                        }
+                    }
+                )
+                block.caption?.let { caption ->
+                    if (caption.text.isNotEmpty()) {
+                        Spacer(Modifier.height(2.dp))
+                        RichEntityText(
+                            caption.text, caption.entities,
+                            fontSize = 12.5.sp, color = subText,
+                            linkColor = linkText
+                        )
+                    }
+                }
+            }
+        }
+        "article" -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (block.linkUrl.isNotEmpty()) {
+                            LinkRouter.open(context, block.linkUrl)
+                        }
+                    }
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("📰 ", fontSize = 14.sp, color = subText)
+                RichEntityText(
+                    block.rich?.text ?: "",
+                    block.rich?.entities ?: emptyList(),
+                    fontSize = 14.sp, color = linkText,
+                    linkColor = linkText
+                )
+            }
+        }
+        "file" -> {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    block.rich?.text ?: "📎 附件",
+                    fontSize = 14.sp, color = mainText
+                )
+                block.caption?.let { caption ->
+                    if (caption.text.isNotEmpty()) {
+                        Spacer(Modifier.height(2.dp))
+                        RichEntityText(
+                            caption.text, caption.entities,
+                            fontSize = 12.5.sp, color = subText,
+                            linkColor = linkText
+                        )
+                    }
+                }
+            }
+        }
+        else -> {
+            // Any future block kind with text still reads
+            // as a paragraph instead of vanishing.
+            block.rich?.let {
+                if (it.text.isNotEmpty()) {
+                    RichEntityText(
+                        it.text, it.entities,
+                        fontSize = bodySize, color = mainText,
+                        linkColor = linkText
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun InvoiceBubbleContent(msg: MsgItem) {
     val palette = OfficialTheme.current()

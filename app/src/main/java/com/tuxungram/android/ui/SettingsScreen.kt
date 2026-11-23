@@ -1278,6 +1278,16 @@ fun SettingsScreen(
             "可以登录多个 Telegram 账号，每个账号的数据各自独立。其他账号会保持在线：来了新消息会带着账号名通知你，每个账号的未读数显示在这一行右边。切换账号时 App 会自动重启一下，稍等片刻就好。",
             color = Color.Gray, fontSize = 13.sp
         )
+        // Online total with the honest memory cost
+        // (v0.9.40, G3): the foreground account plus every
+        // background session that reached Ready. Each
+        // online account is a full TDLib instance.
+        val bgOnline by BackgroundAccounts.onlineBackgroundCount
+            .collectAsState()
+        Text(
+            "当前在线账号：${1 + bgOnline} 个。每个在线账号约多占几十 MB 内存，账号越多越明显；不想让某个账号保持在线，退出那个账号的登录即可。",
+            color = Color.Gray, fontSize = 13.sp
+        )
         val accountSlots by AccountStore.slots.collectAsState()
         val currentSlot by AccountStore.current.collectAsState()
         val accountLabels by AccountStore.labels.collectAsState()

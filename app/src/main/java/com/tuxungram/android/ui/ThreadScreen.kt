@@ -522,6 +522,11 @@ fun SimpleMessageBubble(
                     MsgKind.GIVEAWAY -> GiveawayBubbleContent(
                         msg, showStatusAction = false
                     )
+                    // Rich messages (v0.9.40, G4) render
+                    // with the main chat's block renderer.
+                    MsgKind.RICH_MESSAGE -> RichBlocksBubbleContent(
+                        msg, bubbleTextSize
+                    )
                     MsgKind.AUDIO -> AudioBubbleContent(msg)
                     MsgKind.INVOICE -> InvoiceBubbleContent(msg)
                     MsgKind.SHARED -> SharedBubbleContent(msg)

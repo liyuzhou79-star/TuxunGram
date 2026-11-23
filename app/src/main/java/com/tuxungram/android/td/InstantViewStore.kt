@@ -200,13 +200,53 @@ object InstantViewStore {
         return richToText(text)
     }
 
-    private fun parseBlocks(arr: JSONArray?): List<IvBlock> {
+    /** Parse a PageBlock array. Public since v0.9.40 (G4):
+     *  messageRichMessage carries the very same PageBlock
+     *  list as an Instant View page, so MessageStore parses
+     *  rich messages through this one entry point instead of
+     *  growing a second block parser. Photo blocks register
+     *  their file for download as a side effect (harmless for
+     *  chat use: the file lands in TDLib's cache either way). */
+    fun parseBlocks(arr: JSONArray?): List<IvBlock> {
         if (arr == null) return emptyList()
         val out = ArrayList<IvBlock>()
         for (i in 0 until arr.length()) {
             parseBlock(arr.optJSONObject(i))?.let { out.add(it) }
         }
         return out
+    }
+
+    /** Plain-text skeleton of a block list (v0.9.40, G4):
+     *  every block's own text, captions, credits and table
+     *  cells, depth-first, one block per line. Rich messages
+     *  store this as their MsgItem.text so the chat-list
+     *  preview, reply quotes and search hits show the words
+     *  instead of a bare placeholder. Capped — a rich post
+     *  can be article-length and nothing downstream needs
+     *  more than the head. */
+    fun blocksPlainText(blocks: List<IvBlock>): String {
+        val sb = StringBuilder()
+        fun add(text: String?) {
+            val t = text?.trim().orEmpty()
+            if (t.isEmpty()) return
+            if (sb.isNotEmpty()) sb.append('\n')
+            sb.append(t)
+        }
+        fun walk(block: IvBlock) {
+            add(block.rich?.text)
+            add(block.caption?.text)
+            add(block.credit?.text)
+            for (row in block.tableRows) {
+                add(row.joinToString(" ") { it.text })
+            }
+            for (item in block.listItems) {
+                item.blocks.forEach(::walk)
+            }
+            block.children.forEach(::walk)
+            if (sb.length > 8192) return
+        }
+        blocks.forEach(::walk)
+        return sb.toString().take(4096)
     }
 
     private fun parseBlock(block: JSONObject?): IvBlock? {
