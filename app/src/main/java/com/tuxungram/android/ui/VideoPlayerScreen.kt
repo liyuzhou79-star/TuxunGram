@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +49,15 @@ import kotlinx.coroutines.delay
  * draggable progress bar, and close. The system player remains
  * available from the bubble's long-press menu ("用其他播放器
  * 打开").
+ *
+ * Playback extras (v0.9.52, W2): a 1x/1.5x/2x speed chip and a
+ * mute toggle ride the MediaPlayer the VideoView prepares
+ * (playbackParams / setVolume — platform APIs, no new
+ * dependency), and a rotate button flips the activity to
+ * landscape and back on the user's word only; the orientation
+ * is released when the player closes. Round video notes play
+ * here too (they open through the media viewer), so they get
+ * the same speed control as regular videos.
  */
 @Composable
 fun VideoPlayerScreen(path: String, title: String, onClose: () -> Unit) {
@@ -56,10 +66,56 @@ fun VideoPlayerScreen(path: String, title: String, onClose: () -> Unit) {
     var positionMs by remember { mutableIntStateOf(0) }
     var durationMs by remember { mutableIntStateOf(0) }
     var seeking by remember { mutableStateOf(false) }
+    var mediaPlayer by remember {
+        mutableStateOf<android.media.MediaPlayer?>(null)
+    }
+    var speed by remember { mutableFloatStateOf(1f) }
+    var muted by remember { mutableStateOf(false) }
+    var landscape by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val activity = remember(context) {
+        var c: android.content.Context? = context
+        while (c is android.content.ContextWrapper &&
+            c !is android.app.Activity
+        ) {
+            c = c.baseContext
+        }
+        c as? android.app.Activity
+    }
+
+    fun applySpeed(mp: android.media.MediaPlayer, value: Float) {
+        try {
+            mp.playbackParams = mp.playbackParams.setSpeed(value)
+        } catch (t: Throwable) {
+            // Same stance as the voice player: a ROM that
+            // rejects the params keeps the old speed instead
+            // of failing playback.
+        }
+    }
+
+    fun applyMute(mp: android.media.MediaPlayer, on: Boolean) {
+        try {
+            if (on) mp.setVolume(0f, 0f) else mp.setVolume(1f, 1f)
+        } catch (t: Throwable) {
+        }
+    }
 
     BackHandler { onClose() }
     DisposableEffect(Unit) {
-        onDispose { view?.stopPlayback() }
+        onDispose {
+            view?.stopPlayback()
+            // Release the orientation the rotate button took.
+            activity?.requestedOrientation =
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+    fun toggleRotate() {
+        landscape = !landscape
+        activity?.requestedOrientation = if (landscape) {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
     }
     // Progress ticker: the bar follows the player unless the
     // user is currently dragging it.
@@ -95,7 +151,10 @@ fun VideoPlayerScreen(path: String, title: String, onClose: () -> Unit) {
                 VideoView(context).apply {
                     setVideoPath(path)
                     setOnPreparedListener { mp ->
+                        mediaPlayer = mp
                         durationMs = mp.duration
+                        applySpeed(mp, speed)
+                        applyMute(mp, muted)
                         start()
                         playing = true
                     }
@@ -184,6 +243,48 @@ fun VideoPlayerScreen(path: String, title: String, onClose: () -> Unit) {
                 formatDuration(durationMs / 1000),
                 color = Color.White,
                 fontSize = 12.sp
+            )
+            Spacer(Modifier.width(10.dp))
+            // Mute toggle (v0.9.52, W2).
+            Text(
+                if (muted) "🔇" else "🔊",
+                fontSize = 16.sp,
+                modifier = Modifier
+                    .clickable {
+                        muted = !muted
+                        mediaPlayer?.let { applyMute(it, muted) }
+                    }
+                    .padding(horizontal = 4.dp, vertical = 4.dp)
+            )
+            // Speed chip (v0.9.52, W2): cycles 1x -> 1.5x -> 2x.
+            Text(
+                if (speed == speed.toInt().toFloat()) {
+                    "${speed.toInt()}x"
+                } else {
+                    "${speed}x"
+                },
+                color = Color.White,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .clickable {
+                        speed = when (speed) {
+                            1f -> 1.5f
+                            1.5f -> 2f
+                            else -> 1f
+                        }
+                        mediaPlayer?.let { applySpeed(it, speed) }
+                    }
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+            )
+            // Rotate toggle (v0.9.52, W2): the only way the
+            // player changes orientation — never automatic.
+            Text(
+                "⟳",
+                color = Color.White,
+                fontSize = 17.sp,
+                modifier = Modifier
+                    .clickable { toggleRotate() }
+                    .padding(horizontal = 4.dp, vertical = 4.dp)
             )
         }
     }

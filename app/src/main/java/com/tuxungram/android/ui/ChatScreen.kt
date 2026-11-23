@@ -833,6 +833,9 @@ fun ChatScreen(
                 MessageStore.saveDraft(latestInput)
                 MessageStore.close()
             }
+            // Leaving the chat stops voice playback (v0.9.52,
+            // W1): the singleton player has no out-of-chat UI.
+            VoicePlayer.stop()
             if (Notifier.foregroundChatId == chatId) {
                 Notifier.foregroundChatId = 0L
             }
@@ -10532,6 +10535,15 @@ object VoicePlayer {
         _positionMs.value = 0
         _durationMs.value = 0
         _activePath.value = null
+    }
+
+    /** Stop playback outright (v0.9.52, W1): the player is a
+     *  process-wide singleton with no mini-player UI outside
+     *  the chat, so a voice left playing when the user leaves
+     *  the chat would keep sounding with no visible way to
+     *  stop it. Every chat host stops it on dispose. */
+    fun stop() {
+        releasePlayer()
     }
 }
 

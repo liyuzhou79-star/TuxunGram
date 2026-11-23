@@ -1132,7 +1132,11 @@ fun ThreadScreen(
 
     DisposableEffect(sourceChatId, postId) {
         ThreadStore.open(sourceChatId, postId)
-        onDispose { ThreadStore.close() }
+        onDispose {
+            ThreadStore.close()
+            // Voice playback stops when leaving (v0.9.52, W1).
+            VoicePlayer.stop()
+        }
     }
     BackHandler { onBack() }
     LaunchedEffect(listState, messages.size) {

@@ -782,7 +782,11 @@ fun ForumTopicView(
 
     DisposableEffect(chatId, topic.topicId) {
         ForumStore.openTopic(chatId, topic.topicId)
-        onDispose { ForumStore.closeTopic() }
+        onDispose {
+            ForumStore.closeTopic()
+            // Voice playback stops when leaving (v0.9.52, W1).
+            VoicePlayer.stop()
+        }
     }
     LaunchedEffect(listState, messages.size) {
         snapshotFlow {
