@@ -12,8 +12,8 @@ android {
         applicationId = "com.tuxungram.android"
         minSdk = 29
         targetSdk = 35
-        versionCode = 58
-        versionName = "0.9.49"
+        versionCode = 59
+        versionName = "0.9.50"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -36,6 +36,14 @@ android {
             ?.takeIf { it.isNotBlank() } ?: "b18441a1ff607e10a989891a5462e627"
         buildConfigField("int", "API_ID", apiId)
         buildConfigField("String", "API_HASH", "\"$apiHash\"")
+        // Whether THIS build was signed with the formal release
+        // key (v0.9.50): the same env signal the signingConfigs
+        // block below keys on. The update checker uses it to
+        // warn test-signed installs that a formal release cannot
+        // be installed over them (different certificate).
+        val formalSigning = System.getenv("TUXUNGRAM_KEYSTORE_PATH")
+            ?.takeIf { it.isNotBlank() } != null
+        buildConfigField("boolean", "FORMAL_SIGNING", formalSigning.toString())
     }
 
     // Release signing is injected by CI from repository secrets (the

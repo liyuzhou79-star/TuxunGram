@@ -2491,6 +2491,23 @@ fun SettingsScreen(
                     "有新版本：${updateInfo.latestVersion}",
                     fontSize = 14.sp, fontWeight = FontWeight.SemiBold
                 )
+                // Formal releases (1.0.0+) are signed with a
+                // different key than these test builds, so
+                // Android refuses to install one over the
+                // other (v0.9.50, U4). Say so BEFORE the user
+                // downloads, not after the install fails.
+                val latestMajor = updateInfo.latestVersion
+                    .split(".").firstOrNull()?.toIntOrNull() ?: 0
+                if (!BuildConfig.FORMAL_SIGNING && latestMajor >= 1) {
+                    Text(
+                        "注意：正式版和你现在这个测试版用的签名不一样，" +
+                            "装正式版之前要先卸载测试版。聊天记录都在 " +
+                            "Telegram 服务器上、不会丢；本地缓存和本机" +
+                            "设置（本地置顶、本地标签等）会被清掉。",
+                        color = Color(0xFFC62828), fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
                 if (updateInfo.notes.isNotEmpty()) {
                     Text(
                         updateInfo.notes,
