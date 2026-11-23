@@ -298,9 +298,23 @@ object BackgroundAccounts {
             if (muteFor > 0) return@send
             val label = AccountStore.labels.value[session.slot]
                 ?: "账号 ${session.slot + 1}"
+            // Category channel + content hiding (v0.9.43,
+            // M1/M3): the same rules as the foreground path —
+            // secret chats and a locked app never put message
+            // bodies on the lock screen, whichever account the
+            // message belongs to.
+            val secret = chat.optJSONObject("type")
+                ?.optString("@type") == "chatTypeSecret"
+            val locked = AppLock.pinSet.value && AppLock.locked.value
             Notifier.postBackground(
                 ctx, session.slot, label, chatId,
-                chat.optString("title"), summary
+                if (locked) {
+                    "TuxunGram"
+                } else {
+                    chat.optString("title")
+                },
+                if (locked || secret) "你有一条新消息" else summary,
+                KeepAliveService.channelForChatType(chat)
             )
         }
     }

@@ -3,8 +3,14 @@ package com.tuxungram.android.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -206,10 +212,69 @@ fun SimpleMessageBubble(
         ServiceChipRow(msg)
         return
     }
+    // Swipe-to-reply (v0.9.43, M2): the main chat has had
+    // this since v0.7.0; thread / topic bubbles now share
+    // the gesture — drag left past the threshold, a haptic
+    // tick fires and the hosting store's reply target is
+    // set via onReply, then the row springs back (a snap
+    // when the system animator scale is 0, i.e. reduce
+    // motion). Same thresholds as the main chat.
+    val swipeAnim = remember(msg.id) { Animatable(0f) }
+    val swipeScope = rememberCoroutineScope()
+    var swipeFired by remember(msg.id) { mutableStateOf(false) }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        if (swipeAnim.value < -8f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 10.dp)
+                    .size(34.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("↩", fontSize = 17.sp)
+            }
+        }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp),
+            .padding(vertical = 3.dp)
+            .offset { IntOffset(swipeAnim.value.roundToInt(), 0) }
+            .pointerInput(msg.id) {
+                val maxSwipe = 88.dp.toPx()
+                val threshold = 60.dp.toPx()
+                detectHorizontalDragGestures(
+                    onDragStart = { swipeFired = false },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        val next = (swipeAnim.value + dragAmount)
+                            .coerceIn(-maxSwipe, 0f)
+                        swipeScope.launch { swipeAnim.snapTo(next) }
+                        if (!swipeFired && next <= -threshold) {
+                            swipeFired = true
+                            com.tuxungram.android.td.Haptics.tick()
+                            onReply(msg)
+                        }
+                    },
+                    onDragEnd = {
+                        swipeScope.launch {
+                            if (Motion.durationScale == 0f) {
+                                swipeAnim.snapTo(0f)
+                            } else {
+                                swipeAnim.animateTo(
+                                    0f, Motion.tween(180)
+                                )
+                            }
+                        }
+                    },
+                    onDragCancel = {
+                        swipeScope.launch { swipeAnim.snapTo(0f) }
+                    }
+                )
+            },
         horizontalArrangement = if (outgoing) {
             Arrangement.End
         } else {
@@ -708,6 +773,7 @@ fun SimpleMessageBubble(
             )
         }
     }
+    } // swipe-to-reply wrapper Box (v0.9.43, M2)
     if (deleteOpen) {
         AlertDialog(
             onDismissRequest = { deleteOpen = false },

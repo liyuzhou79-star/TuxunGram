@@ -91,8 +91,58 @@ class KeepAliveService : Service() {
 
     companion object {
         const val CHANNEL_KEEPALIVE = "keepalive"
+
+        /** Legacy single message channel (pre-v0.9.43). Deleted
+         *  on first channel creation after the upgrade: every
+         *  message notification now lands on one of the four
+         *  category channels below. Deleting also cancels any
+         *  still-showing notifications posted on it — acceptable
+         *  for a migration (the chats themselves keep their
+         *  unread state in the list). */
         const val CHANNEL_MESSAGES = "messages"
+
+        // Message category channels (v0.9.43, M1): private /
+        // group / channel / other, each independently tunable
+        // in system settings (sound, vibration, importance).
+        // The four are SHARED by all accounts on purpose: a
+        // per-account × per-category matrix would flood the
+        // system settings page (accounts × 4 channels), and
+        // the owning account is already named on each
+        // notification itself (sub-text + separate group).
+        const val CHANNEL_PRIVATE = "messages_private"
+        const val CHANNEL_GROUPS = "messages_groups"
+        const val CHANNEL_CHANNELS = "messages_channels"
+        const val CHANNEL_OTHER = "messages_other"
         private const val NOTIF_ID = 1
+
+        /** Category channel for a cached chat row. Secret
+         *  chats ride OTHER (their bodies are hidden anyway),
+         *  unknown rows fall back to OTHER as well. */
+        fun channelFor(item: ChatItem?): String = when {
+            item == null -> CHANNEL_OTHER
+            item.isSecret -> CHANNEL_OTHER
+            item.isChannel -> CHANNEL_CHANNELS
+            item.isGroup -> CHANNEL_GROUPS
+            else -> CHANNEL_PRIVATE
+        }
+
+        /** Category channel from a raw getChat response (the
+         *  background-account path and the uncached-chat path,
+         *  where no ChatItem exists). */
+        fun channelForChatType(chat: JSONObject): String =
+            when (chat.optJSONObject("type")?.optString("@type")) {
+                "chatTypePrivate" -> CHANNEL_PRIVATE
+                "chatTypeBasicGroup" -> CHANNEL_GROUPS
+                "chatTypeSupergroup" ->
+                    if (chat.optJSONObject("type")
+                            ?.optBoolean("is_channel") == true
+                    ) {
+                        CHANNEL_CHANNELS
+                    } else {
+                        CHANNEL_GROUPS
+                    }
+                else -> CHANNEL_OTHER
+            }
 
         fun createChannels(context: Context) {
             val nm = context.getSystemService(NotificationManager::class.java)
@@ -105,10 +155,34 @@ class KeepAliveService : Service() {
             )
             nm.createNotificationChannel(
                 NotificationChannel(
-                    CHANNEL_MESSAGES, "新消息",
+                    CHANNEL_PRIVATE, "私聊消息",
                     NotificationManager.IMPORTANCE_HIGH
                 )
             )
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_GROUPS, "群组消息",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
+            )
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_CHANNELS, "频道消息",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
+            )
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_OTHER, "其他消息",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
+            )
+            // Migration (v0.9.43, M1): retire the legacy
+            // single channel now that the categories exist.
+            try {
+                nm.deleteNotificationChannel(CHANNEL_MESSAGES)
+            } catch (t: Throwable) {
+            }
         }
 
         fun start(context: Context) {
@@ -184,6 +258,80 @@ object Notifier {
         registerNetworkCallback(context)
     }
 
+    // ---- Mention detection for muted chats (v0.9.43, M3) ----
+    // A muted GROUP still notifies when the message @-mentions
+    // me — the official rule. Detection is entity-based only:
+    // a textEntityTypeMentionName carrying my user id, or a
+    // plain textEntityTypeMention whose text is my @username.
+    // My id/username are resolved lazily via getMe; while
+    // unknown, a muted chat stays silent (never the reverse).
+    @Volatile
+    private var myId = 0L
+
+    @Volatile
+    private var myUsername = ""
+
+    private fun ensureMe() {
+        if (myId != 0L) return
+        TdRepository.sendRaw(TdClient.request("getMe")) { me ->
+            if (TdClient.isError(me)) return@sendRaw
+            myId = me.optLong("id")
+            val direct = me.optString("username")
+            myUsername = if (direct.isNotEmpty()) {
+                direct
+            } else {
+                me.optJSONObject("usernames")
+                    ?.optJSONArray("active_usernames")
+                    ?.optString(0) ?: ""
+            }
+        }
+    }
+
+    private fun mentionsMe(content: JSONObject?): Boolean {
+        if (content == null || myId == 0L) return false
+        val texts = ArrayList<JSONObject>(2)
+        content.optJSONObject("text")?.let { texts.add(it) }
+        content.optJSONObject("caption")?.let { texts.add(it) }
+        for (formatted in texts) {
+            val body = formatted.optString("text")
+            val entities = formatted.optJSONArray("entities")
+                ?: continue
+            for (i in 0 until entities.length()) {
+                val type = entities.optJSONObject(i)
+                    ?.optJSONObject("type") ?: continue
+                when (type.optString("@type")) {
+                    "textEntityTypeMentionName" ->
+                        if (type.optLong("user_id") == myId) {
+                            return true
+                        }
+                    "textEntityTypeMention" -> {
+                        if (myUsername.isEmpty()) continue
+                        val entity = entities.optJSONObject(i)
+                            ?: continue
+                        val start = entity.optInt("offset")
+                        val length = entity.optInt("length")
+                        if (start >= 0 && length > 0 &&
+                            start + length <= body.length &&
+                            body.substring(start, start + length)
+                                .equals(
+                                    "@$myUsername",
+                                    ignoreCase = true
+                                )
+                        ) {
+                            return true
+                        }
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    /** Generic body for notifications whose content must not
+     *  leak onto the lock screen: secret chats, and anything
+     *  arriving while the app lock is engaged (v0.9.43, M3). */
+    private const val HIDDEN_TEXT = "你有一条新消息"
+
     private fun onNewMessage(update: JSONObject) {
         if (!UiSettings.keepAlive.value) return
         val ctx = appContext ?: return
@@ -192,12 +340,30 @@ object Notifier {
         val chatId = message.optLong("chat_id")
         if (chatId == foregroundChatId) return
         val item = ChatStore.itemOf(chatId)
-        if (item?.isMuted == true) return
+        val content = message.optJSONObject("content")
+        if (item?.isMuted == true) {
+            // Muted chats stay silent — EXCEPT a group message
+            // that @-mentions me (official rule, M3). Channels
+            // and private chats have no mention bypass.
+            ensureMe()
+            val mentionBypass = item.isGroup &&
+                !item.isChannel && mentionsMe(content)
+            if (!mentionBypass) return
+        }
         lastMessageIdByChat[chatId] = message.optLong("id")
-        val summary = summaryOf(message.optJSONObject("content"))
+        val locked = AppLock.pinSet.value && AppLock.locked.value
+        val hideBody = locked || item?.isSecret == true
+        val summary = if (hideBody) {
+            HIDDEN_TEXT
+        } else {
+            summaryOf(content)
+        }
         val title = item?.title
         if (title != null) {
-            post(ctx, chatId, title, summary)
+            post(
+                ctx, chatId, if (locked) "TuxunGram" else title,
+                summary, KeepAliveService.channelFor(item)
+            )
         } else {
             // Chat not in the local list cache yet (brand-new
             // chat): resolve its title first, then post.
@@ -206,7 +372,22 @@ object Notifier {
             }
             TdRepository.sendRaw(query) { chat ->
                 if (!TdClient.isError(chat)) {
-                    post(ctx, chatId, chat.optString("title"), summary)
+                    val secret = chat.optJSONObject("type")
+                        ?.optString("@type") == "chatTypeSecret"
+                    post(
+                        ctx, chatId,
+                        if (locked) {
+                            "TuxunGram"
+                        } else {
+                            chat.optString("title")
+                        },
+                        if (locked || secret) {
+                            HIDDEN_TEXT
+                        } else {
+                            summary
+                        },
+                        KeepAliveService.channelForChatType(chat)
+                    )
                 }
             }
         }
@@ -244,7 +425,19 @@ object Notifier {
             putExtra("open_chat_id", chatId)
         }
 
-    private fun post(ctx: Context, chatId: Long, title: String, text: String) {
+    /** Channel of the most recently posted foreground
+     *  notification; the group summary rides the same channel
+     *  so its alert behaviour matches the newest message. */
+    @Volatile
+    private var lastChannel: String = KeepAliveService.CHANNEL_PRIVATE
+
+    private fun post(
+        ctx: Context,
+        chatId: Long,
+        title: String,
+        text: String,
+        channel: String
+    ) {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(
                 ctx, Manifest.permission.POST_NOTIFICATIONS
@@ -278,7 +471,7 @@ object Notifier {
         val readAction = NotificationCompat.Action.Builder(
             android.R.drawable.ic_menu_view, "标记已读", readPending
         ).build()
-        val notif = NotificationCompat.Builder(ctx, KeepAliveService.CHANNEL_MESSAGES)
+        val notif = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
             .setContentText(text)
@@ -294,6 +487,7 @@ object Notifier {
             NotificationManagerCompat.from(ctx).notify(chatId.hashCode(), notif)
         } catch (t: Throwable) {
         }
+        lastChannel = channel
         linesByChat[chatId] = title to text
         postSummary(ctx)
     }
@@ -315,7 +509,7 @@ object Notifier {
             style.addLine("${line.first}：${line.second}")
         }
         val summary = NotificationCompat.Builder(
-            ctx, KeepAliveService.CHANNEL_MESSAGES
+            ctx, lastChannel
         )
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle("TuxunGram")
@@ -447,7 +641,7 @@ object Notifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notif = NotificationCompat.Builder(
-            ctx, KeepAliveService.CHANNEL_MESSAGES
+            ctx, KeepAliveService.channelFor(ChatStore.itemOf(chatId))
         )
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle("回复没有发出去")
@@ -542,7 +736,8 @@ object Notifier {
         label: String,
         chatId: Long,
         title: String,
-        text: String
+        text: String,
+        channel: String = KeepAliveService.CHANNEL_OTHER
     ) {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(
@@ -581,7 +776,7 @@ object Notifier {
         val readAction = NotificationCompat.Action.Builder(
             android.R.drawable.ic_menu_view, "标记已读", readPending
         ).build()
-        val notif = NotificationCompat.Builder(ctx, KeepAliveService.CHANNEL_MESSAGES)
+        val notif = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
             .setContentText(text)
@@ -671,7 +866,7 @@ object Notifier {
         )
         val label = AccountStore.labels.value[slot] ?: "账号 ${slot + 1}"
         val notif = NotificationCompat.Builder(
-            ctx, KeepAliveService.CHANNEL_MESSAGES
+            ctx, KeepAliveService.CHANNEL_OTHER
         )
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle("回复没有发出去")
