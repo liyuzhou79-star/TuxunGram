@@ -75,8 +75,10 @@ import kotlinx.coroutines.withContext
  * my profile page (getChatPostedToChatPageStories), each
  * with its server view/reaction counts; tapping one opens
  * its detail — counts, the viewer list
- * (getStoryInteractions, view-type interactions only,
- * reacted viewers badged), and deletion (deleteStory)
+ * (getStoryInteractions — since v0.9.38 E3 all three
+ * interaction types: views with their reactions badged,
+ * forwards, reposts, under the server's own totals), and
+ * deletion (deleteStory)
  * when the story object allows it. Stories the server
  * will not give interactions for show no viewer entry —
  * nothing is estimated or invented.
@@ -303,14 +305,18 @@ private fun StoryGridCell(story: MyStoryUi, onClick: () -> Unit) {
 @Composable
 private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
     var deleteConfirm by remember { mutableStateOf(false) }
-    val viewers by MyStoriesStore.viewers.collectAsState()
-    val viewersLoading by MyStoriesStore.viewersLoading.collectAsState()
-    val viewersError by MyStoriesStore.viewersError.collectAsState()
-    val viewersExhausted by
-        MyStoriesStore.viewersExhausted.collectAsState()
+    val interactions by MyStoriesStore.interactions.collectAsState()
+    val interactionsLoading by
+        MyStoriesStore.interactionsLoading.collectAsState()
+    val interactionsError by
+        MyStoriesStore.interactionsError.collectAsState()
+    val interactionsExhausted by
+        MyStoriesStore.interactionsExhausted.collectAsState()
+    val interactionTotals by
+        MyStoriesStore.interactionTotals.collectAsState()
     LaunchedEffect(story.storyId) {
         if (story.canGetInteractions) {
-            MyStoriesStore.loadViewers(story.storyId)
+            MyStoriesStore.loadInteractions(story.storyId)
         }
     }
     LazyColumn(
@@ -440,23 +446,41 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "看过的人",
+                "互动记录",
                 fontSize = 15.sp, fontWeight = FontWeight.SemiBold
             )
             Spacer(Modifier.height(4.dp))
+            // Server totals (v0.9.38, E3): the response's
+            // own total_count / total_forward_count /
+            // total_reaction_count, kept separate on
+            // purpose — views, reactions and forwards are
+            // three different numbers, and the detail rows
+            // below are only what the API hands out (they
+            // can be fewer than the totals).
+            val totals = interactionTotals
+            if (story.canGetInteractions && totals != null) {
+                Text(
+                    "服务器统计：共 ${totals.totalCount} 条互动 · " +
+                        "转发 ${totals.forwardCount} · " +
+                        "回应 ${totals.reactionCount}" +
+                        "（下面是接口给出的明细，可能比总数少）",
+                    fontSize = 12.5.sp, color = Color.Gray
+                )
+                Spacer(Modifier.height(4.dp))
+            }
         }
         if (!story.canGetInteractions) {
             item {
                 Text(
-                    "这条动态看不了查看者名单（服务器没有开放这条的互动数据）。",
+                    "这条动态看不了互动记录（服务器没有开放这条的互动数据）。",
                     fontSize = 13.5.sp, color = Color.Gray
                 )
             }
-        } else if (viewersError != null && viewers.isEmpty()) {
+        } else if (interactionsError != null && interactions.isEmpty()) {
             item {
-                Text(viewersError!!, fontSize = 13.5.sp)
+                Text(interactionsError!!, fontSize = 13.5.sp)
             }
-        } else if (viewersLoading && viewers.isEmpty()) {
+        } else if (interactionsLoading && interactions.isEmpty()) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(
@@ -466,24 +490,38 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
                     Text("正在查…", fontSize = 14.sp)
                 }
             }
-        } else if (viewers.isEmpty()) {
+        } else if (interactions.isEmpty()) {
             item {
                 Text(
-                    "还没有人看过这条动态。",
+                    when {
+                        story.viewCount > 0 && story.hasExpiredViewers ->
+                            "有 ${story.viewCount} 次查看，但较早的" +
+                                "查看记录已经过期，服务器不再提供名单。"
+                        story.viewCount > 0 ->
+                            "有 ${story.viewCount} 次查看，但服务器" +
+                                "这次没有给出名单明细（上面的数字是总数）。"
+                        else -> "还没有人看过这条动态。"
+                    },
                     fontSize = 13.5.sp, color = Color.Gray
                 )
             }
         } else {
-            items(viewers, key = { it.userId }) { viewer ->
+            items(
+                interactions,
+                key = {
+                    "${it.kind}:${it.userId}:${it.actorChatId}:" +
+                        it.dateSeconds
+                }
+            ) { row ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 5.dp)
                 ) {
-                    if (viewer.photoPath != null) {
+                    if (row.photoPath != null) {
                         AvatarImage(
-                            path = viewer.photoPath, sizeDp = 38
+                            path = row.photoPath, sizeDp = 38
                         )
                     } else {
                         Box(
@@ -495,7 +533,7 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                viewer.name.trim().firstOrNull()
+                                row.name.trim().firstOrNull()
                                     ?.toString() ?: "?",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
@@ -504,34 +542,59 @@ private fun StoryDetail(story: MyStoryUi, onDeleted: () -> Unit) {
                         }
                     }
                     Spacer(Modifier.width(10.dp))
-                    Text(
-                        viewer.name.ifEmpty { "…" },
-                        fontSize = 15.sp,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1
-                    )
-                    if (viewer.reactionEmoji != null) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            viewer.reactionEmoji,
+                            row.name.ifEmpty { "…" },
                             fontSize = 15.sp,
+                            maxLines = 1
+                        )
+                        Text(
+                            when (row.kind) {
+                                com.tuxungram.android.td
+                                    .STORY_KIND_FORWARD ->
+                                    "转发了这条动态"
+                                com.tuxungram.android.td
+                                    .STORY_KIND_REPOST ->
+                                    "转贴为自己的动态"
+                                else -> "看过"
+                            },
+                            fontSize = 12.sp, color = Color.Gray
+                        )
+                    }
+                    if (row.reactionEmoji != null) {
+                        Text(
+                            row.reactionEmoji,
+                            fontSize = 15.sp,
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                    } else if (row.customReaction) {
+                        Text(
+                            "自定义表情回应",
+                            fontSize = 11.5.sp, color = Color.Gray,
                             modifier = Modifier.padding(end = 6.dp)
                         )
                     }
                     Text(
-                        formatViewDate(viewer.dateSeconds),
+                        formatViewDate(row.dateSeconds),
                         fontSize = 12.sp, color = Color.Gray
                     )
                 }
             }
-            if (!viewersExhausted) {
+            if (!interactionsExhausted) {
                 item {
                     TextButton(
-                        onClick = { MyStoriesStore.loadMoreViewers() },
-                        enabled = !viewersLoading,
+                        onClick = {
+                            MyStoriesStore.loadMoreInteractions()
+                        },
+                        enabled = !interactionsLoading,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            if (viewersLoading) "正在加载…" else "加载更多"
+                            if (interactionsLoading) {
+                                "正在加载…"
+                            } else {
+                                "加载更多"
+                            }
                         )
                     }
                 }

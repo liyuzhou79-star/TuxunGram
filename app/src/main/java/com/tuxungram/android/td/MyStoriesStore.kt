@@ -23,6 +23,11 @@ data class MyStoryUi(
     val reactionCount: Int = 0,
     val canDelete: Boolean = false,
     val canGetInteractions: Boolean = false,
+    /** story.has_expired_viewers (v0.9.38, E3): some
+     *  viewers' records have aged out server-side, so an
+     *  empty detail list under a positive view count is
+     *  explained instead of looking like a bug. */
+    val hasExpiredViewers: Boolean = false,
     val isPinned: Boolean = false,
     // Story albums (v0.9.35, B2): the albums this story
     // already belongs to (story.album_ids, manageable
@@ -42,17 +47,44 @@ data class StoryAlbumUi(
     val iconPath: String? = null
 )
 
-/** One viewer of one of my stories (Y2), from
- *  storyInteraction with type storyInteractionTypeView —
- *  the only interaction type that is a view. A non-empty
- *  [reactionEmoji] means the viewer also reacted (the
- *  view's chosen_reaction_type). */
-data class StoryViewerUi(
+/** Interaction kinds of StoryInteractionUi (v0.9.38, E3),
+ *  one per StoryInteractionType variant in the tl. */
+const val STORY_KIND_VIEW = 0
+const val STORY_KIND_FORWARD = 1
+const val STORY_KIND_REPOST = 2
+
+/** One interaction with one of my stories (Y2 as views
+ *  only; v0.9.38, E3, completed to the tl's full
+ *  StoryInteractionType set): a view
+ *  (storyInteractionTypeView — its chosen_reaction_type,
+ *  when present, is the reaction the viewer left), a
+ *  forward as a message (storyInteractionTypeForward),
+ *  or a repost as a story (storyInteractionTypeRepost).
+ *  The actor is a user ([userId] set) or a chat
+ *  ([actorChatId] set). A custom-emoji reaction has no
+ *  plain emoji to show — [customReaction] flags it
+ *  instead of inventing a glyph. */
+data class StoryInteractionUi(
     val userId: Long,
+    val actorChatId: Long = 0L,
+    val kind: Int = STORY_KIND_VIEW,
     val name: String,
     val photoPath: String?,
     val dateSeconds: Int,
-    val reactionEmoji: String?
+    val reactionEmoji: String?,
+    val customReaction: Boolean = false
+)
+
+/** The server's own totals for one story's interaction
+ *  list (v0.9.38, E3): storyInteractions.total_count /
+ *  total_forward_count / total_reaction_count from the
+ *  first page. These are the numbers of record — the
+ *  detail rows below them are only what the API hands
+ *  out, and can be fewer (expired viewers, privacy). */
+data class StoryInteractionTotals(
+    val totalCount: Int,
+    val forwardCount: Int,
+    val reactionCount: Int
 )
 
 /**
@@ -63,14 +95,16 @@ data class StoryViewerUi(
  * note the names differ from the first guess: the list
  * call is getChatPostedToChatPageStories (chat_id,
  * from_story_id, limit -> Stories{total_count, stories,
- * pinned_story_ids}), viewers come from
+ * pinned_story_ids}), interactions come from
  * getStoryInteractions (story_id only — it answers for
  * the account's OWN stories — with a string offset and
- * next_offset paging), and deletion is deleteStory
+ * next_offset paging; v0.9.38 E3 lists all three
+ * interaction types and keeps the response's server
+ * totals alongside), and deletion is deleteStory
  * (story_poster_chat_id, story_id). Data the interface
  * does not carry is not invented: a story whose
- * can_get_interactions is false simply gets no viewer
- * entry in the UI.
+ * can_get_interactions is false simply gets no
+ * interaction entry in the UI.
  */
 object MyStoriesStore {
     private val _stories = MutableStateFlow<List<MyStoryUi>>(emptyList())
@@ -288,6 +322,8 @@ object MyStoriesStore {
             canDelete = story.optBoolean("can_be_deleted"),
             canGetInteractions =
                 story.optBoolean("can_get_interactions"),
+            hasExpiredViewers =
+                story.optBoolean("has_expired_viewers"),
             isPinned = storyId in pinnedIds,
             albumIds = albumIds,
             canBeAddedToAlbum =
@@ -325,117 +361,186 @@ object MyStoriesStore {
         }
     }
 
-    // ---- Viewers of one story ----
+    // ---- Interactions of one story ----
+    // getStoryInteractions (verified in td_api.tl): the
+    // response carries the server totals (total_count /
+    // total_forward_count / total_reaction_count) plus
+    // detail rows whose type is one of the three
+    // StoryInteractionType variants. Until v0.9.38 only
+    // views were listed and forwards/reposts were dropped
+    // silently; now every row the API hands out is shown
+    // as what it is, and views vs reactions vs forwards
+    // are counted separately — views and reactions are
+    // NOT one number: a reaction rides on a view row (its
+    // chosen_reaction_type), while the reaction total is
+    // the server's own total_reaction_count.
 
-    private val _viewers = MutableStateFlow<List<StoryViewerUi>>(
-        emptyList()
-    )
-    val viewers: StateFlow<List<StoryViewerUi>> = _viewers
+    private val _interactions =
+        MutableStateFlow<List<StoryInteractionUi>>(emptyList())
+    val interactions: StateFlow<List<StoryInteractionUi>> =
+        _interactions
 
-    private val _viewersLoading = MutableStateFlow(false)
-    val viewersLoading: StateFlow<Boolean> = _viewersLoading
+    private val _interactionsLoading = MutableStateFlow(false)
+    val interactionsLoading: StateFlow<Boolean> =
+        _interactionsLoading
 
-    private val _viewersError = MutableStateFlow<String?>(null)
-    val viewersError: StateFlow<String?> = _viewersError
+    private val _interactionsError = MutableStateFlow<String?>(null)
+    val interactionsError: StateFlow<String?> = _interactionsError
 
-    private val _viewersExhausted = MutableStateFlow(true)
-    val viewersExhausted: StateFlow<Boolean> = _viewersExhausted
+    private val _interactionsExhausted = MutableStateFlow(true)
+    val interactionsExhausted: StateFlow<Boolean> =
+        _interactionsExhausted
+
+    private val _interactionTotals =
+        MutableStateFlow<StoryInteractionTotals?>(null)
+    val interactionTotals: StateFlow<StoryInteractionTotals?> =
+        _interactionTotals
 
     @Volatile
-    private var viewersStoryId = 0
+    private var interactionsStoryId = 0
 
-    private var viewersOffset = ""
+    private var interactionsOffset = ""
 
     private val nameByUser = ConcurrentHashMap<Long, String>()
     private val namePending = ConcurrentHashMap.newKeySet<Long>()
+    private val nameByChat = ConcurrentHashMap<Long, String>()
+    private val chatNamePending = ConcurrentHashMap.newKeySet<Long>()
 
-    fun loadViewers(storyId: Int) {
-        viewersStoryId = storyId
-        viewersOffset = ""
-        _viewers.value = emptyList()
-        _viewersError.value = null
-        _viewersExhausted.value = false
-        fetchViewersPage()
+    fun loadInteractions(storyId: Int) {
+        interactionsStoryId = storyId
+        interactionsOffset = ""
+        _interactions.value = emptyList()
+        _interactionsError.value = null
+        _interactionsExhausted.value = false
+        _interactionTotals.value = null
+        fetchInteractionsPage()
     }
 
-    fun loadMoreViewers() {
-        if (_viewersLoading.value || _viewersExhausted.value) return
-        if (viewersStoryId == 0) return
-        fetchViewersPage()
+    fun loadMoreInteractions() {
+        if (_interactionsLoading.value ||
+            _interactionsExhausted.value
+        ) {
+            return
+        }
+        if (interactionsStoryId == 0) return
+        fetchInteractionsPage()
     }
 
-    private fun fetchViewersPage() {
-        val forStory = viewersStoryId
-        _viewersLoading.value = true
+    private fun fetchInteractionsPage() {
+        val forStory = interactionsStoryId
+        val firstPage = interactionsOffset.isEmpty() &&
+            _interactions.value.isEmpty()
+        _interactionsLoading.value = true
         val query = TdClient.request("getStoryInteractions").apply {
             put("story_id", forStory)
             put("query", "")
             put("only_contacts", false)
             put("prefer_forwards", false)
             put("prefer_with_reaction", false)
-            put("offset", viewersOffset)
+            put("offset", interactionsOffset)
             put("limit", 50)
         }
         TdRepository.sendRaw(query) { response ->
-            if (viewersStoryId != forStory) return@sendRaw
-            _viewersLoading.value = false
+            if (interactionsStoryId != forStory) return@sendRaw
+            _interactionsLoading.value = false
             if (TdClient.isError(response)) {
-                _viewersError.value =
-                    "看过的人没查到，再试一次。（错误码 " +
+                _interactionsError.value =
+                    "互动记录没查到，再试一次。（错误码 " +
                         "${response.optInt("code")}）"
-                _viewersExhausted.value = true
+                _interactionsExhausted.value = true
                 return@sendRaw
+            }
+            if (firstPage) {
+                _interactionTotals.value = StoryInteractionTotals(
+                    totalCount = response.optInt("total_count"),
+                    forwardCount =
+                        response.optInt("total_forward_count"),
+                    reactionCount =
+                        response.optInt("total_reaction_count")
+                )
             }
             val arr = response.optJSONArray("interactions")
                 ?: JSONArray()
-            val page = ArrayList<StoryViewerUi>()
+            val page = ArrayList<StoryInteractionUi>()
             for (i in 0 until arr.length()) {
                 val interaction = arr.optJSONObject(i) ?: continue
                 val type = interaction.optJSONObject("type")
                     ?: continue
-                // Only views are viewers; forwards and
-                // reposts are separate interaction kinds and
-                // are not silently counted as views.
-                if (type.optString("@type") !=
-                    "storyInteractionTypeView"
-                ) {
-                    continue
+                val kind = when (type.optString("@type")) {
+                    "storyInteractionTypeView" -> STORY_KIND_VIEW
+                    "storyInteractionTypeForward" ->
+                        STORY_KIND_FORWARD
+                    "storyInteractionTypeRepost" -> STORY_KIND_REPOST
+                    else -> continue
                 }
                 val actor = interaction.optJSONObject("actor_id")
                     ?: continue
-                if (actor.optString("@type") != "messageSenderUser") {
-                    continue
-                }
-                val userId = actor.optLong("user_id")
-                if (userId == 0L) continue
-                val reaction = type.optJSONObject(
-                    "chosen_reaction_type"
-                )
-                val emoji = when (reaction?.optString("@type")) {
-                    "reactionTypeEmoji" -> reaction.optString("emoji")
-                    else -> null
-                }
-                page.add(
-                    StoryViewerUi(
-                        userId = userId,
-                        name = nameByUser[userId] ?: "",
-                        photoPath = AvatarStore.pathForUser(userId),
-                        dateSeconds = interaction.optInt(
-                            "interaction_date"
-                        ),
-                        reactionEmoji = emoji?.ifEmpty { null }
+                var reactionEmoji: String? = null
+                var customReaction = false
+                if (kind == STORY_KIND_VIEW) {
+                    val reaction = type.optJSONObject(
+                        "chosen_reaction_type"
                     )
-                )
+                    when (reaction?.optString("@type")) {
+                        "reactionTypeEmoji" ->
+                            reactionEmoji = reaction.optString("emoji")
+                                .ifEmpty { null }
+                        "reactionTypeCustomEmoji" ->
+                            customReaction = true
+                        "reactionTypePaid" -> customReaction = true
+                    }
+                }
+                val date = interaction.optInt("interaction_date")
+                when (actor.optString("@type")) {
+                    "messageSenderUser" -> {
+                        val userId = actor.optLong("user_id")
+                        if (userId == 0L) continue
+                        page.add(
+                            StoryInteractionUi(
+                                userId = userId,
+                                kind = kind,
+                                name = nameByUser[userId] ?: "",
+                                photoPath =
+                                    AvatarStore.pathForUser(userId),
+                                dateSeconds = date,
+                                reactionEmoji = reactionEmoji,
+                                customReaction = customReaction
+                            )
+                        )
+                    }
+                    "messageSenderChat" -> {
+                        val chatId = actor.optLong("chat_id")
+                        if (chatId == 0L) continue
+                        page.add(
+                            StoryInteractionUi(
+                                userId = 0L,
+                                actorChatId = chatId,
+                                kind = kind,
+                                name = nameByChat[chatId] ?: "",
+                                photoPath = null,
+                                dateSeconds = date,
+                                reactionEmoji = reactionEmoji,
+                                customReaction = customReaction
+                            )
+                        )
+                    }
+                    else -> continue
+                }
             }
-            _viewers.value = _viewers.value + page
+            _interactions.value = _interactions.value + page
             val next = response.optString("next_offset")
             if (next.isEmpty() || arr.length() == 0) {
-                _viewersExhausted.value = true
+                _interactionsExhausted.value = true
             } else {
-                viewersOffset = next
+                interactionsOffset = next
             }
-            for (viewer in page) {
-                if (viewer.name.isEmpty()) resolveName(viewer.userId)
+            for (row in page) {
+                if (row.name.isNotEmpty()) continue
+                if (row.userId != 0L) {
+                    resolveName(row.userId)
+                } else if (row.actorChatId != 0L) {
+                    resolveChatName(row.actorChatId)
+                }
             }
         }
     }
@@ -454,14 +559,40 @@ object MyStoriesStore {
             ).filter { it.isNotEmpty() }.joinToString(" ")
             if (name.isNotEmpty()) nameByUser[userId] = name
             val path = AvatarStore.pathForUser(userId)
-            _viewers.value = _viewers.value.map { viewer ->
-                if (viewer.userId == userId) {
-                    viewer.copy(
-                        name = nameByUser[userId] ?: viewer.name,
-                        photoPath = path ?: viewer.photoPath
+            _interactions.value = _interactions.value.map { row ->
+                if (row.userId == userId) {
+                    row.copy(
+                        name = nameByUser[userId] ?: row.name,
+                        photoPath = path ?: row.photoPath
                     )
                 } else {
-                    viewer
+                    row
+                }
+            }
+        }
+    }
+
+    private fun resolveChatName(chatId: Long) {
+        if (!chatNamePending.add(chatId)) return
+        val query = TdClient.request("getChat").apply {
+            put("chat_id", chatId)
+        }
+        TdRepository.sendRaw(query) { chat ->
+            chatNamePending.remove(chatId)
+            if (TdClient.isError(chat)) return@sendRaw
+            val title = chat.optString("title")
+            if (title.isNotEmpty()) nameByChat[chatId] = title
+            val path = AvatarStore.pathForFileObj(
+                chat.optJSONObject("photo")?.optJSONObject("small")
+            )
+            _interactions.value = _interactions.value.map { row ->
+                if (row.actorChatId == chatId) {
+                    row.copy(
+                        name = nameByChat[chatId] ?: row.name,
+                        photoPath = path ?: row.photoPath
+                    )
+                } else {
+                    row
                 }
             }
         }

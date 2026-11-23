@@ -112,6 +112,12 @@ data class ProfileUi(
      *  birthdate — the row simply never shows, nothing is
      *  invented. */
     val birthday: String = "",
+    /** userFullInfo.note (v0.9.38, E2): my private note
+     *  about this user, server-saved via setUserNote and
+     *  visible only to me. It annotates the profile; it
+     *  never replaces the user's name anywhere. Empty =
+     *  no note (the row then only offers to add one). */
+    val note: String = "",
     /** user.is_contact (v0.9.33, Z4): the 删除联系人 entry
      *  only exists while this is true. */
     val isContact: Boolean = false,
@@ -162,6 +168,7 @@ object ProfileStore {
     private var currentUsername = ""
     private var currentPhone = ""
     private var currentBirthday = ""
+    private var currentNote = ""
     private var currentIsContact = false
     private var currentIsBot = false
     private var currentBotHasMainWebApp = false
@@ -204,6 +211,7 @@ object ProfileStore {
         currentUsername = ""
         currentPhone = ""
         currentBirthday = ""
+        currentNote = ""
         currentIsContact = false
         currentIsBot = false
         currentBotHasMainWebApp = false
@@ -307,6 +315,7 @@ object ProfileStore {
             username = currentUsername,
             phone = currentPhone,
             birthday = currentBirthday,
+            note = currentNote,
             isContact = currentIsContact,
             isBot = currentIsBot,
             botHasMainWebApp = currentBotHasMainWebApp,
@@ -372,6 +381,12 @@ object ProfileStore {
                 currentBlocked =
                     full.optJSONObject("block_list")?.optString("@type") ==
                     "blockListMain"
+                // Note (v0.9.38, E2): userFullInfo.note is
+                // a formattedText holding MY private note
+                // about this user (setUserNote writes it;
+                // the tl has no other note field on users).
+                currentNote = full.optJSONObject("note")
+                    ?.optString("text") ?: ""
                 // Birthdate (v0.9.33, Z4): userFullInfo
                 // .birthdate {day, month, year}; year 0 means
                 // the year is hidden. Absent object = no row.
@@ -408,6 +423,52 @@ object ProfileStore {
             if (TdClient.isError(response)) {
                 onDone("删除失败，再试一次。（错误码 ${response.optInt("code")}）")
             } else {
+                onDone(null)
+            }
+        }
+    }
+
+    /** Save (or, with an empty text, clear) my private
+     *  note about a user (v0.9.38, E2): setUserNote with a
+     *  plain formattedText — verified in td_api.tl; the
+     *  note comes back in userFullInfo.note and is visible
+     *  only to me. On success the open profile is updated
+     *  in place; on failure nothing changes locally. */
+    fun setUserNote(userId: Long, text: String, onDone: (String?) -> Unit) {
+        val trimmed = text.trim()
+        val note = org.json.JSONObject().apply {
+            put("@type", "formattedText")
+            put("text", trimmed)
+            put("entities", org.json.JSONArray())
+        }
+        val query = TdClient.request("setUserNote").apply {
+            put("user_id", userId)
+            put("note", note)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                val message = response.optString("message")
+                onDone(
+                    when {
+                        message.contains("NOTE", ignoreCase = true) &&
+                            message.contains("LONG", ignoreCase = true) ->
+                            "备注太长了，缩短一点再保存。"
+                        else ->
+                            "备注没保存上，再试一次。（错误码 " +
+                                "${response.optInt("code")}）"
+                    }
+                )
+            } else {
+                if (currentUserId == userId) {
+                    currentNote = trimmed
+                    val current = _profile.value
+                    if (current != null && current.userId == userId) {
+                        publishKeeping(
+                            current.copy(note = trimmed),
+                            current.membersExhausted
+                        )
+                    }
+                }
                 onDone(null)
             }
         }
