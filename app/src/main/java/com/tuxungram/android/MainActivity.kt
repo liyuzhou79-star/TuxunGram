@@ -253,6 +253,11 @@ class MainActivity : ComponentActivity() {
         // bar on any page.
         enableEdgeToEdge()
         handleOpenChatIntent(intent, coldStart = true)
+        // Inbound shares (v0.9.52, W5): another app's share
+        // sheet may have launched us with text / files.
+        com.tuxungram.android.td.ShareIntake.capture(
+            applicationContext, intent
+        )
         TdRepository.start(applicationContext)
         setContent {
             // App theme (Batch 3, C3): persisted dark/light mode
@@ -307,6 +312,9 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleOpenChatIntent(intent, coldStart = false)
+        com.tuxungram.android.td.ShareIntake.capture(
+            applicationContext, intent
+        )
     }
 
     override fun onStart() {
@@ -647,6 +655,12 @@ private sealed interface Route {
     ) : Route {
         override val depth = 2
     }
+
+    /** Inbound system share picker (v0.9.52, W5): shown while
+     *  ShareIntake holds content another app handed us. */
+    data object Share : Route {
+        override val depth = 2
+    }
 }
 
 @Composable
@@ -784,6 +798,10 @@ private fun ReadyHost() {
     // decision, whichever screen raised them.
     val invitePreview by LinkRouter.pendingInvite.collectAsState()
     var storyChatId by remember { mutableStateOf<Long?>(null) }
+    // Inbound share flow (v0.9.52, W5): content another app
+    // handed us, waiting for its target chat.
+    val sharedContent by com.tuxungram.android.td.ShareIntake
+        .pending.collectAsState()
     // Forward flow: (fromChatId, messageIds) plus where to return
     // to. A list since v0.7.0 — multi-select forwards in one call.
     var forwardReq by remember { mutableStateOf<Pair<Long, List<Long>>?>(null) }
@@ -854,6 +872,7 @@ private fun ReadyHost() {
         membersChatId != null -> Route.Members(membersChatId!!)
         profileChatId != null -> Route.Profile(profileChatId!!)
         showCreate -> Route.Create
+        sharedContent != null -> Route.Share
         req != null -> Route.Forward(req.first, req.second)
         chatId != null -> Route.Chat(chatId)
         else -> Route.Home
@@ -1037,6 +1056,23 @@ private fun ReadyHost() {
                         openChatId = forwardReturnTo
                     }
                 )
+                is Route.Share -> {
+                    val content = sharedContent
+                    if (content != null) {
+                        com.tuxungram.android.ui.SharePickerScreen(
+                            content = content,
+                            onCancel = {
+                                com.tuxungram.android.td.ShareIntake
+                                    .clear()
+                            },
+                            onSent = { target ->
+                                com.tuxungram.android.td.ShareIntake
+                                    .clear()
+                                openChatId = target
+                            }
+                        )
+                    }
+                }
                 is Route.Home -> {
             // Navigation drawer (v0.9.19, Z2): wraps the whole
             // home level (tabs + Duck bar); its gestures arm

@@ -5975,6 +5975,69 @@ object MessageStore {
         }
     }
 
+    /** Send externally shared content into an arbitrary chat
+     *  (v0.9.52, W5): the ACTION_SEND intake's landing call.
+     *  Unlike the composer sends it names its chat explicitly
+     *  (no chat needs to be open) and reports through [onDone]
+     *  once every part has settled, with the first failure's
+     *  plain-language reason when any part failed. A single
+     *  image plus text rides as that photo's caption, like
+     *  the official share flow; anything else sends the files
+     *  one by one and the text as its own message. Images go
+     *  through photoContent, everything else through
+     *  fileContent's video/voice/document split. */
+    fun sendSharedTo(
+        chatId: Long,
+        text: String,
+        files: List<SharedFile>,
+        onDone: (String?) -> Unit
+    ) {
+        val contents = ArrayList<JSONObject>()
+        if (files.size == 1 &&
+            files[0].mimeType.startsWith("image/") &&
+            text.isNotEmpty()
+        ) {
+            contents.add(photoContent(files[0].path, text))
+        } else {
+            for (file in files) {
+                contents.add(
+                    if (file.mimeType.startsWith("image/")) {
+                        photoContent(file.path, "")
+                    } else {
+                        fileContent(file.path, file.mimeType, file.fileName)
+                    }
+                )
+            }
+            if (text.isNotEmpty()) {
+                contents.add(JSONObject().apply {
+                    put("@type", "inputMessageText")
+                    put("text", formattedText(text))
+                    put("link_preview_options", JSONObject.NULL)
+                    put("clear_draft", false)
+                })
+            }
+        }
+        if (contents.isEmpty()) {
+            onDone("没有可发送的内容。")
+            return
+        }
+        var remaining = contents.size
+        var failure: String? = null
+        for (content in contents) {
+            val query = TdClient.request("sendMessage").apply {
+                put("chat_id", chatId)
+                put("input_message_content", content)
+            }
+            TdRepository.sendRaw(query) { response ->
+                if (TdClient.isError(response) && failure == null) {
+                    failure = sendErrorText(response)
+                }
+                remaining--
+                if (remaining == 0) onDone(failure)
+            }
+        }
+    }
+
     /** Send a picked file into the currently open chat. */
     fun sendFile(path: String, mimeType: String, fileName: String) {
         val chatId = currentChatId
