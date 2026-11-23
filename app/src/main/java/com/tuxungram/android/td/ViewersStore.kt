@@ -31,6 +31,27 @@ data class PollVoterUi(
     val voteDate: Int
 )
 
+/** One row of a message's per-user reaction list
+ *  (v0.9.39, F1), from addedReaction in td_api.tl. The
+ *  reactor is a message sender: usually a user, but a
+ *  chat when a channel reacted as itself. [kind] is the
+ *  reaction family — "emoji" ([emoji] carries the
+ *  character), "custom" ([customEmojiId] carries the
+ *  custom emoji) or "paid" (a paid star reaction; the
+ *  list labels it instead of drawing a fake glyph).
+ *  [date] is when the reaction was added. */
+data class AddedReactionUi(
+    val senderId: Long,
+    val isUser: Boolean,
+    val name: String,
+    val photoPath: String?,
+    val kind: String,
+    val emoji: String,
+    val customEmojiId: Long,
+    val isOutgoing: Boolean,
+    val date: Int
+)
+
 /**
  * Read-by list for one message (v0.9.13, T1), over
  * getMessageViewers (verified in td_api.tl). The call only
@@ -159,6 +180,18 @@ object ViewersStore {
                     voter.copy(photoPath = path)
                 } else {
                     voter
+                }
+            }
+        }
+        _addedReactions.value = _addedReactions.value.map { row ->
+            if (!row.isUser) {
+                row
+            } else {
+                val path = AvatarStore.pathForUser(row.senderId)
+                if (path != row.photoPath) {
+                    row.copy(photoPath = path)
+                } else {
+                    row
                 }
             }
         }
@@ -340,6 +373,204 @@ object ViewersStore {
                         voter
                     }
                 }
+            }
+        }
+    }
+
+    // ---- Added reactions (v0.9.39, F1) ----
+
+    private val _addedReactions =
+        MutableStateFlow<List<AddedReactionUi>>(emptyList())
+    val addedReactions: StateFlow<List<AddedReactionUi>> =
+        _addedReactions
+
+    private val _addedTotal = MutableStateFlow(0)
+    val addedTotal: StateFlow<Int> = _addedTotal
+
+    private val _addedLoading = MutableStateFlow(false)
+    val addedLoading: StateFlow<Boolean> = _addedLoading
+
+    private val _addedError = MutableStateFlow<String?>(null)
+    val addedError: StateFlow<String?> = _addedError
+
+    private val _addedExhausted = MutableStateFlow(true)
+    val addedExhausted: StateFlow<Boolean> = _addedExhausted
+
+    /** (chatId, messageId) the reaction list belongs to;
+     *  late answers for another message are dropped. */
+    @Volatile
+    private var addedKey: Pair<Long, Long>? = null
+
+    private var addedOffset = ""
+
+    /** Open the per-user reaction list of one message.
+     *  Paging follows the tl's string offset
+     *  (getMessageAddedReactions: reaction_type omitted =
+     *  all types, next_offset chains pages); the end is an
+     *  empty next_offset, an empty page, or reaching
+     *  total_count. Only offered by the UI when the
+     *  message's can_get_added_reactions flag is set. */
+    fun loadAddedReactions(chatId: Long, messageId: Long) {
+        attachListener()
+        addedKey = chatId to messageId
+        addedOffset = ""
+        _addedReactions.value = emptyList()
+        _addedTotal.value = 0
+        _addedError.value = null
+        _addedExhausted.value = false
+        fetchAddedPage()
+    }
+
+    fun loadMoreAddedReactions() {
+        if (_addedLoading.value || _addedExhausted.value) return
+        if (addedKey == null) return
+        fetchAddedPage()
+    }
+
+    private fun fetchAddedPage() {
+        val key = addedKey ?: return
+        _addedLoading.value = true
+        val query = TdClient.request("getMessageAddedReactions").apply {
+            put("chat_id", key.first)
+            put("message_id", key.second)
+            put("offset", addedOffset)
+            put("limit", 100)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (addedKey != key) return@sendRaw
+            _addedLoading.value = false
+            if (TdClient.isError(response)) {
+                _addedError.value =
+                    "回应名单没查到，再试一次。（错误码 " +
+                        "${response.optInt("code")}）"
+                _addedExhausted.value = true
+                return@sendRaw
+            }
+            _addedTotal.value = response.optInt("total_count")
+            val nextOffset = response.optString("next_offset")
+            val arr = response.optJSONArray("reactions") ?: JSONArray()
+            val page = ArrayList<AddedReactionUi>()
+            for (i in 0 until arr.length()) {
+                val r = arr.optJSONObject(i) ?: continue
+                val type = r.optJSONObject("type") ?: continue
+                val kind = when (type.optString("@type")) {
+                    "reactionTypeEmoji" -> "emoji"
+                    "reactionTypeCustomEmoji" -> "custom"
+                    "reactionTypePaid" -> "paid"
+                    else -> continue
+                }
+                val sender = r.optJSONObject("sender_id") ?: continue
+                val row = when (sender.optString("@type")) {
+                    "messageSenderUser" -> {
+                        val uid = sender.optLong("user_id")
+                        if (uid == 0L) {
+                            null
+                        } else {
+                            AddedReactionUi(
+                                senderId = uid, isUser = true,
+                                name = nameByUser[uid] ?: "",
+                                photoPath = AvatarStore.pathForUser(uid),
+                                kind = kind,
+                                emoji = type.optString("emoji"),
+                                customEmojiId =
+                                    type.optLong("custom_emoji_id"),
+                                isOutgoing = r.optBoolean("is_outgoing"),
+                                date = r.optInt("date")
+                            )
+                        }
+                    }
+                    "messageSenderChat" -> {
+                        val cid = sender.optLong("chat_id")
+                        if (cid == 0L) {
+                            null
+                        } else {
+                            AddedReactionUi(
+                                senderId = cid, isUser = false,
+                                name = chatTitleById[cid] ?: "",
+                                photoPath = null,
+                                kind = kind,
+                                emoji = type.optString("emoji"),
+                                customEmojiId =
+                                    type.optLong("custom_emoji_id"),
+                                isOutgoing = r.optBoolean("is_outgoing"),
+                                date = r.optInt("date")
+                            )
+                        }
+                    }
+                    else -> null
+                }
+                if (row != null) page.add(row)
+            }
+            addedOffset = nextOffset
+            val merged = _addedReactions.value + page
+            _addedReactions.value = merged
+            if (nextOffset.isEmpty() || arr.length() == 0 ||
+                (_addedTotal.value > 0 && merged.size >= _addedTotal.value)
+            ) {
+                _addedExhausted.value = true
+            }
+            for (row in page) {
+                if (row.name.isNotEmpty()) continue
+                if (row.isUser) {
+                    resolveAddedUserName(row.senderId)
+                } else {
+                    resolveAddedChatTitle(row.senderId)
+                }
+            }
+        }
+    }
+
+    private fun resolveAddedUserName(userId: Long) {
+        if (!namePending.add(userId)) return
+        val query = TdClient.request("getUser").apply {
+            put("user_id", userId)
+        }
+        TdRepository.sendRaw(query) { user ->
+            namePending.remove(userId)
+            if (TdClient.isError(user)) return@sendRaw
+            AvatarStore.noteUser(user)
+            val name = listOf(
+                user.optString("first_name"), user.optString("last_name")
+            ).filter { it.isNotEmpty() }.joinToString(" ")
+            if (name.isNotEmpty()) nameByUser[userId] = name
+            patch(userId)
+            patchAddedUser(userId)
+        }
+    }
+
+    private fun patchAddedUser(userId: Long) {
+        val name = nameByUser[userId] ?: ""
+        val path = AvatarStore.pathForUser(userId)
+        _addedReactions.value = _addedReactions.value.map { row ->
+            if (row.isUser && row.senderId == userId &&
+                (row.name != name || row.photoPath != path)
+            ) {
+                row.copy(name = name, photoPath = path)
+            } else {
+                row
+            }
+        }
+    }
+
+    private fun resolveAddedChatTitle(chatId: Long) {
+        if (!chatTitlePending.add(chatId)) return
+        val query = TdClient.request("getChat").apply {
+            put("chat_id", chatId)
+        }
+        TdRepository.sendRaw(query) { chat ->
+            chatTitlePending.remove(chatId)
+            if (TdClient.isError(chat)) return@sendRaw
+            val title = chat.optString("title")
+            if (title.isNotEmpty()) {
+                chatTitleById[chatId] = title
+                _addedReactions.value =
+                    _addedReactions.value.map { row ->
+                        if (!row.isUser && row.senderId == chatId) {
+                            row.copy(name = title)
+                        } else {
+                            row
+                        }
+                    }
             }
         }
     }

@@ -5073,6 +5073,8 @@ fun MessageBubble(
     var deleteOpen by remember { mutableStateOf(false) }
     var reactionOpen by remember { mutableStateOf(false) }
     var viewersOpen by remember { mutableStateOf(false) }
+    // Per-user reaction list (v0.9.39, F1).
+    var addedReactionsOpen by remember { mutableStateOf(false) }
     // Checklist post-send editing dialog (v0.9.26, S2).
     var checklistEditOpen by remember { mutableStateOf(false) }
     // Swipe-to-reply (v0.7.0, F1): drag a bubble left; past the
@@ -5852,6 +5854,20 @@ fun MessageBubble(
                             ViewersStore.load(chatId, msg.id)
                         })
                     }
+                    if (msg.reactions.isNotEmpty() &&
+                        msg.canGetAddedReactions
+                    ) {
+                        // Per-user reaction list (v0.9.39, F1):
+                        // only when the server says the list
+                        // can be fetched for this message.
+                        add(MessageMenuEntry(FaceIcon, "回应名单") {
+                            menuOpen = false
+                            addedReactionsOpen = true
+                            ViewersStore.loadAddedReactions(
+                                chatId, msg.id
+                            )
+                        })
+                    }
                     if (msg.sendingState.isEmpty()) {
                         // Pin / unpin (v0.9.4, N3).
                         add(MessageMenuEntry(
@@ -6229,6 +6245,11 @@ fun MessageBubble(
                 }
             }
         )
+    }
+    if (addedReactionsOpen) {
+        AddedReactionsDialog {
+            addedReactionsOpen = false
+        }
     }
 }
 

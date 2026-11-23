@@ -294,6 +294,13 @@ data class MsgItem(
     val durationSec: Int = 0,
     val fileDownloading: Boolean = false,
     val reactions: List<ReactionChip> = emptyList(),
+    // Per-user reaction list availability (v0.9.39, F1):
+    // messageReactions.can_get_added_reactions from the
+    // same interaction_info object — the long-press menu
+    // only offers the "who reacted" list when the server
+    // says getMessageAddedReactions can answer for this
+    // message, so there is never a dead entry.
+    val canGetAddedReactions: Boolean = false,
     // Outgoing delivery state derived from the chat's
     // last_read_outbox_message_id: "" (not applicable / pending),
     // "sent" (delivered, unread), "read".
@@ -3108,6 +3115,10 @@ object MessageStore {
             mediaAlbumId = msg.optLong("media_album_id"),
             effectId = msg.optLong("effect_id"),
             reactions = reactionsOf(msg.optJSONObject("interaction_info")),
+            canGetAddedReactions =
+                msg.optJSONObject("interaction_info")
+                    ?.optJSONObject("reactions")
+                    ?.optBoolean("can_get_added_reactions") ?: false,
             buttons = parseButtons(msg.optJSONObject("reply_markup")),
             isChannelPost = msg.optBoolean("is_channel_post"),
             isPinned = msg.optBoolean("is_pinned"),

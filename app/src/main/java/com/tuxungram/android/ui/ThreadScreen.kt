@@ -150,6 +150,8 @@ fun SimpleMessageBubble(
     val clipboard = LocalClipboardManager.current
     var menuOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
+    // Per-user reaction list (v0.9.39, F1).
+    var addedReactionsOpen by remember { mutableStateOf(false) }
     val outgoing = msg.outgoing
     // Official palette (v0.9.17, X2): same bubble language
     // as the main chat, including the grouped-run tail
@@ -595,6 +597,19 @@ fun SimpleMessageBubble(
                             )
                         })
                     }
+                    if (msg.reactions.isNotEmpty() &&
+                        msg.canGetAddedReactions
+                    ) {
+                        // Per-user reaction list (v0.9.39,
+                        // F1): same shared dialog as the
+                        // main chat.
+                        add(MessageMenuEntry(FaceIcon, "回应名单") {
+                            menuOpen = false
+                            addedReactionsOpen = true
+                            com.tuxungram.android.td.ViewersStore
+                                .loadAddedReactions(chatId, msg.id)
+                        })
+                    }
                     add(MessageMenuEntry(
                         Icons.Filled.Delete, "删除", danger = true
                     ) {
@@ -630,6 +645,11 @@ fun SimpleMessageBubble(
                 }
             }
         )
+    }
+    if (addedReactionsOpen) {
+        AddedReactionsDialog {
+            addedReactionsOpen = false
+        }
     }
 }
 

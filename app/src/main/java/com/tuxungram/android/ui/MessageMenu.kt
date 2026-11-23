@@ -2,6 +2,7 @@ package com.tuxungram.android.ui
 
 import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,24 +12,34 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -42,6 +53,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import com.tuxungram.android.td.CustomEmojiStore
+import com.tuxungram.android.td.ViewersStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** One row of the floating message menu (v0.9.20, AA4). */
 data class MessageMenuEntry(
@@ -233,4 +248,212 @@ private class MessageMenuPositionProvider(
         }
         return IntOffset(x, y)
     }
+}
+
+/**
+ * Per-user reaction list dialog (v0.9.39, F1), shared by
+ * the main chat bubble and the thread / forum bubble: who
+ * reacted to one message, with what, and when — over
+ * ViewersStore's getMessageAddedReactions paging. The
+ * caller opens it only when the message's
+ * can_get_added_reactions flag is set and kicks the load
+ * itself. Reaction glyphs stay honest: plain emoji render
+ * as text, custom emoji render their downloaded sticker
+ * file (a text label until it lands — never a substitute
+ * emoji), and paid reactions are labelled "付费回应"
+ * with a star instead of a drawn glyph.
+ */
+@Composable
+fun AddedReactionsDialog(onDismiss: () -> Unit) {
+    val rows by ViewersStore.addedReactions.collectAsState()
+    val total by ViewersStore.addedTotal.collectAsState()
+    val loading by ViewersStore.addedLoading.collectAsState()
+    val error by ViewersStore.addedError.collectAsState()
+    val exhausted by ViewersStore.addedExhausted.collectAsState()
+    val cePaths by CustomEmojiStore.paths.collectAsState()
+    LaunchedEffect(rows) {
+        val ids = rows
+            .filter { it.kind == "custom" && it.customEmojiId != 0L }
+            .map { it.customEmojiId }
+            .distinct()
+        if (ids.isNotEmpty()) CustomEmojiStore.ensure(ids)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("回应名单") },
+        text = {
+            when {
+                loading && rows.isEmpty() -> Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text("正在查…", fontSize = 14.sp)
+                }
+                error != null && rows.isEmpty() -> Text(
+                    error!!, fontSize = 14.sp
+                )
+                rows.isEmpty() -> Text(
+                    "还没有人给这条消息加回应。",
+                    fontSize = 14.sp
+                )
+                else -> Column {
+                    if (total > 0) {
+                        Text(
+                            "共 $total 条回应",
+                            fontSize = 12.sp, color = Color.Gray,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                    }
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 380.dp)
+                    ) {
+                        items(
+                            rows,
+                            key = {
+                                "${it.senderId}_${it.kind}_" +
+                                    "${it.emoji}_${it.customEmojiId}"
+                            }
+                        ) { row ->
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 5.dp)
+                            ) {
+                                if (row.photoPath != null) {
+                                    AvatarImage(
+                                        path = row.photoPath!!,
+                                        sizeDp = 36
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .background(
+                                                Color(0xFFB0BEC5),
+                                                CircleShape
+                                            ),
+                                        contentAlignment =
+                                            Alignment.Center
+                                    ) {
+                                        Text(
+                                            row.name.trim()
+                                                .firstOrNull()
+                                                ?.toString() ?: "?",
+                                            color = Color.White,
+                                            fontWeight =
+                                                androidx.compose.ui.text.font.FontWeight.Bold,
+                                            fontSize = 15.sp
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        row.name.ifEmpty { "…" },
+                                        fontSize = 15.sp,
+                                        maxLines = 1
+                                    )
+                                    if (row.date > 0) {
+                                        Text(
+                                            formatViewDate(row.date),
+                                            fontSize = 12.sp,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                }
+                                when (row.kind) {
+                                    "emoji" -> Text(
+                                        row.emoji, fontSize = 20.sp
+                                    )
+                                    "custom" -> {
+                                        val path = cePaths[
+                                            row.customEmojiId
+                                        ]
+                                        if (path != null) {
+                                            val bitmap by produceState<
+                                                android.graphics.Bitmap?
+                                            >(initialValue = null, path) {
+                                                value = withContext(
+                                                    Dispatchers.IO
+                                                ) {
+                                                    decodeCached(
+                                                        path, 128
+                                                    )
+                                                }
+                                            }
+                                            val bmp = bitmap
+                                            if (bmp != null) {
+                                                Image(
+                                                    bitmap =
+                                                        bmp.asImageBitmap(),
+                                                    contentDescription =
+                                                        null,
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                )
+                                            } else {
+                                                Text(
+                                                    "自定义表情",
+                                                    fontSize = 11.sp,
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                        } else {
+                                            Text(
+                                                "自定义表情",
+                                                fontSize = 11.sp,
+                                                color = Color.Gray
+                                            )
+                                        }
+                                    }
+                                    else -> Text(
+                                        "⭐ 付费回应",
+                                        fontSize = 12.sp,
+                                        color = Color.Gray
+                                    )
+                                }
+                            }
+                        }
+                        if (!exhausted) {
+                            item(key = "added_more") {
+                                TextButton(
+                                    onClick = {
+                                        ViewersStore
+                                            .loadMoreAddedReactions()
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        if (loading) {
+                                            "正在加载…"
+                                        } else {
+                                            "加载更多"
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (error != null) {
+                        Text(
+                            error!!,
+                            fontSize = 12.sp, color = Color.Gray,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        }
+    )
 }
