@@ -1183,6 +1183,18 @@ fun ThreadScreen(
     val tagTotal by ThreadStore.searchTotal.collectAsState()
     val tagExhausted by ThreadStore.searchExhausted.collectAsState()
     val threadDetached by ThreadStore.windowDetached.collectAsState()
+    // Read gate wiring (v0.9.48, S1): the store only
+    // force-reads arrivals while the user is at the real
+    // bottom of the attached window; the tally of what
+    // arrived while scrolled up rides the button's badge,
+    // like the main chat's (v0.9.44, N5).
+    val threadPendingNew by ThreadStore.pendingNewCount
+        .collectAsState()
+    LaunchedEffect(threadAtBottom, threadDetached) {
+        ThreadStore.setViewingLatest(
+            threadAtBottom && !threadDetached
+        )
+    }
     // Scroll the tag-search jump target into view when
     // its window lands (v0.9.45, P1): same locate
     // mechanism as the main chat, plus clearing the flag
@@ -1413,7 +1425,7 @@ fun ThreadScreen(
                 // even at the jump window's own top, and
                 // reload the window instead of scrolling.
                 visible = threadFarFromLatest || threadDetached,
-                unreadCount = 0,
+                unreadCount = threadPendingNew,
                 onClick = {
                     if (threadDetached) {
                         ThreadStore.backToLatest()

@@ -115,187 +115,207 @@ fun DownloadsScreen(
                 )
             }
         }
-        Text(
-            "这里汇总的是你在聊天里打开过、下载过的文件（文档、视频、语音、GIF）。" +
-                "下载列表会存进 Telegram 的持久下载列表，重启 App 后没下完的还在、会接着下。" +
-                "照片不在这里——照片算媒体缓存，在设置的存储空间里管。",
-            color = Color.Gray, fontSize = 13.sp,
-            modifier = Modifier.padding(horizontal = 20.dp)
-        )
-        Spacer(Modifier.height(12.dp))
-        // Queue controls (v0.9.23, P2): how many of the files
-        // you start are fetched at the same time, and whether
-        // a download that dies on its own is retried. Both are
-        // enforced by this page's own queue — see the note
-        // under the controls.
-        Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        // One scroll container for everything below the
+        // title bar (v0.9.48, S4): the intro, the queue
+        // controls, the summary card and the entries used
+        // to sit in a fixed column ABOVE the list, so on a
+        // short screen (or at a large font size) the header
+        // ate the whole page — the list was squeezed to a
+        // sliver and the header's own tail could not be
+        // scrolled to at all. Now every block is an item
+        // of the page's single LazyColumn.
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
+            item(key = "intro") {
                 Text(
-                    "同时下载", fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.width(92.dp)
+                    "这里汇总的是你在聊天里打开过、下载过的文件（文档、视频、语音、GIF）。" +
+                        "下载列表会存进 Telegram 的持久下载列表，重启 App 后没下完的还在、会接着下。" +
+                        "照片不在这里——照片算媒体缓存，在设置的存储空间里管。",
+                    color = Color.Gray, fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp)
                 )
-                for (n in DownloadStore.MAX_CONCURRENT_CHOICES) {
-                    ChoiceChip(
-                        label = "$n 个",
-                        selected = maxConcurrent == n,
-                        onClick = { DownloadStore.setMaxConcurrent(n) }
-                    )
-                    Spacer(Modifier.width(6.dp))
-                }
+                Spacer(Modifier.height(12.dp))
             }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "失败重试", fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.width(92.dp)
-                )
-                for (n in DownloadStore.RETRY_CHOICES) {
-                    ChoiceChip(
-                        label = if (n == 0) "关" else "$n 次",
-                        selected = retryLimit == n,
-                        onClick = { DownloadStore.setRetryLimit(n) }
-                    )
-                    Spacer(Modifier.width(6.dp))
-                }
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "排队只管你亲手点下的文件下载；图片、头像这类自动加载的走下面的自动下载设置。",
-                color = Color.Gray, fontSize = 12.5.sp
-            )
-        }
-        // Summary card (v0.9.46): the page's visual head —
-        // a ring for the overall progress of everything
-        // with a known size, the live total speed as a
-        // number AND a sparkline of its last seconds, and
-        // the section counts. Before this the total speed
-        // was one small text line and there was no overall
-        // progress view at all.
-        if (entries.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            val activeCount = entries.count { it.active }
-            val queuedCount = entries.count {
-                it.queued && !it.active
-            }
-            val doneCount = entries.count { it.completed }
-            val sized = entries.filter { it.totalSize > 0 }
-            val totalBytes = sized.sumOf { it.totalSize }
-            val doneBytes = sized.sumOf {
-                if (it.completed) {
-                    it.totalSize
-                } else {
-                    it.downloadedSize.coerceAtMost(it.totalSize)
-                }
-            }
-            val frac = if (totalBytes > 0) {
-                doneBytes.toFloat() / totalBytes.toFloat()
-            } else {
-                0f
-            }
-            Box(modifier = Modifier.padding(horizontal = 20.dp)) {
-                GroupCard {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        ProgressRing(
-                            fraction = frac,
-                            modifier = Modifier.size(64.dp)
-                        ) {
-                            Text(
-                                "${(frac * 100).toInt()}%",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
+            // Queue controls (v0.9.23, P2): how many of the
+            // files you start are fetched at the same time,
+            // and whether a download that dies on its own is
+            // retried. Both are enforced by this page's own
+            // queue — see the note under the controls.
+            item(key = "controls") {
+                Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "同时下载", fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.width(92.dp)
+                        )
+                        for (n in DownloadStore.MAX_CONCURRENT_CHOICES) {
+                            ChoiceChip(
+                                label = "$n 个",
+                                selected = maxConcurrent == n,
+                                onClick = { DownloadStore.setMaxConcurrent(n) }
                             )
+                            Spacer(Modifier.width(6.dp))
                         }
-                        Spacer(Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "总速度 ${formatBytes(totalSpeed)}/s",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (totalSpeed > 0) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme
-                                        .onSurface
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "失败重试", fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.width(92.dp)
+                        )
+                        for (n in DownloadStore.RETRY_CHOICES) {
+                            ChoiceChip(
+                                label = if (n == 0) "关" else "$n 次",
+                                selected = retryLimit == n,
+                                onClick = { DownloadStore.setRetryLimit(n) }
+                            )
+                            Spacer(Modifier.width(6.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "排队只管你亲手点下的文件下载；图片、头像这类自动加载的走下面的自动下载设置。",
+                        color = Color.Gray, fontSize = 12.5.sp
+                    )
+                }
+            }
+            // Summary card (v0.9.46): the page's visual
+            // head — a ring for the overall progress of
+            // everything with a known size, the live total
+            // speed as a number AND a sparkline of its last
+            // seconds, and the section counts. Before this
+            // the total speed was one small text line and
+            // there was no overall progress view at all.
+            if (entries.isNotEmpty()) {
+                item(key = "summary") {
+                    val activeCount = entries.count { it.active }
+                    val queuedCount = entries.count {
+                        it.queued && !it.active
+                    }
+                    val doneCount = entries.count { it.completed }
+                    val sized = entries.filter { it.totalSize > 0 }
+                    val totalBytes = sized.sumOf { it.totalSize }
+                    val doneBytes = sized.sumOf {
+                        if (it.completed) {
+                            it.totalSize
+                        } else {
+                            it.downloadedSize.coerceAtMost(it.totalSize)
+                        }
+                    }
+                    val frac = if (totalBytes > 0) {
+                        doneBytes.toFloat() / totalBytes.toFloat()
+                    } else {
+                        0f
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                        GroupCard {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                ProgressRing(
+                                    fraction = frac,
+                                    modifier = Modifier.size(64.dp)
+                                ) {
+                                    Text(
+                                        "${(frac * 100).toInt()}%",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
                                 }
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                "进行中 $activeCount · 排队 " +
-                                    "$queuedCount · 已完成 $doneCount",
-                                fontSize = 12.5.sp, color = Color.Gray
-                            )
-                            if (totalBytes > 0) {
+                                Spacer(Modifier.width(14.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "总速度 ${formatBytes(totalSpeed)}/s",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (totalSpeed > 0) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme
+                                                .onSurface
+                                        }
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        "进行中 $activeCount · 排队 " +
+                                            "$queuedCount · 已完成 $doneCount",
+                                        fontSize = 12.5.sp, color = Color.Gray
+                                    )
+                                    if (totalBytes > 0) {
+                                        Text(
+                                            "已下 ${formatBytes(doneBytes)}" +
+                                                " / 共 ${formatBytes(totalBytes)}",
+                                            fontSize = 12.5.sp,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                }
+                            }
+                            if (speedHistory.size >= 2) {
+                                Spacer(Modifier.height(10.dp))
+                                Sparkline(
+                                    samples = speedHistory.toList(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(36.dp)
+                                )
                                 Text(
-                                    "已下 ${formatBytes(doneBytes)}" +
-                                        " / 共 ${formatBytes(totalBytes)}",
-                                    fontSize = 12.5.sp,
-                                    color = Color.Gray
+                                    "最近 ${speedHistory.size} 秒的总速度曲线",
+                                    fontSize = 11.sp, color = Color.Gray,
+                                    modifier = Modifier.padding(top = 2.dp)
                                 )
                             }
                         }
                     }
-                    if (speedHistory.size >= 2) {
-                        Spacer(Modifier.height(10.dp))
-                        Sparkline(
-                            samples = speedHistory.toList(),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(36.dp)
-                        )
-                        Text(
-                            "最近 ${speedHistory.size} 秒的总速度曲线",
-                            fontSize = 11.sp, color = Color.Gray,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    }
                 }
             }
-        }
-        Spacer(Modifier.height(4.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onOpenAutoDownloadSettings() }
-                .padding(horizontal = 20.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("自动下载设置", fontSize = 14.5.sp)
-                Text(
-                    "什么网络下、多大的图片视频文件自动下载（在设置里调）",
-                    color = Color.Gray, fontSize = 12.5.sp
-                )
+            item(key = "auto-download") {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenAutoDownloadSettings() }
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("自动下载设置", fontSize = 14.5.sp)
+                        Text(
+                            "什么网络下、多大的图片视频文件自动下载（在设置里调）",
+                            color = Color.Gray, fontSize = 12.5.sp
+                        )
+                    }
+                    Icon(
+                        Icons.Filled.KeyboardArrowRight,
+                        contentDescription = null, tint = Color.Gray,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
             }
-            Icon(
-                Icons.Filled.KeyboardArrowRight,
-                contentDescription = null, tint = Color.Gray,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        if (entries.isEmpty()) {
-            EmptyState(
-                icon = DownloadIcon,
-                title = "还没有下载记录",
-                subtitle = "在聊天里点开一个文件或视频开始下载，它就会出现在这里。"
-            )
-        } else {
-            // Sectioned list (v0.9.46): what is moving now,
-            // what waits in the queue, and everything else —
-            // each with an icon-led header and a count,
-            // instead of one flat undifferentiated list.
-            val activeEntries = entries.filter { it.active }
-            val queuedEntries = entries.filter {
-                it.queued && !it.active
-            }
-            val otherEntries = entries.filter {
-                !it.active && !it.queued
-            }
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            if (entries.isEmpty()) {
+                item(key = "empty") {
+                    EmptyState(
+                        icon = DownloadIcon,
+                        title = "还没有下载记录",
+                        subtitle = "在聊天里点开一个文件或视频开始下载，它就会出现在这里。"
+                    )
+                }
+            } else {
+                // Sectioned list (v0.9.46): what is moving
+                // now, what waits in the queue, and
+                // everything else — each with an icon-led
+                // header and a count, instead of one flat
+                // undifferentiated list.
+                val activeEntries = entries.filter { it.active }
+                val queuedEntries = entries.filter {
+                    it.queued && !it.active
+                }
+                val otherEntries = entries.filter {
+                    !it.active && !it.queued
+                }
                 if (activeEntries.isNotEmpty()) {
                     item(key = "sec-active") {
                         DownloadSectionHeader(
@@ -329,6 +349,9 @@ fun DownloadsScreen(
                         DownloadRow(it)
                     }
                 }
+            }
+            item(key = "tail") {
+                Spacer(Modifier.height(16.dp))
             }
         }
     }

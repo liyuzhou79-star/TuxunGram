@@ -831,6 +831,17 @@ fun ForumTopicView(
     val tagTotal by ForumStore.searchTotal.collectAsState()
     val tagExhausted by ForumStore.searchExhausted.collectAsState()
     val forumDetached by ForumStore.windowDetached.collectAsState()
+    // Read gate wiring (v0.9.48, S1): same contract as
+    // the thread host — arrivals only force-read at the
+    // real bottom of the attached window; the tally of
+    // what arrived while scrolled up rides the badge.
+    val forumPendingNew by ForumStore.pendingNewCount
+        .collectAsState()
+    LaunchedEffect(forumAtBottom, forumDetached) {
+        ForumStore.setViewingLatest(
+            forumAtBottom && !forumDetached
+        )
+    }
     // Scroll the tag-search jump target into view when
     // its window lands (v0.9.45, P1): same locate
     // mechanism as the main chat, plus clearing the flag
@@ -1044,7 +1055,7 @@ fun ForumTopicView(
                 // even at the jump window's own top, and
                 // reload the window instead of scrolling.
                 visible = forumFarFromLatest || forumDetached,
-                unreadCount = 0,
+                unreadCount = forumPendingNew,
                 onClick = {
                     if (forumDetached) {
                         ForumStore.backToLatest()
