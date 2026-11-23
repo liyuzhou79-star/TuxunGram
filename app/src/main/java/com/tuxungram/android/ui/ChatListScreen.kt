@@ -336,8 +336,9 @@ fun formatChatTime(dateSeconds: Int): String {
     val isYesterday = yesterday.get(java.util.Calendar.YEAR) == then.get(java.util.Calendar.YEAR) &&
         yesterday.get(java.util.Calendar.DAY_OF_YEAR) == then.get(java.util.Calendar.DAY_OF_YEAR)
     return when {
-        sameDay -> java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-            .format(then.time)
+        sameDay -> com.tuxungram.android.td.TimeFmt.timeOfDay(
+            dateSeconds.toLong()
+        )
         isYesterday -> "昨天"
         now.timeInMillis - then.timeInMillis < 7L * 24 * 3600 * 1000 ->
             java.text.SimpleDateFormat("EEEE", java.util.Locale.getDefault()).format(then.time)

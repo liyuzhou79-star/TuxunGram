@@ -177,9 +177,31 @@ fun RichMessageText(
             if (cursor < text.length) append(text.substring(cursor))
         }
         for (entity in msg.entities) {
-            val rawStart = entity.offset.coerceIn(0, text.length)
-            val rawEnd = (entity.offset + entity.length)
-                .coerceIn(rawStart, text.length)
+            val coercedStart = entity.offset.coerceIn(0, text.length)
+            val coercedEnd = (entity.offset + entity.length)
+                .coerceIn(coercedStart, text.length)
+            // Surrogate-boundary snap (v0.9.51, V1): a range
+            // boundary landing between the two halves of a
+            // surrogate pair (only possible with a malformed
+            // or hostile payload — the server normally aligns
+            // entities to code points) widens to the whole
+            // character instead of styling/cutting half of it.
+            val rawStart =
+                if (coercedStart in 1 until text.length &&
+                    text[coercedStart].isLowSurrogate()
+                ) {
+                    coercedStart - 1
+                } else {
+                    coercedStart
+                }
+            val rawEnd =
+                if (coercedEnd in 1 until text.length &&
+                    text[coercedEnd].isLowSurrogate()
+                ) {
+                    coercedEnd + 1
+                } else {
+                    coercedEnd
+                }
             if (rawEnd <= rawStart) continue
             val start = rawStart - removedBefore(rawStart)
             val end = if (entity.kind == "customEmoji") {

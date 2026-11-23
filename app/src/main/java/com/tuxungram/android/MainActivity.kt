@@ -223,6 +223,13 @@ class MainActivity : ComponentActivity() {
         // App lock (v0.6.0, E2): read the persisted state before
         // the UI composes; a set PIN means the app starts locked.
         AppLock.init(applicationContext)
+        // Recent-task privacy (v0.9.51, V4): UiSettings is
+        // normally initialised by TdRepository.start; reading
+        // it here too (idempotent) lets the very first frame
+        // already carry FLAG_SECURE when the user asked for
+        // the recents preview to be hidden while locked.
+        UiSettings.init(applicationContext)
+        applyRecentsPrivacy(window)
         // Motion system (v0.9.11, A1): read the system
         // animator duration scale once, so every transition
         // in the app honours the reduced-motion setting.
@@ -352,11 +359,38 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Recent-task privacy (v0.9.51, V4): while the hide-while-
+ *  locked switch is on, the window carries FLAG_SECURE for
+ *  exactly the locked periods — the system recents list then
+ *  shows a blank card and screenshots are blocked; unlocking
+ *  clears the flag again. Called once from onCreate (first
+ *  frame) and again whenever the lock or the switch flips. */
+fun applyRecentsPrivacy(window: android.view.Window) {
+    val hide = UiSettings.hideRecentsOnLock.value &&
+        AppLock.locked.value
+    if (hide) {
+        window.addFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE
+        )
+    } else {
+        window.clearFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE
+        )
+    }
+}
+
 @Composable
 private fun AppRoot() {
     // App lock gate (v0.6.0, E2): when locked, the lock screen
     // covers everything — chat list, login flow, all of it.
     val locked by AppLock.locked.collectAsState()
+    // Recents privacy follows the lock live (v0.9.51, V4).
+    val hideRecents by UiSettings.hideRecentsOnLock.collectAsState()
+    val rootContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(locked, hideRecents) {
+        (rootContext as? android.app.Activity)?.window
+            ?.let { applyRecentsPrivacy(it) }
+    }
     // First-run onboarding (v0.9.6, P2): on the very first
     // launch (no version ever marked seen) the full guide
     // comes before everything else; finishing or skipping

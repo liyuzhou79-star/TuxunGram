@@ -29,6 +29,7 @@ object UiSettings {
     private const val KEY_DUCK_BAR = "duck_bar"
     private const val KEY_LABEL_DOTS = "label_dots"
     private const val KEY_SOUND_FX = "sound_fx"
+    private const val KEY_HIDE_RECENTS = "hide_recents_on_lock"
     private const val KEY_STORAGE_OPTIMIZER = "storage_optimizer"
     private const val KEY_VOICE_SPEED = "voice_speed"
     private const val KEY_SEEN_VERSION = "seen_version"
@@ -106,6 +107,16 @@ object UiSettings {
      *  default like in the official client. */
     private val _soundFx = MutableStateFlow(true)
     val soundFx: StateFlow<Boolean> = _soundFx
+
+    /** Hide the recent-task preview while the app lock is
+     *  locked (v0.9.51, V4): when on, MainActivity holds
+     *  FLAG_SECURE on the window for exactly the locked
+     *  periods, so the system recents list shows a blank card
+     *  instead of the chat content; unlocking removes the
+     *  flag again. Off by default; meaningless (and shown
+     *  disabled) while no app-lock PIN is set. */
+    private val _hideRecentsOnLock = MutableStateFlow(false)
+    val hideRecentsOnLock: StateFlow<Boolean> = _hideRecentsOnLock
 
     /** TDLib storage optimizer (v0.9.42, K2): when on, the
      *  choice is pushed to every client as the TDLib option
@@ -211,6 +222,8 @@ object UiSettings {
         _unreadCap.value = if (saved in UNREAD_CAPS) saved else 999
         _keepAlive.value = prefs.getBoolean(KEY_KEEP_ALIVE, true)
         _soundFx.value = prefs.getBoolean(KEY_SOUND_FX, true)
+        _hideRecentsOnLock.value =
+            prefs.getBoolean(KEY_HIDE_RECENTS, false)
         _storageOptimizer.value =
             prefs.getBoolean(KEY_STORAGE_OPTIMIZER, true)
         val mode = prefs.getInt(KEY_THEME_MODE, THEME_SYSTEM)
@@ -423,6 +436,11 @@ object UiSettings {
     fun setSoundFx(on: Boolean) {
         _soundFx.value = on
         persist { it.putBoolean(KEY_SOUND_FX, on) }
+    }
+
+    fun setHideRecentsOnLock(on: Boolean) {
+        _hideRecentsOnLock.value = on
+        persist { it.putBoolean(KEY_HIDE_RECENTS, on) }
     }
 
     fun setStorageOptimizer(on: Boolean) {

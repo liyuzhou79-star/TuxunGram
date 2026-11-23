@@ -155,9 +155,7 @@ object ContactsStore {
             timeInMillis = wasOnlineSeconds * 1000L
         }
         val now = java.util.Calendar.getInstance()
-        val time = java.text.SimpleDateFormat(
-            "HH:mm", java.util.Locale.getDefault()
-        ).format(then.time)
+        val time = TimeFmt.timeOfDay(wasOnlineSeconds.toLong())
         val sameDay = now.get(java.util.Calendar.YEAR) ==
             then.get(java.util.Calendar.YEAR) &&
             now.get(java.util.Calendar.DAY_OF_YEAR) ==

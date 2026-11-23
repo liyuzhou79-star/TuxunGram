@@ -1454,6 +1454,27 @@ fun SettingsScreen(
                 title = "设置应用锁密码",
                 onClick = { pinDialog = "set" }
             )
+            // Greyed until a PIN exists (v0.9.51, V4).
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Lock, contentDescription = null,
+                    tint = Color.Gray,
+                    modifier = Modifier.size(23.dp)
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("锁定时隐藏最近任务预览", color = Color.Gray)
+                    Text(
+                        "先设置应用锁密码后才能打开这个开关。",
+                        color = Color.Gray, fontSize = 12.sp
+                    )
+                }
+                Switch(
+                    checked = false,
+                    onCheckedChange = {},
+                    enabled = false
+                )
+            }
         } else {
             IconRow(
                 icon = Icons.Filled.Lock,
@@ -1510,6 +1531,33 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+            // Hide the recent-task preview while locked
+            // (v0.9.51, V4): MainActivity holds FLAG_SECURE
+            // for exactly the locked periods when this is on.
+            val hideRecents by
+                UiSettings.hideRecentsOnLock.collectAsState()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Lock, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(23.dp)
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("锁定时隐藏最近任务预览")
+                    Text(
+                        "打开后，应用锁锁着的时候，系统最近任务里" +
+                            "只显示空白卡片，看不到聊天内容；解锁后恢复。",
+                        color = Color.Gray, fontSize = 12.sp
+                    )
+                }
+                Switch(
+                    checked = hideRecents,
+                    onCheckedChange = {
+                        UiSettings.setHideRecentsOnLock(it)
+                    }
+                )
             }
         }
         if (lockNotice != null) {

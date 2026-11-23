@@ -134,6 +134,7 @@ object TdRepository {
         AccountStore.init(context)
         ProxyStore.init(context)
         UiSettings.init(context)
+        TimeFmt.init(context)
         LocalPins.init(context)
         JoinPending.init(context)
         LocalLabels.init(context)

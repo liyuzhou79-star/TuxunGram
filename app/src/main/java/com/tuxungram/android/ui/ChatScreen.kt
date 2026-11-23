@@ -224,10 +224,10 @@ import kotlinx.coroutines.delay
 
 fun formatMsgTime(dateSeconds: Int): String {
     if (dateSeconds <= 0) return ""
-    val cal = java.util.Calendar.getInstance().apply {
-        timeInMillis = dateSeconds * 1000L
-    }
-    return java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(cal.time)
+    // Follows the system 12/24-hour setting (v0.9.51, V5).
+    return com.tuxungram.android.td.TimeFmt.timeOfDay(
+        dateSeconds.toLong()
+    )
 }
 
 /** Day-separator label for the message list: 今天 / 昨天 /
@@ -5051,10 +5051,16 @@ fun isToday(epochSec: Long): Boolean {
         b.get(java.util.Calendar.DAY_OF_YEAR)
 }
 
-/** "M月d日 HH:mm" for menu labels and bubble schedule lines. */
-fun formatScheduleWhen(epochSec: Long): String =
-    java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.CHINA)
-        .format(java.util.Date(epochSec * 1000))
+/** "M月d日 15:04" for menu labels and bubble schedule lines;
+ *  the clock part follows the system 12/24-hour setting
+ *  (v0.9.51, V5). */
+fun formatScheduleWhen(epochSec: Long): String {
+    val day = java.text.SimpleDateFormat(
+        "M月d日", java.util.Locale.CHINA
+    ).format(java.util.Date(epochSec * 1000))
+    return day + " " +
+        com.tuxungram.android.td.TimeFmt.timeOfDay(epochSec)
+}
 
 /** Framework date + time pickers for a custom schedule time
  *  (no new dependencies). A picked time that is not safely in

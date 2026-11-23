@@ -4851,12 +4851,15 @@ object MessageStore {
     }
 
     /** "2026年1月2日 15:04" for service lines that carry
-     *  an absolute time (scheduled video chats). */
+     *  an absolute time (scheduled video chats); the clock
+     *  part follows the system 12/24-hour setting
+     *  (v0.9.51, V5). */
     private fun formatServiceDateTime(sec: Int): String {
         val fmt = java.text.SimpleDateFormat(
-            "yyyy年M月d日 HH:mm", java.util.Locale.CHINA
+            "yyyy年M月d日", java.util.Locale.CHINA
         )
-        return fmt.format(java.util.Date(sec.toLong() * 1000))
+        return fmt.format(java.util.Date(sec.toLong() * 1000)) +
+            " " + TimeFmt.timeOfDay(sec.toLong())
     }
 
     /** The 80 service content types (v0.9.37, D4),
