@@ -623,6 +623,21 @@ fun ChatScreen(
             Regex("(?:^|\\s)@([A-Za-z0-9_]{0,32})$").find(input)
         val hashtagMatch =
             Regex("(?:^|\\s)#([\\p{L}\\p{N}_]{0,64})$").find(input)
+        // A fragment with no letter in it can never become
+        // a hashtag (v0.9.45, tag false-positive report):
+        // the official rule is that a hashtag must contain
+        // at least one letter — pure digits or underscores
+        // (#123, #2024) are numbers, not tags, so the
+        // suggestion panel must not open for them. This
+        // composer trigger is the ONLY place in the app
+        // that judges what a hashtag is locally: message
+        // rendering takes its tags solely from TDLib
+        // textEntityTypeHashtag entities (MessageStore.
+        // entitiesOf), with no local #-scanning anywhere
+        // in the display pipeline (audited v0.9.45 across
+        // RichText, the three bubble hosts, previews,
+        // captions, Instant View and the send markdown).
+        val hashtagFragment = hashtagMatch?.groupValues?.get(1)
         when {
             mentionMatch != null && chat?.isGroup == true -> {
                 suggestKind = "mention"
@@ -632,7 +647,9 @@ fun ChatScreen(
                     chatId, suggestFragment
                 )
             }
-            hashtagMatch != null -> {
+            hashtagMatch != null &&
+                (hashtagFragment.isNullOrEmpty() ||
+                    hashtagFragment.any { it.isLetter() }) -> {
                 suggestKind = "hashtag"
                 suggestFragment = hashtagMatch.groupValues[1]
                 delay(300)
