@@ -448,6 +448,20 @@ object ThreadStore {
     fun resend(item: MsgItem) {
         val chatId = threadChatId
         if (chatId == 0L || item.id == 0L) return
+        // Same can_retry gate as the main store (v0.9.44,
+        // N1/N2): a failure TDLib marks non-retryable never
+        // reaches resendMessages; the user hears the real
+        // reason through the shared classifier.
+        val kind = SendFailure.classify(
+            item.failCode, item.failId, item.paidStarsRequired
+        )
+        if (!SendFailure.retryable(kind, item.canRetry)) {
+            _error.value = SendFailure.fullText(
+                kind, item.retryAfterSec,
+                item.failCode, item.failId
+            )
+            return
+        }
         val query = TdClient.request("resendMessages").apply {
             put("chat_id", chatId)
             put("message_ids", JSONArray().put(item.id))
@@ -456,7 +470,7 @@ object ThreadStore {
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {
-                _error.value = "重发失败，再试一次。"
+                _error.value = SendFailure.fullTextOf(response)
             }
         }
     }
@@ -547,7 +561,8 @@ object ThreadStore {
                 if (msg.optLong("chat_id") != chatId) return
                 val oldId = update.optLong("old_message_id")
                 val existing = byId[oldId] ?: byId[msg.optLong("id")] ?: return
-                byId[existing.id] = existing.copy(sendingState = "failed")
+                byId[existing.id] =
+                    MessageStore.withFailedState(existing, msg)
                 publish()
             }
             "updateMessageInteractionInfo" -> {

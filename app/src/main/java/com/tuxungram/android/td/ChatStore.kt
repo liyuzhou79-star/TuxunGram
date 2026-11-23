@@ -402,12 +402,43 @@ object ChatStore {
      *  on; used when navigating somewhere from a folder/search. */
     fun itemOf(chatId: Long): ChatItem? {
         val chat = cache[chatId] ?: return null
-        val positions = chat.optJSONArray("positions") ?: return null
-        for (i in 0 until positions.length()) {
-            val p = positions.optJSONObject(i) ?: continue
-            if (p.optLong("order") != 0L) return toItem(chat, p, p.optLong("order"))
+        val positions = chat.optJSONArray("positions")
+        if (positions != null) {
+            for (i in 0 until positions.length()) {
+                val p = positions.optJSONObject(i) ?: continue
+                if (p.optLong("order") != 0L) {
+                    return toItem(chat, p, p.optLong("order"))
+                }
+            }
         }
-        return null
+        // Positionless chats (v0.9.44, N4): a chat resolved
+        // through searchPublicChat / getChat before it lands
+        // on any list has no ordered position, but the header
+        // still needs its real title and avatar — before this
+        // the lookup gave up and the chat page fell back to
+        // the placeholder title 「对话」. A synthetic position
+        // (order 0, not pinned) flattens it like any other.
+        return toItem(chat, JSONObject(), 0L)
+    }
+
+    /** Bumped whenever a chat is resolved outside the list
+     *  pipeline (v0.9.44, N4); chat pages collect it so a
+     *  title that lands a moment after the page opened still
+     *  replaces the placeholder. */
+    private val _resolvedTick = MutableStateFlow(0)
+    val resolvedTick: StateFlow<Int> = _resolvedTick
+
+    /** Record a chat object obtained outside loadChats —
+     *  searchPublicChat / getChat on an unknown chat
+     *  (v0.9.44, N4). The cache is the same one updateChat
+     *  maintains, so later list loads and updates overwrite
+     *  it naturally; nothing here invents data, it only
+     *  keeps the server object the resolver already got. */
+    fun noteResolvedChat(chat: JSONObject) {
+        val id = chat.optLong("id")
+        if (id == 0L) return
+        cache[id] = chat
+        _resolvedTick.value += 1
     }
 
     /** True while the main list has not been fully synced yet

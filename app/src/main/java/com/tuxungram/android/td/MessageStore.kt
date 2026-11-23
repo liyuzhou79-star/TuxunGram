@@ -474,7 +474,22 @@ data class MsgItem(
     // placeholder lines (see RichBlocksBubbleContent).
     // [text] holds the blocks' plain-text skeleton for
     // previews, quotes and search.
-    val richBlocks: List<IvBlock> = emptyList()
+    val richBlocks: List<IvBlock> = emptyList(),
+    // Failed-send detail (v0.9.44, N1/N2): the full
+    // messageSendingStateFailed payload — error code +
+    // protocol identifier, TDLib's own can_retry verdict,
+    // the remaining slow-mode / flood wait and the Stars a
+    // resend would require. Before this version the parse
+    // kept only the word "failed" and the UI offered a
+    // resend tap for failures TDLib says can never be
+    // resent (can_retry = false), looping forever.
+    // Classification into display text lives in
+    // SendFailure; these are the raw typed inputs.
+    val failCode: Int = 0,
+    val failId: String = "",
+    val canRetry: Boolean = false,
+    val retryAfterSec: Double = 0.0,
+    val paidStarsRequired: Long = 0L
 ) {
     val paidPurchased: Boolean
         get() = paidMedia.any {
@@ -537,6 +552,116 @@ enum class ChatSearchFilter(val type: String, val label: String) {
  * TDLib's old_message_id reconciliation), photo downloads, read
  * marking, and a small user cache for sender names in groups.
  */
+/** Bottom-dock / open-state of the chat page (v0.9.44,
+ *  N3/N4). One value decides what sits under the message
+ *  list and whether the list area shows messages, a
+ *  spinner or an error page. */
+enum class ChatAccessKind {
+    /** Still resolving the chat (getChat / member status
+     *  in flight). The page shows a loading state, never a
+     *  fake empty chat. */
+    LOADING,
+
+    /** The chat could not be opened at all (deleted,
+     *  private without an invite, resolution failed).
+     *  [ChatAccess.detail] says why in plain language. */
+    OPEN_ERROR,
+
+    /** Member in good standing: the composer shows. */
+    CAN_SEND,
+
+    /** Not a member of a public group / channel: the join
+     *  bar shows; readable content still lists above it. */
+    JOINABLE,
+
+    /** A join request is with the admins (approval-type
+     *  group): the pending bar shows. */
+    JOIN_REQUESTED,
+
+    /** Member, but the group's default permissions forbid
+     *  basic messages for everyone (admin-set all-mute). */
+    NO_SEND_ALL_MUTED,
+
+    /** Personally restricted by an admin: [ChatAccess]
+     *  .untilSec carries the restriction's end when the
+     *  server gives one (0 = indefinite). */
+    NO_SEND_PERSONAL,
+
+    /** Removed from the group (banned). */
+    NO_SEND_BANNED,
+
+    /** Member of a channel: only admins post there. */
+    NO_SEND_CHANNEL
+}
+
+data class ChatAccess(
+    val kind: ChatAccessKind,
+    val detail: String = "",
+    val untilSec: Int = 0,
+    val isChannel: Boolean = false
+)
+
+/** Chats whose join request this account has sent and is
+ *  still waiting on (v0.9.44, N4). TDLib gives the
+ *  requester no dedicated "my request is pending" field —
+ *  after joinChat on an approval-type group the member
+ *  status simply stays Left — so the fact is remembered
+ *  locally per account slot (chat ids are only meaningful
+ *  inside one account) and cleared the moment the status
+ *  comes back as a real membership. */
+object JoinPending {
+    private const val PREFS = "join_pending"
+
+    @Volatile
+    private var appContext: android.content.Context? = null
+
+    @Volatile
+    private var slot = 0
+
+    private val ids = java.util.concurrent.ConcurrentHashMap
+        .newKeySet<Long>()
+
+    private fun key() = "pending_$slot"
+
+    fun init(context: android.content.Context) {
+        appContext = context.applicationContext
+        slot = AccountStore.currentSlot()
+        ids.clear()
+        val raw = appContext?.getSharedPreferences(
+            PREFS, android.content.Context.MODE_PRIVATE
+        )?.getString(key(), "") ?: ""
+        if (raw.isNotEmpty()) {
+            try {
+                val arr = org.json.JSONArray(raw)
+                for (i in 0 until arr.length()) {
+                    val id = arr.optLong(i, 0L)
+                    if (id != 0L) ids.add(id)
+                }
+            } catch (t: Throwable) {
+                // A corrupt record just means the pending
+                // bars stop showing until the next request.
+            }
+        }
+    }
+
+    fun isPending(chatId: Long): Boolean = chatId in ids
+
+    fun setPending(chatId: Long, pending: Boolean) {
+        if (chatId == 0L) return
+        val changed = if (pending) {
+            ids.add(chatId)
+        } else {
+            ids.remove(chatId)
+        }
+        if (!changed) return
+        val ctx = appContext ?: return
+        val arr = org.json.JSONArray()
+        for (id in ids) arr.put(id)
+        ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putString(key(), arr.toString()).apply()
+    }
+}
+
 object MessageStore {
     private val _messages = MutableStateFlow<List<MsgItem>>(emptyList())
     val messages: StateFlow<List<MsgItem>> = _messages
@@ -1454,6 +1579,74 @@ object MessageStore {
     private val _atLatest = MutableStateFlow(true)
     val atLatest: StateFlow<Boolean> = _atLatest
 
+    // ---- Chat access (v0.9.44, N3/N4) ----------------------
+    // One state machine drives the bottom dock of the chat
+    // page: composer, join bar, request-pending bar, or a
+    // plain "cannot post" bar — plus the resolving / error
+    // states of opening a chat this account has never seen.
+    // Before this version the dock only knew the group's
+    // default permissions (chat.permissions), so a member
+    // muted personally by an admin still got a composer,
+    // typed, sent, failed — and an unknown chat opened from
+    // a link rendered as a fake empty private chat because
+    // nothing resolved its title, type or membership.
+
+    private val _access =
+        MutableStateFlow(ChatAccess(ChatAccessKind.LOADING))
+    val access: StateFlow<ChatAccess> = _access
+
+    /** True when the first history page of an unjoined chat
+     *  came back forbidden: the content exists but only
+     *  members may read it; the join bar says so. */
+    private val _historyBlocked = MutableStateFlow(false)
+    val historyBlocked: StateFlow<Boolean> = _historyBlocked
+
+    /** Group ids of the open chat, captured while computing
+     *  access so updateSupergroup / updateBasicGroup can be
+     *  matched back to it for a recompute. */
+    @Volatile
+    private var currentSupergroupId = 0L
+
+    @Volatile
+    private var currentBasicGroupId = 0L
+
+    /** The open chat's chat object, kept for access
+     *  recomputes (its permissions half lives here; the
+     *  member-status half is re-fetched each compute). */
+    @Volatile
+    private var currentChatObject: JSONObject? = null
+
+    // ---- New-message tracking (v0.9.44, N5) ----------------
+    // Whether the user is currently looking at the newest
+    // end of the open chat, reported by the chat screen's
+    // list state. The read marker and the new-message
+    // counter both key off this — before this version every
+    // incoming message in the open chat was force-read the
+    // moment it arrived wherever the user was scrolled, so
+    // the unread counter behind the scroll-to-latest button
+    // was structurally always 0 and the button (and any
+    // "new messages" signal) could never appear.
+
+    @Volatile
+    private var viewingLatest = true
+
+    private val _pendingNew = MutableStateFlow(0)
+    val pendingNewCount: StateFlow<Int> = _pendingNew
+
+    /** The chat screen reports its at-bottom state here.
+     *  Arriving at the bottom settles everything that piled
+     *  up while scrolled away: the counter clears and the
+     *  newest loaded message is marked read. */
+    fun setViewingLatest(value: Boolean) {
+        val was = viewingLatest
+        viewingLatest = value
+        if (value && !was) {
+            _pendingNew.value = 0
+            val newest = byId.keys.maxOrNull() ?: return
+            if (currentChatId != 0L) markRead(currentChatId, newest)
+        }
+    }
+
     private val byId = ConcurrentHashMap<Long, MsgItem>()
     private val userNames = ConcurrentHashMap<Long, String>()
 
@@ -1479,6 +1672,16 @@ object MessageStore {
     fun open(chatId: Long) {
         attach()
         currentChatId = chatId
+        // Access + new-message state start from a clean
+        // slate per chat (v0.9.44, N3/N4/N5): no bar, badge
+        // or read behaviour may leak across chats.
+        _access.value = ChatAccess(ChatAccessKind.LOADING)
+        _historyBlocked.value = false
+        _pendingNew.value = 0
+        viewingLatest = true
+        currentChatObject = null
+        currentSupergroupId = 0L
+        currentBasicGroupId = 0L
         byId.clear()
         _messages.value = emptyList()
         _sendError.value = null
@@ -1516,6 +1719,35 @@ object MessageStore {
         TdRepository.sendRaw(TdClient.request("getChat").apply {
             put("chat_id", chatId)
         }) { response ->
+            if (TdClient.isError(response)) {
+                // Opening an unknown chat ends here when the
+                // chat cannot be resolved at all (v0.9.44,
+                // N4): the page shows the reason instead of
+                // a fake empty private chat. A chat that is
+                // already on a list answers getChat from the
+                // local database and never lands here.
+                if (currentChatId == chatId &&
+                    _access.value.kind == ChatAccessKind.LOADING
+                ) {
+                    _access.value = ChatAccess(
+                        ChatAccessKind.OPEN_ERROR,
+                        detail = openErrorText(response)
+                    )
+                }
+                return@sendRaw
+            }
+            if (currentChatId == chatId) {
+                // Unified open resolution (v0.9.44, N4):
+                // every entry point lands in open(), and
+                // this getChat response is the full server
+                // chat object — record it so the header and
+                // lists can flatten the chat even before it
+                // appears on any chat list, then work out
+                // what the bottom dock may offer.
+                ChatStore.noteResolvedChat(response)
+                currentChatObject = response
+                computeAccess(response)
+            }
             if (!TdClient.isError(response) && currentChatId == chatId) {
                 lastReadOutbox = response.optLong("last_read_outbox_message_id")
                 lastReadInboxAtOpen =
@@ -1581,8 +1813,321 @@ object MessageStore {
         }
     }
 
+    /** Plain-language reason a chat could not be opened
+     *  (v0.9.44, N4), classified from the getChat error the
+     *  same boundary way as send failures. */
+    private fun openErrorText(error: JSONObject): String {
+        val id = error.optString("message").uppercase()
+        return when {
+            id.contains("PRIVATE") ->
+                "这是私密的群组或频道，需要邀请链接才能打开。"
+            id.contains("NOT_FOUND") || id.contains("NOT FOUND") ||
+                error.optInt("code") == 404 ->
+                "这个对话不存在，或者已经被删除了。"
+            else -> "打不开这个对话，检查网络后再试一次。" +
+                "（错误码 ${error.optInt("code")}）"
+        }
+    }
+
+    /** Decide the open chat's access state from its chat
+     *  object (v0.9.44, N3/N4). The chat object carries the
+     *  group's DEFAULT permissions; my own member status —
+     *  the half that decides personal mutes — lives on the
+     *  supergroup / basicGroup object, so group chats fetch
+     *  it (a local-database read) before deciding. Private
+     *  and secret chats need no fetch: the composer is
+     *  always right there. */
+    private fun computeAccess(chat: JSONObject) {
+        val chatId = chat.optLong("id")
+        if (chatId == 0L || chatId != currentChatId) return
+        val type = chat.optJSONObject("type")
+        when (type?.optString("@type")) {
+            "chatTypePrivate", "chatTypeSecret" -> {
+                JoinPending.setPending(chatId, false)
+                _access.value = ChatAccess(ChatAccessKind.CAN_SEND)
+            }
+            "chatTypeSupergroup" -> {
+                val sgId = type.optLong("supergroup_id")
+                currentSupergroupId = sgId
+                val isChannel = type.optBoolean("is_channel")
+                val query = TdClient.request("getSupergroup").apply {
+                    put("supergroup_id", sgId)
+                }
+                TdRepository.sendRaw(query) { response ->
+                    if (currentChatId != chatId) return@sendRaw
+                    if (TdClient.isError(response)) {
+                        // Without the status object the only
+                        // honest fallback is the group-wide
+                        // permission bit.
+                        _access.value = accessFromPermissions(
+                            chat, joined = true, isChannel = isChannel
+                        )
+                        return@sendRaw
+                    }
+                    decideGroupAccess(
+                        chat,
+                        status = response.optJSONObject("status"),
+                        joinByRequest =
+                            response.optBoolean("join_by_request"),
+                        isChannel = isChannel
+                    )
+                }
+            }
+            "chatTypeBasicGroup" -> {
+                val bgId = type.optLong("basic_group_id")
+                currentBasicGroupId = bgId
+                val query = TdClient.request("getBasicGroup").apply {
+                    put("basic_group_id", bgId)
+                }
+                TdRepository.sendRaw(query) { response ->
+                    if (currentChatId != chatId) return@sendRaw
+                    if (TdClient.isError(response)) {
+                        _access.value = accessFromPermissions(
+                            chat, joined = true, isChannel = false
+                        )
+                        return@sendRaw
+                    }
+                    decideGroupAccess(
+                        chat,
+                        status = response.optJSONObject("status"),
+                        joinByRequest = false,
+                        isChannel = false
+                    )
+                }
+            }
+            else -> {
+                _access.value = accessFromPermissions(
+                    chat, joined = true, isChannel = false
+                )
+            }
+        }
+    }
+
+    /** The member-status decision (v0.9.44, N3): personal
+     *  state first (ban, restriction), membership next,
+     *  group-wide defaults last — the order the official
+     *  client applies, and the order that keeps a personal
+     *  mute from being masked by a permissive group. */
+    private fun decideGroupAccess(
+        chat: JSONObject,
+        status: JSONObject?,
+        joinByRequest: Boolean,
+        isChannel: Boolean
+    ) {
+        val chatId = chat.optLong("id")
+        when (status?.optString("@type")) {
+            "chatMemberStatusCreator",
+            "chatMemberStatusAdministrator" -> {
+                JoinPending.setPending(chatId, false)
+                _access.value = ChatAccess(
+                    ChatAccessKind.CAN_SEND, isChannel = isChannel
+                )
+            }
+            "chatMemberStatusBanned" -> {
+                JoinPending.setPending(chatId, false)
+                _access.value = ChatAccess(
+                    ChatAccessKind.NO_SEND_BANNED,
+                    untilSec = status.optInt("banned_until_date"),
+                    isChannel = isChannel
+                )
+            }
+            "chatMemberStatusRestricted" -> {
+                if (status.optBoolean("is_member")) {
+                    val perms = status.optJSONObject("permissions")
+                    if (perms?.optBoolean(
+                            "can_send_basic_messages", true
+                        ) == false
+                    ) {
+                        _access.value = ChatAccess(
+                            ChatAccessKind.NO_SEND_PERSONAL,
+                            untilSec = status.optInt(
+                                "restricted_until_date"
+                            ),
+                            isChannel = isChannel
+                        )
+                    } else {
+                        _access.value = accessFromPermissions(
+                            chat, joined = true, isChannel = isChannel
+                        )
+                    }
+                } else {
+                    notJoinedAccess(chatId, joinByRequest, isChannel)
+                }
+            }
+            "chatMemberStatusMember" -> {
+                JoinPending.setPending(chatId, false)
+                _access.value = if (isChannel) {
+                    ChatAccess(
+                        ChatAccessKind.NO_SEND_CHANNEL,
+                        isChannel = true
+                    )
+                } else {
+                    accessFromPermissions(
+                        chat, joined = true, isChannel = false
+                    )
+                }
+            }
+            else -> notJoinedAccess(chatId, joinByRequest, isChannel)
+        }
+    }
+
+    private fun notJoinedAccess(
+        chatId: Long,
+        joinByRequest: Boolean,
+        isChannel: Boolean
+    ) {
+        _access.value = if (joinByRequest &&
+            JoinPending.isPending(chatId)
+        ) {
+            ChatAccess(
+                ChatAccessKind.JOIN_REQUESTED, isChannel = isChannel
+            )
+        } else {
+            ChatAccess(
+                ChatAccessKind.JOINABLE, isChannel = isChannel
+            )
+        }
+    }
+
+    /** The group-wide half of the decision: the chat's
+     *  default permissions forbid basic messages for
+     *  everyone (the admin all-mute) or they don't. */
+    private fun accessFromPermissions(
+        chat: JSONObject,
+        joined: Boolean,
+        isChannel: Boolean
+    ): ChatAccess {
+        if (!joined) {
+            return ChatAccess(
+                ChatAccessKind.JOINABLE, isChannel = isChannel
+            )
+        }
+        val canBasic = chat.optJSONObject("permissions")
+            ?.optBoolean("can_send_basic_messages", true) ?: true
+        return if (canBasic) {
+            ChatAccess(ChatAccessKind.CAN_SEND, isChannel = isChannel)
+        } else {
+            ChatAccess(
+                ChatAccessKind.NO_SEND_ALL_MUTED,
+                isChannel = isChannel
+            )
+        }
+    }
+
+    /** Recompute access after a chat / group update landed
+     *  (v0.9.44, N3): permissions and member status can
+     *  change while the page is open (an admin mutes the
+     *  group, or un-mutes me), and the dock must follow
+     *  without a re-entry. */
+    private fun refreshAccess() {
+        val chat = currentChatObject ?: return
+        if (currentChatId == 0L) return
+        computeAccess(chat)
+    }
+
+    /** Join the open group / subscribe to the open channel
+     *  (v0.9.44, N4). On an approval-type group TDLib
+     *  accepts the call and the status stays Left — that
+     *  combination is exactly "request sent", remembered
+     *  locally (see JoinPending) so the pending bar
+     *  survives re-entry. */
+    fun joinCurrentChat() {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("joinChat").apply {
+            put("chat_id", chatId)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (currentChatId != chatId) return@sendRaw
+            if (TdClient.isError(response)) {
+                val id = response.optString("message").uppercase()
+                _sendError.value = when {
+                    id.contains("ALREADY") -> {
+                        refreshAccess()
+                        "你已经是成员了。"
+                    }
+                    id.contains("PRIVATE") ->
+                        "这是私密的群组或频道，光靠加入按钮进不去，需要邀请链接。"
+                    else -> "加入失败，再试一次。" +
+                        "（错误码 ${response.optInt("code")}）"
+                }
+                return@sendRaw
+            }
+            // Re-read the chat and let the normal decision
+            // run; if the status is still Left on an
+            // approval-type group, the request is pending.
+            TdRepository.sendRaw(TdClient.request("getChat").apply {
+                put("chat_id", chatId)
+            }) { fresh ->
+                if (currentChatId != chatId ||
+                    TdClient.isError(fresh)
+                ) {
+                    return@sendRaw
+                }
+                ChatStore.noteResolvedChat(fresh)
+                currentChatObject = fresh
+                val type = fresh.optJSONObject("type")
+                val joinByRequest = type
+                    ?.optString("@type") == "chatTypeSupergroup"
+                if (joinByRequest) {
+                    val sgId = type.optLong("supergroup_id")
+                    TdRepository.sendRaw(
+                        TdClient.request("getSupergroup").apply {
+                            put("supergroup_id", sgId)
+                        }
+                    ) { sg ->
+                        if (currentChatId != chatId) {
+                            return@sendRaw
+                        }
+                        val stillLeft = TdClient.isError(sg) ||
+                            sg.optJSONObject("status")
+                                ?.optString("@type") ==
+                                "chatMemberStatusLeft" ||
+                            sg.optJSONObject("status") == null
+                        if (!TdClient.isError(sg) &&
+                            sg.optBoolean("join_by_request") &&
+                            stillLeft
+                        ) {
+                            JoinPending.setPending(chatId, true)
+                        }
+                        computeAccess(fresh)
+                    }
+                } else {
+                    computeAccess(fresh)
+                }
+            }
+        }
+    }
+
+    /** Withdraw a pending join request (v0.9.44, N4):
+     *  leaving the chat is how a request is cancelled;
+     *  the local pending record goes with it. */
+    fun cancelJoinRequest() {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        JoinPending.setPending(chatId, false)
+        val query = TdClient.request("leaveChat").apply {
+            put("chat_id", chatId)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (currentChatId != chatId) return@sendRaw
+            if (TdClient.isError(response)) {
+                _sendError.value = "取消申请失败，再试一次。"
+            } else {
+                refreshAccess()
+            }
+        }
+    }
+
     fun close() {
         historyGeneration++
+        _access.value = ChatAccess(ChatAccessKind.LOADING)
+        _historyBlocked.value = false
+        _pendingNew.value = 0
+        viewingLatest = true
+        currentChatObject = null
+        currentSupergroupId = 0L
+        currentBasicGroupId = 0L
         val chatId = currentChatId
         if (chatId != 0L) {
             TdRepository.sendRaw(TdClient.request("closeChat").apply {
@@ -1618,6 +2163,7 @@ object MessageStore {
         firstPageRetried = false
         olderRetryAnchor = 0L
         _atLatest.value = false
+        _pendingNew.value = 0
         _locateId.value = 0L
         // An in-flight page from the old window would block
         // the reload through the loadingHistory guard; its
@@ -1674,11 +2220,29 @@ object MessageStore {
             // leak into the new one.
             if (gen != historyGeneration) return@sendRaw
             if (TdClient.isError(response)) {
+                if (fromMessageId == 0L) {
+                    // An unjoined chat whose history is
+                    // members-only (v0.9.44, N4): the join
+                    // bar explains that the content unlocks
+                    // after joining. The chat screen shows
+                    // the note only while the access state
+                    // is a not-joined one, so a transient
+                    // error on a normal chat never triggers
+                    // it.
+                    val eid = response.optString("message")
+                        .uppercase()
+                    if (eid.contains("PRIVATE") ||
+                        eid.contains("FORBIDDEN")
+                    ) {
+                        _historyBlocked.value = true
+                    }
+                }
                 if (fromMessageId != 0L && !isOlderRetry) {
                     scheduleOlderRetry(chatId, fromMessageId, gen)
                 }
                 return@sendRaw
             }
+            if (fromMessageId == 0L) _historyBlocked.value = false
             val arr = response.optJSONArray("messages") ?: JSONArray()
             // D1 root-cause fix: td_api.tl states the returned
             // count "is chosen by TDLib and can be smaller than
@@ -2131,23 +2695,41 @@ object MessageStore {
 
     fun sendText(text: String) = sendText(text, SendModifiers())
 
-    /** Re-send a message whose send failed (v0.9.9, W5:
-     *  failed bubbles showed 发送失败 but offered no way to
-     *  retry). resendMessages is verified in td_api.tl; the
-     *  usual updateMessageSendSucceeded / updateNewMessage
-     *  flow replaces the failed bubble in place. */
-    fun resend(messageId: Long) {
+    /** Re-send a message whose send failed (v0.9.9, W5;
+     *  gating reworked in v0.9.44, N1/N2). td_api.tl allows
+     *  resendMessages only when the failed state's can_retry
+     *  is true and its retry_after has passed — before this
+     *  version the call went out unconditionally, so a
+     *  failure that can never be resent (no posting rights,
+     *  a paid send) re-failed on every tap and the user got
+     *  an endless 「重发失败，再试一次」 loop. Now the typed
+     *  classification decides first: non-retryable failures
+     *  never reach the API and the user hears the real
+     *  reason instead; a resend the API still refuses is
+     *  classified the same way, not flattened to a generic
+     *  retry prompt. */
+    fun resend(item: MsgItem) {
         val chatId = currentChatId
-        if (chatId == 0L || messageId == 0L) return
+        if (chatId == 0L || item.id == 0L) return
+        val kind = SendFailure.classify(
+            item.failCode, item.failId, item.paidStarsRequired
+        )
+        if (!SendFailure.retryable(kind, item.canRetry)) {
+            _sendError.value = SendFailure.fullText(
+                kind, item.retryAfterSec,
+                item.failCode, item.failId
+            )
+            return
+        }
         val query = TdClient.request("resendMessages").apply {
             put("chat_id", chatId)
-            put("message_ids", org.json.JSONArray().put(messageId))
+            put("message_ids", org.json.JSONArray().put(item.id))
             put("quote", JSONObject.NULL)
             put("paid_message_star_count", 0)
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {
-                _sendError.value = "重发失败，再试一次。"
+                _sendError.value = SendFailure.fullTextOf(response)
             }
         }
     }
@@ -2649,28 +3231,15 @@ object MessageStore {
         }
     }
 
-    private fun sendErrorText(error: JSONObject): String {
-        val message = error.optString("message")
-        return when {
-            message.contains("CHAT_WRITE_FORBIDDEN") ||
-                message.contains("have no rights") ||
-                message.contains("not enough rights") ->
-                "你在这个对话里不能发言。"
-            message.contains("FLOOD_WAIT") -> "发太快了，等一会儿再发。"
-            // Scheduled sends (v0.9.3, M5): secret chats and
-            // some other chat types refuse them server-side;
-            // say that plainly instead of a bare code.
-            message.contains("SCHEDULE", ignoreCase = true) ||
-                message.contains("scheduling", ignoreCase = true) ->
-                "这个对话不支持定时发送（比如秘密聊天），或者定的时间不对。"
-            // Premium-gated sends (v0.9.24: checklists and
-            // premium effects) — say what the server means
-            // instead of leaking a bare code.
-            message.contains("PREMIUM", ignoreCase = true) ->
-                "这个功能要 Telegram Premium 才能用（比如发送清单、会员特效），普通账号用不了。"
-            else -> "发送失败，再试一次。（错误码 ${error.optInt("code")}）"
-        }
-    }
+    /** Plain-language send refusal (v0.9.44, N2): delegates
+     *  to the single boundary classifier in SendFailure —
+     *  the typed kind drives the wording, so a reworded or
+     *  newly-worded server string can never silently change
+     *  behaviour. This replaces the ad-hoc substring table
+     *  that lived here (including its matches on English
+     *  prose fragments like "have no rights"). */
+    private fun sendErrorText(error: JSONObject): String =
+        SendFailure.fullTextOf(error)
 
     private fun formattedText(text: String): JSONObject = JSONObject().apply {
         put("@type", "formattedText")
@@ -2742,7 +3311,19 @@ object MessageStore {
                 byId[item.id] = item
                 publish()
                 if (!item.outgoing) {
-                    markRead(currentChatId, item.id)
+                    // Read marking follows the user's eyes
+                    // (v0.9.44, N5): only a user sitting at
+                    // the newest end has "seen" a new
+                    // arrival. Scrolled up, the message
+                    // stays unread and counts toward the
+                    // scroll-to-latest badge instead — the
+                    // old unconditional force-read made that
+                    // counter structurally always zero.
+                    if (_atLatest.value && viewingLatest) {
+                        markRead(currentChatId, item.id)
+                    } else if (_atLatest.value) {
+                        _pendingNew.value += 1
+                    }
                     // Arrival tone (v0.9.29, V1): only for a
                     // genuinely new message in the chat that is
                     // open — not for muted chats, and not for
@@ -2773,7 +3354,14 @@ object MessageStore {
                 if (msg.optLong("chat_id") != currentChatId) return
                 val oldId = update.optLong("old_message_id")
                 val existing = byId[oldId] ?: byId[msg.optLong("id")] ?: return
-                byId[existing.id] = existing.copy(sendingState = "failed")
+                // Carry the failure's own payload (v0.9.44,
+                // N1/N2): the update's message object holds
+                // the full messageSendingStateFailed — error,
+                // can_retry, retry_after. Before this the
+                // handler kept only the word "failed", so the
+                // UI could neither explain the failure nor
+                // know a resend was impossible.
+                byId[existing.id] = withFailedState(existing, msg)
                 publish()
             }
             "updateMessageContent" -> {
@@ -2821,6 +3409,36 @@ object MessageStore {
                     if (byId.remove(ids.optLong(i)) != null) changed = true
                 }
                 if (changed) publish()
+            }
+            "updateChat" -> {
+                // Access refresh (v0.9.44, N3): the chat
+                // object changed — new default permissions,
+                // a join landing, a title change. Keep the
+                // resolved cache and the dock's decision in
+                // step without a re-entry.
+                val chat = update.optJSONObject("chat") ?: return
+                if (chat.optLong("id") != currentChatId) return
+                ChatStore.noteResolvedChat(chat)
+                currentChatObject = chat
+                refreshAccess()
+            }
+            "updateSupergroup" -> {
+                val sg = update.optJSONObject("supergroup")
+                    ?: return
+                if (currentSupergroupId != 0L &&
+                    sg.optLong("id") == currentSupergroupId
+                ) {
+                    refreshAccess()
+                }
+            }
+            "updateBasicGroup" -> {
+                val bg = update.optJSONObject("basic_group")
+                    ?: return
+                if (currentBasicGroupId != 0L &&
+                    bg.optLong("id") == currentBasicGroupId
+                ) {
+                    refreshAccess()
+                }
             }
             "updateChatReplyMarkup" -> {
                 // The live reply keyboard changed (W2). A null
@@ -3144,6 +3762,37 @@ object MessageStore {
         }
     }
 
+    /** The messageSendingStateFailed object of a message
+     *  JSON, or null when the message is not in the failed
+     *  state (v0.9.44, N1/N2). */
+    fun failedStateOf(msg: JSONObject): JSONObject? {
+        val state = msg.optJSONObject("sending_state") ?: return null
+        return state.takeIf {
+            it.optString("@type") == "messageSendingStateFailed"
+        }
+    }
+
+    /** Copy [item] into the failed state, taking the whole
+     *  messageSendingStateFailed payload from the message
+     *  JSON [msg] (v0.9.44, N1/N2). Shared by all three
+     *  message stores' updateMessageSendFailed handlers so
+     *  the failure detail can never drift between hosts. */
+    fun withFailedState(item: MsgItem, msg: JSONObject): MsgItem {
+        val failed = failedStateOf(msg)
+        return item.copy(
+            sendingState = "failed",
+            failCode = failed?.optJSONObject("error")
+                ?.optInt("code") ?: 0,
+            failId = failed?.optJSONObject("error")
+                ?.optString("message") ?: "",
+            canRetry = failed?.optBoolean("can_retry") ?: false,
+            retryAfterSec = failed?.optDouble("retry_after")
+                ?: 0.0,
+            paidStarsRequired = failed
+                ?.optLong("required_paid_message_star_count") ?: 0L
+        )
+    }
+
     fun parseMessage(msg: JSONObject): MsgItem {
         val base = MsgItem(
             id = msg.optLong("id"),
@@ -3177,6 +3826,20 @@ object MessageStore {
                 "messageSendingStateFailed" -> "failed"
                 else -> ""
             },
+            // Failed-send detail (v0.9.44, N1/N2): the whole
+            // messageSendingStateFailed payload rides along
+            // so the bubble can say WHY it failed and whether
+            // a resend is even possible (see SendFailure).
+            failCode = failedStateOf(msg)
+                ?.optJSONObject("error")?.optInt("code") ?: 0,
+            failId = failedStateOf(msg)
+                ?.optJSONObject("error")?.optString("message") ?: "",
+            canRetry = failedStateOf(msg)
+                ?.optBoolean("can_retry") ?: false,
+            retryAfterSec = failedStateOf(msg)
+                ?.optDouble("retry_after") ?: 0.0,
+            paidStarsRequired = failedStateOf(msg)
+                ?.optLong("required_paid_message_star_count") ?: 0L,
             replyToId = replyTargetId(msg),
             replyChatId = replyTargetChatId(msg),
             replySummary = replySummaryOf(msg),
