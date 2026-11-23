@@ -59,7 +59,10 @@ data class WebAppSession(
  * Only button entry points open a Web App: chat text
  * links never reach this store (the link router treats
  * them as ordinary links), per the version's safety
- * scope.
+ * scope. v0.9.37 (D1) added the main-app / menu-button
+ * entries; v0.9.38 (E4) added the attachment menu
+ * (AttachBotsStore's list, openWebApp with an empty
+ * URL) — the last of the tl's four launch sources.
  */
 object WebAppStore {
 
@@ -205,6 +208,33 @@ object WebAppStore {
      *  sender — a Web App button belongs to the bot that
      *  sent the message. */
     fun openFromInlineButton(
+        chatId: Long,
+        botUserId: Long,
+        botName: String,
+        url: String,
+        palette: OfficialPalette,
+        onError: (String) -> Unit
+    ) {
+        openViaOpenWebApp(chatId, botUserId, botName, url, palette, onError)
+    }
+
+    /** Attachment-menu launch (v0.9.38, E4): the tl lists
+     *  the attachment menu as an openWebApp source with
+     *  an EMPTY url — the bot's registered app is implied
+     *  by its id. Everything downstream (launch id,
+     *  closeWebApp, updateWebAppMessageSent auto-close)
+     *  is the inline path's, unchanged. */
+    fun openFromAttachmentMenu(
+        chatId: Long,
+        botUserId: Long,
+        botName: String,
+        palette: OfficialPalette,
+        onError: (String) -> Unit
+    ) {
+        openViaOpenWebApp(chatId, botUserId, botName, "", palette, onError)
+    }
+
+    private fun openViaOpenWebApp(
         chatId: Long,
         botUserId: Long,
         botName: String,

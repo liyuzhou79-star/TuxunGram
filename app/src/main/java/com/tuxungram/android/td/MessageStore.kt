@@ -3716,87 +3716,11 @@ object MessageStore {
             // until this version every one of these fell
             // to OTHER and rendered as a bare "[消息]"
             // bubble. They are centered service lines now;
-            // serviceTextFor composes the wording.
-            "messageBasicGroupChatCreate",
-            "messageSupergroupChatCreate",
-            "messageChatAddMembers",
-            "messageChatJoinByLink",
-            "messageChatJoinByRequest",
-            "messageChatDeleteMember",
-            "messageChatChangePhoto",
-            "messageChatDeletePhoto",
-            "messageChatChangeTitle",
-            "messageChatSetBackground",
-            "messageChatSetTheme",
-            "messageChatSetMessageAutoDeleteTime",
-            "messagePinMessage",
-            "messageChatUpgradeFrom",
-            "messageChatUpgradeTo",
-            "messageChatOwnerLeft",
-            "messageChatOwnerChanged",
-            "messageChatBoost",
-            "messageChatHasProtectedContentToggled",
-            "messageChatHasProtectedContentDisableRequested",
-            "messageChatAddedToCommunity",
-            "messageChatJoinFromCommunity",
-            "messageChatRemovedFromCommunity",
-            "messageForumTopicCreated",
-            "messageForumTopicEdited",
-            "messageForumTopicIsClosedToggled",
-            "messageForumTopicIsHiddenToggled",
-            "messageVideoChatStarted",
-            "messageVideoChatEnded",
-            "messageVideoChatScheduled",
-            "messageInviteVideoChatParticipants",
-            "messageGroupCall",
-            "messageCall",
-            "messageGameScore",
-            "messagePaymentSuccessful",
-            "messagePaymentSuccessfulBot",
-            "messagePaymentRefunded",
-            "messagePremiumGiftCode",
-            "messageGiftedPremium",
-            "messageGiftedStars",
-            "messageGiftedGrams",
-            "messageGift",
-            "messageUpgradedGift",
-            "messageRefundedUpgradedGift",
-            "messageUpgradedGiftPurchaseOffer",
-            "messageUpgradedGiftPurchaseOfferRejected",
-            "messageGiveawayCreated",
-            "messageGiveawayCompleted",
-            "messageGiveawayPrizeStars",
-            "messageChecklistTasksAdded",
-            "messageChecklistTasksDone",
-            "messagePollOptionAdded",
-            "messagePollOptionDeleted",
-            "messageBotWriteAccessAllowed",
-            "messageWebAppDataReceived",
-            "messageWebAppDataSent",
-            "messagePassportDataReceived",
-            "messagePassportDataSent",
-            "messageProximityAlertTriggered",
-            "messageScreenshotTaken",
-            "messageContactRegistered",
-            "messageExpiredPhoto",
-            "messageExpiredVideo",
-            "messageExpiredVideoNote",
-            "messageExpiredVoiceNote",
-            "messageStory",
-            "messageSuggestBirthdate",
-            "messageManagedBotCreated",
-            "messageDirectMessagePriceChanged",
-            "messagePaidMessagePriceChanged",
-            "messagePaidMessagesRefunded",
-            "messageSuggestedPostApproved",
-            "messageSuggestedPostDeclined",
-            "messageSuggestedPostApprovalFailed",
-            "messageSuggestedPostPaid",
-            "messageSuggestedPostRefunded",
-            "messageTonConnectRequest",
-            "messageTonWalletTransfer",
-            "messageUnpaidMessagesAllowedByLink",
-            "messageCustomServiceAction" -> serviceItem(base, content)
+            // serviceTextFor composes the wording. The
+            // type set lives in SERVICE_CONTENT_TYPES
+            // (v0.9.38, E4) so the chat-list preview layer
+            // recognises the same family.
+            in SERVICE_CONTENT_TYPES -> serviceItem(base, content)
             else -> base.copy(kind = MsgKind.OTHER, text = "")
         }
     }
@@ -3863,12 +3787,124 @@ object MessageStore {
         return fmt.format(java.util.Date(sec.toLong() * 1000))
     }
 
+    /** The 80 service content types (v0.9.37, D4),
+     *  factored out of parseContent's when in v0.9.38
+     *  (E4): one set of record for the parser AND for
+     *  ChatStore's preview layer, which composes the
+     *  same service sentence for the chat list instead
+     *  of a bare "[消息]". */
+    val SERVICE_CONTENT_TYPES: Set<String> = setOf(
+        "messageBasicGroupChatCreate",
+        "messageSupergroupChatCreate",
+        "messageChatAddMembers",
+        "messageChatJoinByLink",
+        "messageChatJoinByRequest",
+        "messageChatDeleteMember",
+        "messageChatChangePhoto",
+        "messageChatDeletePhoto",
+        "messageChatChangeTitle",
+        "messageChatSetBackground",
+        "messageChatSetTheme",
+        "messageChatSetMessageAutoDeleteTime",
+        "messagePinMessage",
+        "messageChatUpgradeFrom",
+        "messageChatUpgradeTo",
+        "messageChatOwnerLeft",
+        "messageChatOwnerChanged",
+        "messageChatBoost",
+        "messageChatHasProtectedContentToggled",
+        "messageChatHasProtectedContentDisableRequested",
+        "messageChatAddedToCommunity",
+        "messageChatJoinFromCommunity",
+        "messageChatRemovedFromCommunity",
+        "messageForumTopicCreated",
+        "messageForumTopicEdited",
+        "messageForumTopicIsClosedToggled",
+        "messageForumTopicIsHiddenToggled",
+        "messageVideoChatStarted",
+        "messageVideoChatEnded",
+        "messageVideoChatScheduled",
+        "messageInviteVideoChatParticipants",
+        "messageGroupCall",
+        "messageCall",
+        "messageGameScore",
+        "messagePaymentSuccessful",
+        "messagePaymentSuccessfulBot",
+        "messagePaymentRefunded",
+        "messagePremiumGiftCode",
+        "messageGiftedPremium",
+        "messageGiftedStars",
+        "messageGiftedGrams",
+        "messageGift",
+        "messageUpgradedGift",
+        "messageRefundedUpgradedGift",
+        "messageUpgradedGiftPurchaseOffer",
+        "messageUpgradedGiftPurchaseOfferRejected",
+        "messageGiveawayCreated",
+        "messageGiveawayCompleted",
+        "messageGiveawayPrizeStars",
+        "messageChecklistTasksAdded",
+        "messageChecklistTasksDone",
+        "messagePollOptionAdded",
+        "messagePollOptionDeleted",
+        "messageBotWriteAccessAllowed",
+        "messageWebAppDataReceived",
+        "messageWebAppDataSent",
+        "messagePassportDataReceived",
+        "messagePassportDataSent",
+        "messageProximityAlertTriggered",
+        "messageScreenshotTaken",
+        "messageContactRegistered",
+        "messageExpiredPhoto",
+        "messageExpiredVideo",
+        "messageExpiredVideoNote",
+        "messageExpiredVoiceNote",
+        "messageStory",
+        "messageSuggestBirthdate",
+        "messageManagedBotCreated",
+        "messageDirectMessagePriceChanged",
+        "messagePaidMessagePriceChanged",
+        "messagePaidMessagesRefunded",
+        "messageSuggestedPostApproved",
+        "messageSuggestedPostDeclined",
+        "messageSuggestedPostApprovalFailed",
+        "messageSuggestedPostPaid",
+        "messageSuggestedPostRefunded",
+        "messageTonConnectRequest",
+        "messageTonWalletTransfer",
+        "messageUnpaidMessagesAllowedByLink",
+        "messageCustomServiceAction"
+    )
+
+    fun isServiceContentType(type: String): Boolean =
+        type in SERVICE_CONTENT_TYPES
+
+    /** The service sentence for a raw message JSON
+     *  (v0.9.38, E4): the exact wording the in-chat
+     *  service line shows, composed from the fields the
+     *  list layer already holds. "" for non-service
+     *  content. */
+    fun servicePreviewText(message: JSONObject): String {
+        val content = message.optJSONObject("content")
+            ?: return ""
+        if (!isServiceContentType(content.optString("@type"))) {
+            return ""
+        }
+        return serviceTextFor(
+            outgoing = message.optBoolean("is_outgoing"),
+            senderName = senderNameFor(
+                message.optJSONObject("sender_id")
+            ),
+            content = content
+        )
+    }
+
     private fun serviceItem(
         base: MsgItem,
         content: JSONObject
     ): MsgItem = base.copy(
         kind = MsgKind.SERVICE,
-        text = serviceTextFor(base, content)
+        text = serviceTextFor(base.outgoing, base.senderName, content)
     )
 
     /** Wording for the whole service family (v0.9.37,
@@ -3880,12 +3916,13 @@ object MessageStore {
      *  Nothing is invented: a field TDLib did not ship
      *  simply never reaches the line. */
     private fun serviceTextFor(
-        base: MsgItem,
+        outgoing: Boolean,
+        senderName: String,
         content: JSONObject
     ): String {
         val actor = when {
-            base.outgoing -> "你"
-            base.senderName.isNotEmpty() -> base.senderName
+            outgoing -> "你"
+            senderName.isNotEmpty() -> senderName
             else -> ""
         }
         fun act(verb: String): String =

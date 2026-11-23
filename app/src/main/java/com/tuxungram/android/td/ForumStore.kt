@@ -165,21 +165,13 @@ object ForumStore {
     private fun parseTopic(topic: JSONObject): ForumTopicUi? {
         val info = topic.optJSONObject("info") ?: return null
         val lastMsg = topic.optJSONObject("last_message")
+        // Topic-row preview (v0.9.38, E4): the shared
+        // summaryText — before this version this site had
+        // its own shorter when that produced an EMPTY
+        // preview for audio / invoice / giveaway / shared
+        // / checklist / dice last messages.
         val lastText = if (lastMsg != null) {
-            val parsed = MessageStore.parseMessage(lastMsg)
-            parsed.text.ifEmpty {
-                when (parsed.kind) {
-                    MsgKind.PHOTO -> "[图片]"
-                    MsgKind.VIDEO -> "[视频]"
-                    MsgKind.PAID_MEDIA -> "[付费媒体]"
-                    MsgKind.VOICE -> "[语音]"
-                    MsgKind.DOCUMENT -> "[文件]"
-                    MsgKind.STICKER -> "[贴纸]"
-                    MsgKind.ANIMATION -> "[动图]"
-                    MsgKind.POLL -> "[投票]"
-                    else -> ""
-                }
-            }
+            MessageStore.parseMessage(lastMsg).summaryText()
         } else {
             ""
         }

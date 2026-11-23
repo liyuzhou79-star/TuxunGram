@@ -875,7 +875,19 @@ object ChatStore {
         val muteFor = chat.optJSONObject("notification_settings")
             ?.optInt("mute_for", 0) ?: 0
         val permissions = chat.optJSONObject("permissions")
-        val senderPrefix = previewSenderOf(chat, last)
+        // Service last messages (v0.9.38, E4): the preview
+        // sentence already names its actor, so the row's
+        // sender prefix would only repeat it ("张三：张三
+        // 置顶了一条消息").
+        val lastType = last?.optJSONObject("content")
+            ?.optString("@type")
+        val senderPrefix = if (lastType != null &&
+            MessageStore.isServiceContentType(lastType)
+        ) {
+            "" to 0L
+        } else {
+            previewSenderOf(chat, last)
+        }
         // Header subtitle data (v0.9.18, Y6): groups and
         // channels kick off the one-shot count lookup while
         // it is unknown; private chats read the presence
@@ -1336,7 +1348,14 @@ object ChatStore {
      *  as the same "[消息]"); content type names and the fields
      *  read here are verified in td_api.tl (messageDocument
      *  .document.file_name, messageAudio.audio.title, message
-     *  Sticker.sticker.emoji, messagePoll.poll.question). */
+     *  Sticker.sticker.emoji, messagePoll.poll.question).
+     *  Service messages (audit round 7, v0.9.38 E4): the
+     *  preview is the service sentence itself, composed by
+     *  MessageStore.servicePreviewText — the same wording
+     *  as the in-chat service line — and it carries its own
+     *  actor, so neither the "你：" prefix below nor the
+     *  row's sender-name prefix (suppressed in toItem for
+     *  service last messages) is added on top of it. */
     private fun previewOf(message: JSONObject?): String {
         if (message == null) return ""
         val content = message.optJSONObject("content")
@@ -1346,7 +1365,10 @@ object ChatStore {
             val cap = caption()
             return if (cap.isEmpty()) label else "$label $cap"
         }
-        val body = when (content?.optString("@type")) {
+        val contentType = content?.optString("@type")
+        val isService = contentType != null &&
+            MessageStore.isServiceContentType(contentType)
+        val body = when (contentType) {
             "messageText" ->
                 content.optJSONObject("text")?.optString("text") ?: ""
             "messagePhoto" -> withCaption("[图片]")
@@ -1387,16 +1409,26 @@ object ChatStore {
             "messageContact" -> "[联系人]"
             "messageGiveaway" -> "[抽奖]"
             "messageGiveawayWinners" -> "[抽奖结果]"
-            "messageGiveawayCompleted" -> "[抽奖已结束]"
             "messageInvoice" -> "[账单]"
             "messageUsersShared" -> "[分享了用户]"
             "messageChatShared" -> "[分享了对话]"
-            "messageCall" -> "[通话]"
             "messageGame" -> "[游戏]"
+            "messageDice" -> {
+                val emoji = content?.optString("emoji") ?: ""
+                if (emoji.isNotEmpty()) "[骰子] $emoji" else "[骰子]"
+            }
+            "messageChecklist" -> {
+                val title = content?.optJSONObject("list")
+                    ?.optJSONObject("title")?.optString("text") ?: ""
+                if (title.isNotEmpty()) "[清单] $title" else "[清单]"
+            }
+            in MessageStore.SERVICE_CONTENT_TYPES ->
+                MessageStore.servicePreviewText(message)
             null -> ""
             else -> "[消息]"
         }
         if (body.isEmpty()) return ""
+        if (isService) return body
         return if (message.optBoolean("is_outgoing")) "你：$body" else body
     }
 }

@@ -131,6 +131,12 @@ import com.tuxungram.android.td.MediaStore
 import com.tuxungram.android.td.MessageStore
 import com.tuxungram.android.td.SoundFx
 import com.tuxungram.android.td.WebAppStore
+import com.tuxungram.android.td.ATTACH_CHAT_BOT
+import com.tuxungram.android.td.ATTACH_CHAT_CHANNEL
+import com.tuxungram.android.td.ATTACH_CHAT_GROUP
+import com.tuxungram.android.td.ATTACH_CHAT_USER
+import com.tuxungram.android.td.AttachBotUi
+import com.tuxungram.android.td.AttachBotsStore
 import com.tuxungram.android.td.AnimEffect
 import com.tuxungram.android.td.MsgItem
 import com.tuxungram.android.td.MsgKind
@@ -657,6 +663,14 @@ fun ChatScreen(
     // keyboard locally after its first tap, until the bot
     // sends a newer keyboard (a different source message).
     val botUi by BotStore.state.collectAsState()
+    // Attachment-menu bots (v0.9.38, E4): TDLib pushes
+    // the list as updateAttachmentMenuBots; the attach
+    // menu below offers the ones supporting this chat.
+    val attachBots by AttachBotsStore.bots.collectAsState()
+    var attachBotConfirm by remember {
+        mutableStateOf<AttachBotUi?>(null)
+    }
+    LaunchedEffect(Unit) { AttachBotsStore.attach() }
     val replyKb by MessageStore.replyKb.collectAsState()
     var kbDismissedSource by remember(chatId) { mutableStateOf(0L) }
     // Inline bot queries (v0.9.12, S2): an input shaped like
@@ -1626,8 +1640,10 @@ fun ChatScreen(
                                         MsgKind.PAID_MEDIA -> "[付费媒体]"
                                         MsgKind.VOICE -> "[语音]"
                                         MsgKind.DOCUMENT -> "[文件]"
+                                        MsgKind.AUDIO -> "[音频]"
                                         MsgKind.STICKER -> "[贴纸]"
                                         MsgKind.ANIMATION -> "[动图]"
+                                        MsgKind.ANIMATED_EMOJI -> "[动态表情]"
                                         MsgKind.POLL -> "[投票]"
                                         MsgKind.CHECKLIST -> "[清单]"
                                         MsgKind.LOCATION -> "[位置]"
@@ -1635,6 +1651,9 @@ fun ChatScreen(
                                         MsgKind.VIDEO_NOTE -> "[视频消息]"
                                         MsgKind.DICE -> "[骰子]"
                                         MsgKind.GAME -> "[游戏]"
+                                        MsgKind.GIVEAWAY -> "[抽奖]"
+                                        MsgKind.INVOICE -> "[账单]"
+                                        MsgKind.SHARED -> "[分享]"
                                         else -> "[消息]"
                                     }
                                 },
@@ -1834,6 +1853,61 @@ fun ChatScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { pendingLocation = null }) {
+                        Text("取消")
+                    }
+                }
+            )
+        }
+
+        val attachBotToAdd = attachBotConfirm
+        if (attachBotToAdd != null) {
+            // First launch of an attachment-menu bot the
+            // user has not added yet (v0.9.38, E4): the tl
+            // requires the add to be confirmed first; the
+            // open follows the successful add.
+            AlertDialog(
+                onDismissRequest = { attachBotConfirm = null },
+                title = {
+                    Text("把「${attachBotToAdd.name}」加到附件菜单？")
+                },
+                text = {
+                    Text(
+                        "加上之后，它会出现在每个支持的对话的" +
+                            "附件菜单里，点它就能打开它的小程序。" +
+                            "小程序里你主动发给机器人的内容它会" +
+                            "收到。随时可以在官方客户端里移除。",
+                        fontSize = 14.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        attachBotConfirm = null
+                        AttachBotsStore.addToMenu(attachBotToAdd) { err ->
+                            if (err != null) {
+                                Toast.makeText(
+                                    context, err, Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                WebAppStore.openFromAttachmentMenu(
+                                    chatId = chatId,
+                                    botUserId = attachBotToAdd.botUserId,
+                                    botName = attachBotToAdd.name,
+                                    palette = OfficialTheme.current(),
+                                    onError = { e ->
+                                        Toast.makeText(
+                                            context, e,
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                )
+                            }
+                        }
+                    }) {
+                        Text("添加并打开")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { attachBotConfirm = null }) {
                         Text("取消")
                     }
                 }
@@ -2553,8 +2627,10 @@ fun ChatScreen(
                                         MsgKind.VOICE -> "[语音]"
                                         MsgKind.DOCUMENT ->
                                             "[文件] ${m.fileName}"
+                                        MsgKind.AUDIO -> "[音频]"
                                         MsgKind.STICKER -> "[贴纸]"
                                         MsgKind.ANIMATION -> "[动图]"
+                                        MsgKind.ANIMATED_EMOJI -> "[动态表情]"
                                         MsgKind.POLL -> "[投票]"
                                         MsgKind.CHECKLIST -> "[清单]"
                                         MsgKind.LOCATION -> "[位置]"
@@ -2562,6 +2638,9 @@ fun ChatScreen(
                                         MsgKind.VIDEO_NOTE -> "[视频消息]"
                                         MsgKind.DICE -> "[骰子]"
                                         MsgKind.GAME -> "[游戏]"
+                                        MsgKind.GIVEAWAY -> "[抽奖]"
+                                        MsgKind.INVOICE -> "[账单]"
+                                        MsgKind.SHARED -> "[分享]"
                                         else -> "[消息]"
                                     }
                                 }
@@ -3802,6 +3881,79 @@ fun ChatScreen(
                                     formatHelpOpen = true
                                 }
                             )
+                            // Attachment-menu bots (v0.9.38,
+                            // E4): bots that registered for
+                            // the attachment menu and support
+                            // this kind of chat. Secret chats
+                            // get none — openWebApp cannot
+                            // run there. A bot the user has
+                            // not added yet is confirmed and
+                            // added first (the tl's own rule),
+                            // then opened like the others.
+                            val attachKind = when {
+                                chat?.isSecret == true -> -1
+                                chat?.isChannel == true ->
+                                    ATTACH_CHAT_CHANNEL
+                                chat?.isGroup == true ->
+                                    ATTACH_CHAT_GROUP
+                                botUi?.takeIf {
+                                    it.chatId == chatId
+                                }?.isBot == true -> ATTACH_CHAT_BOT
+                                else -> ATTACH_CHAT_USER
+                            }
+                            if (attachKind >= 0) {
+                                for (bot in attachBots.filter {
+                                    it.showInAttachmentMenu &&
+                                        with(AttachBotsStore) {
+                                            it.supportsChatKind(
+                                                attachKind
+                                            )
+                                        }
+                                }) {
+                                    DropdownMenuItem(
+                                        leadingIcon = {
+                                            Icon(
+                                                BotIcon,
+                                                contentDescription = null,
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                            )
+                                        },
+                                        text = {
+                                            Text(
+                                                bot.name.ifEmpty {
+                                                    "机器人应用"
+                                                }
+                                            )
+                                        },
+                                        onClick = {
+                                            attachMenuOpen = false
+                                            if (bot.isAdded) {
+                                                WebAppStore
+                                                    .openFromAttachmentMenu(
+                                                        chatId = chatId,
+                                                        botUserId =
+                                                            bot.botUserId,
+                                                        botName = bot.name,
+                                                        palette =
+                                                            OfficialTheme
+                                                                .current(),
+                                                        onError = { err ->
+                                                            Toast.makeText(
+                                                                context,
+                                                                err,
+                                                                Toast
+                                                                    .LENGTH_SHORT
+                                                            ).show()
+                                                        }
+                                                    )
+                                            } else {
+                                                attachBotConfirm = bot
+                                            }
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -6551,9 +6703,11 @@ fun messageSummaryText(msg: MsgItem): String =
             MsgKind.VIDEO -> "[视频]"
             MsgKind.PAID_MEDIA -> "[付费媒体]"
             MsgKind.VOICE -> "[语音]"
+            MsgKind.AUDIO -> "[音频]"
             MsgKind.DOCUMENT -> "[文件] ${msg.fileName}"
             MsgKind.STICKER -> "[贴纸]"
             MsgKind.ANIMATION -> "[动图]"
+            MsgKind.ANIMATED_EMOJI -> "[动态表情]"
             MsgKind.POLL -> "[投票] ${msg.poll?.question ?: ""}"
             MsgKind.CHECKLIST -> "[清单] ${msg.checklistTitle}"
             MsgKind.LOCATION -> "[位置]"
@@ -6561,6 +6715,9 @@ fun messageSummaryText(msg: MsgItem): String =
             MsgKind.VIDEO_NOTE -> "[视频消息]"
             MsgKind.DICE -> "[骰子] ${msg.diceEmoji}"
             MsgKind.GAME -> "[游戏] ${msg.gameTitle}"
+            MsgKind.GIVEAWAY -> "[抽奖]"
+            MsgKind.INVOICE -> "[账单]"
+            MsgKind.SHARED -> "[分享]"
             else -> "[消息]"
         }
     }

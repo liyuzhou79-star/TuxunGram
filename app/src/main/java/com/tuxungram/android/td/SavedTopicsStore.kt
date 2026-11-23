@@ -247,16 +247,23 @@ fun MsgItem.summaryText(): String {
     return when (kind) {
         MsgKind.PHOTO -> "[图片]"
         MsgKind.VIDEO -> "[视频]"
-        MsgKind.DOCUMENT -> fileName.ifEmpty { "[文件]" }
+        MsgKind.PAID_MEDIA -> "[付费媒体]"
+        MsgKind.DOCUMENT ->
+            if (fileName.isNotEmpty()) "[文件] $fileName" else "[文件]"
         MsgKind.VOICE -> "[语音]"
+        MsgKind.AUDIO -> "[音频]"
         MsgKind.VIDEO_NOTE -> "[圆形视频]"
         MsgKind.STICKER -> "[贴纸]"
         MsgKind.ANIMATION -> "[动图]"
+        MsgKind.ANIMATED_EMOJI -> "[动态表情]"
         MsgKind.POLL -> "[投票]"
         MsgKind.LOCATION -> "[位置]"
         MsgKind.CONTACT -> "[联系人]"
         MsgKind.DICE -> "[骰子]"
         MsgKind.GAME -> "[游戏]"
+        MsgKind.GIVEAWAY -> "[抽奖]"
+        MsgKind.INVOICE -> "[账单]"
+        MsgKind.SHARED -> "[分享]"
         MsgKind.CHECKLIST -> checklistTitle.ifEmpty { "[清单]" }
         else -> "[消息]"
     }
