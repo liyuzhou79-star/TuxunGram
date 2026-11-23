@@ -185,6 +185,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -2499,7 +2501,7 @@ fun ChatScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     EmptyState(
-                        Icons.Filled.Block,
+                        BlockIcon,
                         "打不开这个对话",
                         access.detail.ifEmpty {
                             "这个对话不存在，或者已经被删除了。"
@@ -4454,23 +4456,55 @@ fun ChatScreen(
                 onDone = { effectPlay = null }
             )
         }
+        // Media viewer / video player (animated v0.9.44,
+        // N6): both used to hard-cut over the chat; they now
+        // fade + slightly scale in and out on the Motion
+        // crossfade pair, the chat left composed underneath.
         val anchor = viewerAnchor
-        if (anchor != null) {
-            MediaViewerScreen(
-                chatId = chatId,
-                anchor = anchor,
-                albumGroup = viewerGroup,
-                onClose = { viewerAnchor = null },
-                onPlayVideo = { m -> videoItem = m }
-            )
+        AnimatedVisibility(
+            visible = anchor != null,
+            enter = fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+                scaleIn(
+                    initialScale = 0.97f,
+                    animationSpec = Motion.tween(Motion.CROSSFADE_IN)
+                ),
+            exit = fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+                scaleOut(
+                    targetScale = 0.97f,
+                    animationSpec = Motion.tween(Motion.CROSSFADE_OUT)
+                )
+        ) {
+            anchor?.let { a ->
+                MediaViewerScreen(
+                    chatId = chatId,
+                    anchor = a,
+                    albumGroup = viewerGroup,
+                    onClose = { viewerAnchor = null },
+                    onPlayVideo = { m -> videoItem = m }
+                )
+            }
         }
         val vItem = videoItem
-        if (vItem?.filePath != null) {
-            VideoPlayerScreen(
-                path = vItem.filePath!!,
-                title = vItem.fileName,
-                onClose = { videoItem = null }
-            )
+        AnimatedVisibility(
+            visible = vItem?.filePath != null,
+            enter = fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+                scaleIn(
+                    initialScale = 0.97f,
+                    animationSpec = Motion.tween(Motion.CROSSFADE_IN)
+                ),
+            exit = fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+                scaleOut(
+                    targetScale = 0.97f,
+                    animationSpec = Motion.tween(Motion.CROSSFADE_OUT)
+                )
+        ) {
+            vItem?.filePath?.let { path ->
+                VideoPlayerScreen(
+                    path = path,
+                    title = vItem.fileName,
+                    onClose = { videoItem = null }
+                )
+            }
         }
     }
 }

@@ -10,8 +10,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -769,29 +772,20 @@ private fun ReadyHost() {
         }
         return
     }
-    // The story viewer bleeds full-screen behind the bars and
-    // pads its own header (Phase D, D2); everything else gets
-    // the standard system-bars safe distance.
-    if (storyChatId != null) {
-        StoryViewerScreen(
-            chatId = storyChatId!!,
-            onBack = { storyChatId = null }
-        )
-        return
-    }
-    // Bot Web App (v0.9.36, C1): a live session covers the
-    // whole host like the story viewer; closing it (the X,
-    // the page's own web_app_close, or TDLib's
-    // updateWebAppMessageSent) clears the store and the
-    // screen underneath returns untouched.
+    // Full-screen overlays (v0.9.44, N6): the story viewer
+    // and a bot Web App used to REPLACE the whole host via
+    // early returns — a hard cut both ways, and the screen
+    // underneath was thrown away and rebuilt on close. They
+    // now render as animated overlays at the end of the root
+    // Box below (fade + slight scale on the Motion crossfade
+    // pair), full-bleed behind the bars as before (the story
+    // viewer pads its own header), with the host left
+    // composed underneath. Closing one (the X, the page's
+    // own web_app_close, or TDLib's updateWebAppMessageSent)
+    // clears its store and the screen underneath returns
+    // untouched.
     val webAppSession by WebAppStore.session.collectAsState()
-    if (webAppSession != null) {
-        WebAppScreen(
-            session = webAppSession!!,
-            onClose = { WebAppStore.close() }
-        )
-        return
-    }
+    val pendingIv by DeepLink.pendingInstantView.collectAsState()
     // The route snapshot: the same priority order the old
     // `when` chain used, resolved once into a value the
     // transition can animate between.
@@ -830,6 +824,7 @@ private fun ReadyHost() {
         chatId != null -> Route.Chat(chatId)
         else -> Route.Home
     }
+    Box(modifier = Modifier.fillMaxSize()) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -839,18 +834,24 @@ private fun ReadyHost() {
             targetState = route,
             transitionSpec = {
                 when {
+                    // Paired specs (v0.9.44, N6): the exit
+                    // slide now runs on PAGE_OUT like its
+                    // fade — before this version it borrowed
+                    // the entrance's PAGE_IN, so the leaving
+                    // page kept sliding for 100 ms after it
+                    // had already faded out.
                     targetState.depth > initialState.depth ->
                         (slideInHorizontally(Motion.tween(Motion.PAGE_IN)) {
                             it
                         } + fadeIn(Motion.tween(Motion.PAGE_IN))) togetherWith
-                            (slideOutHorizontally(Motion.tween(Motion.PAGE_IN)) {
+                            (slideOutHorizontally(Motion.tween(Motion.PAGE_OUT)) {
                                 -it / 3
                             } + fadeOut(Motion.tween(Motion.PAGE_OUT)))
                     targetState.depth < initialState.depth ->
                         (slideInHorizontally(Motion.tween(Motion.PAGE_IN)) {
                             -it / 3
                         } + fadeIn(Motion.tween(Motion.PAGE_IN))) togetherWith
-                            (slideOutHorizontally(Motion.tween(Motion.PAGE_IN)) {
+                            (slideOutHorizontally(Motion.tween(Motion.PAGE_OUT)) {
                                 it
                             } + fadeOut(Motion.tween(Motion.PAGE_OUT)))
                     else ->
@@ -1041,10 +1042,27 @@ private fun ReadyHost() {
                 AnimatedContent(
                     targetState = homeTab,
                     transitionSpec = {
+                        // Direction follows the tab order
+                        // (v0.9.44, N6): moving to a later tab
+                        // drifts in from the right, going back
+                        // from the left, and the leaving tab
+                        // drifts out the opposite way — before
+                        // this version every switch slid from
+                        // the same side and the exit had no
+                        // slide at all.
+                        val dir = if (targetState >= initialState) {
+                            1
+                        } else {
+                            -1
+                        }
                         (fadeIn(Motion.tween(Motion.TAB_IN)) +
                             slideInHorizontally(Motion.tween(Motion.TAB_IN)) {
-                                it / 8
-                            }) togetherWith fadeOut(Motion.tween(Motion.TAB_OUT))
+                                dir * it / 8
+                            }) togetherWith
+                            (fadeOut(Motion.tween(Motion.TAB_OUT)) +
+                                slideOutHorizontally(Motion.tween(Motion.TAB_OUT)) {
+                                    -dir * it / 8
+                                })
                     },
                     label = "homeTab"
                 ) { tab ->
@@ -1240,14 +1258,76 @@ private fun ReadyHost() {
         // Instant View overlay (v0.9.26, S1): opened from a
         // link preview card or the message menu through
         // DeepLink, rendered above whichever route is up.
-        val pendingIv by DeepLink.pendingInstantView.collectAsState()
-        val ivUrl = pendingIv
-        if (ivUrl != null) {
-            InstantViewScreen(
-                url = ivUrl,
-                onClose = { DeepLink.pendingInstantView.value = null }
+        // Animated since v0.9.44 (N6): it used to hard-cut in
+        // and out; it stays inside the padded host Box, so
+        // its insets are unchanged.
+        AnimatedVisibility(
+            visible = pendingIv != null,
+            enter = fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+                scaleIn(
+                    initialScale = 0.97f,
+                    animationSpec = Motion.tween(Motion.CROSSFADE_IN)
+                ),
+            exit = fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+                scaleOut(
+                    targetScale = 0.97f,
+                    animationSpec = Motion.tween(Motion.CROSSFADE_OUT)
+                )
+        ) {
+            pendingIv?.let { ivUrl ->
+                InstantViewScreen(
+                    url = ivUrl,
+                    onClose = {
+                        DeepLink.pendingInstantView.value = null
+                    }
+                )
+            }
+        }
+    }
+    // Full-screen overlays (v0.9.44, N6): above the padded
+    // host, full-bleed behind the bars — the same coverage
+    // the old early returns gave them, now animated on the
+    // Motion crossfade pair instead of hard-cutting.
+    AnimatedVisibility(
+        visible = storyChatId != null,
+        enter = fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+            scaleIn(
+                initialScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_IN)
+            ),
+        exit = fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+            scaleOut(
+                targetScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_OUT)
+            )
+    ) {
+        storyChatId?.let { sid ->
+            StoryViewerScreen(
+                chatId = sid,
+                onBack = { storyChatId = null }
             )
         }
+    }
+    AnimatedVisibility(
+        visible = webAppSession != null,
+        enter = fadeIn(Motion.tween(Motion.CROSSFADE_IN)) +
+            scaleIn(
+                initialScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_IN)
+            ),
+        exit = fadeOut(Motion.tween(Motion.CROSSFADE_OUT)) +
+            scaleOut(
+                targetScale = 0.97f,
+                animationSpec = Motion.tween(Motion.CROSSFADE_OUT)
+            )
+    ) {
+        webAppSession?.let { session ->
+            WebAppScreen(
+                session = session,
+                onClose = { WebAppStore.close() }
+            )
+        }
+    }
     }
 }
 
