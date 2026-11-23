@@ -27,6 +27,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -43,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -1798,7 +1800,16 @@ fun FolderPickerDialog(chatId: Long, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text("添加到文件夹") },
         text = {
-            Column {
+            // Scrollable body (v0.9.39, F4): the folder
+            // rows are rendered inline, so a long folder
+            // list could push the dialog's button off a
+            // short screen — the column now scrolls with
+            // a height cap instead.
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 when {
                     folders.isEmpty() -> Text(
                         "还没有文件夹。在主页顶部的文件夹条" +
@@ -1896,7 +1907,15 @@ fun LabelPickerDialog(chatId: Long, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text("本地标签") },
         text = {
-            Column {
+            // Scrollable body (v0.9.39, F4): label rows
+            // are rendered inline and labels are
+            // user-created without a cap — cap the height
+            // and scroll instead of overflowing.
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Text(
                     "标签只存在这台手机上，仅本机可见，" +
                         "不会同步到其他设备，也不是 Telegram " +
@@ -2031,7 +2050,14 @@ fun LabelManageDialog(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text("本地标签管理") },
         text = {
-            Column {
+            // Scrollable body (v0.9.39, F4): same inline
+            // label rows as the picker dialog — height
+            // capped and scrollable.
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Text(
                     "标签只存在这台手机上。改名立刻生效；" +
                         "删除只删标签本身，不会删掉任何对话。",

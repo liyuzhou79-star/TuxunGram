@@ -9,6 +9,8 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -142,9 +144,14 @@ fun MyQrScreen(onBack: () -> Unit, onEditProfile: () -> Unit) {
                 .height(0.5.dp)
                 .background(palette.divider)
         )
+        // The QR card column scrolls (v0.9.39, F4): on
+        // short screens (landscape, split view) the card
+        // plus its buttons are taller than the viewport.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

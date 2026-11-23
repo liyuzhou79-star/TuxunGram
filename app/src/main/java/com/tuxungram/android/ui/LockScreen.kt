@@ -2,6 +2,8 @@ package com.tuxungram.android.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -149,13 +151,21 @@ fun LockScreen() {
     // The lock logic — press(), the lockout countdown,
     // the biometric flow — is byte-for-byte the old code.
     val palette = OfficialTheme.current()
+    // Short-screen safety (v0.9.39, F4): the pad is a
+    // fixed ~490 dp stack; on landscape-height screens
+    // it used to clip the last row. The column scrolls
+    // now, with weighted spacers keeping the portrait
+    // centering (they collapse to zero when the content
+    // overflows, so nothing is ever unreachable). The
+    // lock logic below is untouched.
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Spacer(Modifier.weight(1f))
         Box(
             modifier = Modifier
                 .size(76.dp)
@@ -279,5 +289,6 @@ fun LockScreen() {
                 Text("用指纹解锁")
             }
         }
+        Spacer(Modifier.weight(1f))
     }
 }
