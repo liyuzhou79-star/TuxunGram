@@ -135,6 +135,7 @@ import com.tuxungram.android.td.InlineBtn
 import com.tuxungram.android.td.MediaEntry
 import com.tuxungram.android.td.MediaStore
 import com.tuxungram.android.td.MessageStore
+import com.tuxungram.android.td.ReportStore
 import com.tuxungram.android.td.SoundFx
 import com.tuxungram.android.td.WebAppStore
 import com.tuxungram.android.td.ATTACH_CHAT_BOT
@@ -484,6 +485,11 @@ fun ChatScreen(
     // bottom dock (composer / join bar / cannot-post bar)
     // and the resolving / error states of the message area.
     val access by MessageStore.access.collectAsState()
+    // Stranger action bar (v0.9.54, Y1): chat.action_bar of
+    // the open chat — report / block / add-contact strip.
+    val actionBar by MessageStore.actionBar.collectAsState()
+    var reportFlowOpen by remember { mutableStateOf(false) }
+    var addContactOpen by remember { mutableStateOf(false) }
     val historyBlocked by MessageStore.historyBlocked
         .collectAsState()
     val pendingNew by MessageStore.pendingNewCount
@@ -2450,6 +2456,184 @@ fun ChatScreen(
                     decodeCached(chatBgImage, maxDim = 1080)
                 }
             }
+        }
+        val barNow = actionBar
+        if (barNow != null) {
+            // Stranger action bar (v0.9.54, Y1): the strip
+            // TDLib orders for this chat (chat.action_bar) —
+            // a stranger's first message used to arrive with
+            // no report / block path at all. Every button is
+            // the tl's own action: reportChat (ReportStore),
+            // setMessageSenderBlockList (BlockStore),
+            // addContact, sharePhoneNumber, and the close is
+            // removeChatActionBar on the server, not a local
+            // hide.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                if (barNow.kind == "report_add_block" &&
+                    (barNow.regYear > 0 || barNow.phoneCountry.isNotEmpty())
+                ) {
+                    // account_info (anti-scam line): when the
+                    // account was registered and where the
+                    // number is from, when TDLib hands them out.
+                    val parts = buildList {
+                        if (barNow.regYear > 0) {
+                            add(
+                                if (barNow.regMonth in 1..12) {
+                                    "账号注册于 ${barNow.regYear} 年 " +
+                                        "${barNow.regMonth} 月"
+                                } else {
+                                    "账号注册于 ${barNow.regYear} 年"
+                                }
+                            )
+                        }
+                        if (barNow.phoneCountry.isNotEmpty()) {
+                            add("号码归属地 ${barNow.phoneCountry}")
+                        }
+                    }
+                    Text(
+                        parts.joinToString(" · "),
+                        color = MaterialTheme.colorScheme
+                            .onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
+                }
+                if (barNow.kind == "join_request") {
+                    Text(
+                        "你已申请加入「${barNow.joinTitle}」，" +
+                            "对方是该${if (barNow.joinIsChannel) "频道" else "群组"}的管理员。",
+                        color = MaterialTheme.colorScheme
+                            .onSurfaceVariant,
+                        fontSize = 12.5.sp
+                    )
+                }
+                if (barNow.kind == "share_phone") {
+                    Text(
+                        "对方是你的联系人，可以把你的手机号分享给对方。",
+                        color = MaterialTheme.colorScheme
+                            .onSurfaceVariant,
+                        fontSize = 12.5.sp
+                    )
+                }
+                if (barNow.kind == "invite_members") {
+                    Text(
+                        "群组刚建好，邀请成员一起进来吧。",
+                        color = MaterialTheme.colorScheme
+                            .onSurfaceVariant,
+                        fontSize = 12.5.sp
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    when (barNow.kind) {
+                        "report_spam" -> {
+                            TextButton(onClick = {
+                                reportFlowOpen = true
+                            }) { Text("举报垃圾信息") }
+                        }
+                        "report_add_block" -> {
+                            TextButton(onClick = {
+                                reportFlowOpen = true
+                            }) { Text("举报并拉黑") }
+                            TextButton(onClick = {
+                                addContactOpen = true
+                            }) { Text("添加联系人") }
+                        }
+                        "add_contact" -> {
+                            TextButton(onClick = {
+                                addContactOpen = true
+                            }) { Text("添加联系人") }
+                        }
+                        "share_phone" -> {
+                            TextButton(onClick = {
+                                val peer = MessageStore.currentPeerUserId
+                                if (peer != 0L) {
+                                    ReportStore.sharePhoneNumber(
+                                        peer
+                                    ) { error ->
+                                        Toast.makeText(
+                                            context,
+                                            error
+                                                ?: "已把你的手机号分享给对方。",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        if (error == null) {
+                                            MessageStore
+                                                .dismissActionBar()
+                                        }
+                                    }
+                                }
+                            }) { Text("分享我的手机号") }
+                        }
+                        "invite_members" -> {
+                            TextButton(onClick = onOpenProfile) {
+                                Text("邀请成员")
+                            }
+                        }
+                    }
+                    if (barNow.canUnarchive) {
+                        TextButton(onClick = {
+                            MessageStore.unarchiveActionBarChat()
+                            Toast.makeText(
+                                context,
+                                "已移回主列表。",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }) { Text("移出归档") }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = { MessageStore.dismissActionBar() },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "关闭这条提示",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+        if (reportFlowOpen) {
+            ReportFlowDialogs(
+                chatId = chatId,
+                blockUserId = if (
+                    actionBar?.kind == "report_add_block"
+                ) {
+                    MessageStore.currentPeerUserId
+                } else {
+                    0L
+                },
+                onClose = { reportFlowOpen = false },
+                onNotice = { notice ->
+                    Toast.makeText(
+                        context, notice, Toast.LENGTH_LONG
+                    ).show()
+                    // A finished report retires the strip:
+                    // removeChatActionBar on the server side.
+                    MessageStore.dismissActionBar()
+                }
+            )
+        }
+        if (addContactOpen) {
+            AddContactDialog(
+                userId = MessageStore.currentPeerUserId,
+                onClose = { addContactOpen = false },
+                onNotice = { notice ->
+                    Toast.makeText(
+                        context, notice, Toast.LENGTH_SHORT
+                    ).show()
+                }
+            )
         }
         if (pinnedMessages.isNotEmpty()) {
             // Pinned bar (v0.9.4, N3): the newest pinned

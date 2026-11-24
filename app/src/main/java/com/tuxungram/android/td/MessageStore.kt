@@ -601,6 +601,31 @@ data class ChatAccess(
     val isChannel: Boolean = false
 )
 
+/** The chat's action bar (chat.action_bar, v0.9.54 Y1):
+ *  TDLib's own word on which safety strip the top of this
+ *  chat must offer — the stranger-protection bar of the
+ *  official client. Before this version the field was never
+ *  parsed, so a stranger's first message arrived with no
+ *  report / block / add-contact strip at all. [kind] is one
+ *  of: report_spam, report_add_block, add_contact,
+ *  share_phone, invite_members, join_request. */
+data class ChatActionBarUi(
+    val kind: String,
+    /** The chat was auto-archived by the stranger filter
+     *  and may be moved back to the main list (the tl spells
+     *  out the recipe: addChatToList + default notification
+     *  settings). */
+    val canUnarchive: Boolean = false,
+    /** chatActionBarJoinRequest payload. */
+    val joinTitle: String = "",
+    val joinIsChannel: Boolean = false,
+    /** chatActionBarReportAddBlock's account_info, flattened
+     *  for the anti-scam info line; 0 / empty = unknown. */
+    val regYear: Int = 0,
+    val regMonth: Int = 0,
+    val phoneCountry: String = ""
+)
+
 /** Chats whose join request this account has sent and is
  *  still waiting on (v0.9.44, N4). TDLib gives the
  *  requester no dedicated "my request is pending" field —
@@ -1617,6 +1642,121 @@ object MessageStore {
         MutableStateFlow(ChatAccess(ChatAccessKind.LOADING))
     val access: StateFlow<ChatAccess> = _access
 
+    // ---- Chat action bar (v0.9.54, Y1) --------------------
+    // chat.action_bar of the open chat, parsed from the
+    // getChat response and kept current by
+    // updateChatActionBar. Null = no strip. The close
+    // button is a server action (removeChatActionBar), not
+    // a local hide — TDLib clears the field itself and the
+    // update lands here.
+
+    private val _actionBar =
+        MutableStateFlow<ChatActionBarUi?>(null)
+    val actionBar: StateFlow<ChatActionBarUi?> = _actionBar
+
+    /** The other user of a private / secret chat (from the
+     *  chat type object); the action bar's block / contact /
+     *  share-number actions address them. 0 elsewhere. */
+    @Volatile
+    var currentPeerUserId = 0L
+        private set
+
+    private fun parseActionBar(bar: JSONObject?): ChatActionBarUi? {
+        if (bar == null) return null
+        return when (bar.optString("@type")) {
+            "chatActionBarReportSpam" -> ChatActionBarUi(
+                kind = "report_spam",
+                canUnarchive = bar.optBoolean("can_unarchive")
+            )
+            "chatActionBarReportAddBlock" -> {
+                val info = bar.optJSONObject("account_info")
+                ChatActionBarUi(
+                    kind = "report_add_block",
+                    canUnarchive = bar.optBoolean("can_unarchive"),
+                    regYear = info?.optInt("registration_year") ?: 0,
+                    regMonth = info?.optInt("registration_month") ?: 0,
+                    phoneCountry = info?.optString(
+                        "phone_number_country_code"
+                    ) ?: ""
+                )
+            }
+            "chatActionBarAddContact" -> ChatActionBarUi(
+                kind = "add_contact"
+            )
+            "chatActionBarSharePhoneNumber" -> ChatActionBarUi(
+                kind = "share_phone"
+            )
+            "chatActionBarInviteMembers" -> ChatActionBarUi(
+                kind = "invite_members"
+            )
+            "chatActionBarJoinRequest" -> ChatActionBarUi(
+                kind = "join_request",
+                joinTitle = bar.optString("title"),
+                joinIsChannel = bar.optBoolean("is_channel")
+            )
+            else -> null
+        }
+    }
+
+    /** The strip's close button (removeChatActionBar,
+     *  verified in td_api.tl): the server drops the bar;
+     *  the local value clears on success and the update
+     *  confirms it. */
+    fun dismissActionBar() {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val query = TdClient.request("removeChatActionBar").apply {
+            put("chat_id", chatId)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (!TdClient.isError(response) &&
+                currentChatId == chatId
+            ) {
+                _actionBar.value = null
+            }
+        }
+    }
+
+    /** Move an auto-archived stranger chat back to the main
+     *  list, with the tl's own recipe (addChatToList +
+     *  setChatNotificationSettings back to defaults), then
+     *  drop the bar like the close button does. */
+    fun unarchiveActionBarChat() {
+        val chatId = currentChatId
+        if (chatId == 0L) return
+        val addQuery = TdClient.request("addChatToList").apply {
+            put("chat_id", chatId)
+            put("chat_list", JSONObject().put("@type", "chatListMain"))
+        }
+        TdRepository.sendRaw(addQuery) {}
+        val settings = JSONObject().apply {
+            put("@type", "chatNotificationSettings")
+            put("use_default_mute_for", true)
+            put("mute_for", 0)
+            put("use_default_sound", true)
+            put("sound_id", 0L)
+            put("use_default_show_preview", true)
+            put("show_preview", false)
+            put("use_default_mute_stories", true)
+            put("mute_stories", false)
+            put("use_default_story_sound", true)
+            put("story_sound_id", 0L)
+            put("use_default_show_story_poster", true)
+            put("show_story_poster", false)
+            put("use_default_disable_pinned_message_notifications", true)
+            put("disable_pinned_message_notifications", false)
+            put("use_default_disable_mention_notifications", true)
+            put("disable_mention_notifications", false)
+        }
+        val settingsQuery =
+            TdClient.request("setChatNotificationSettings").apply {
+                put("chat_id", chatId)
+                put("notification_settings", settings)
+            }
+        TdRepository.sendRaw(settingsQuery) {}
+        dismissActionBar()
+    }
+
     /** True when the first history page of an unjoined chat
      *  came back forbidden: the content exists but only
      *  members may read it; the join bar says so. */
@@ -1698,6 +1838,8 @@ object MessageStore {
         // slate per chat (v0.9.44, N3/N4/N5): no bar, badge
         // or read behaviour may leak across chats.
         _access.value = ChatAccess(ChatAccessKind.LOADING)
+        _actionBar.value = null
+        currentPeerUserId = 0L
         _historyBlocked.value = false
         _pendingNew.value = 0
         viewingLatest = true
@@ -1771,6 +1913,8 @@ object MessageStore {
                 // what the bottom dock may offer.
                 ChatStore.noteResolvedChat(response)
                 currentChatObject = response
+                _actionBar.value =
+                    parseActionBar(response.optJSONObject("action_bar"))
                 computeAccess(response)
             }
             if (!TdClient.isError(response) && currentChatId == chatId) {
@@ -1868,6 +2012,7 @@ object MessageStore {
         val type = chat.optJSONObject("type")
         when (type?.optString("@type")) {
             "chatTypePrivate", "chatTypeSecret" -> {
+                currentPeerUserId = type.optLong("user_id")
                 JoinPending.setPending(chatId, false)
                 _access.value = ChatAccess(ChatAccessKind.CAN_SEND)
             }
@@ -2153,6 +2298,8 @@ object MessageStore {
         currentChatObject = null
         currentSupergroupId = 0L
         currentBasicGroupId = 0L
+        _actionBar.value = null
+        currentPeerUserId = 0L
         val chatId = currentChatId
         if (chatId != 0L) {
             TdRepository.sendRaw(TdClient.request("closeChat").apply {
@@ -3329,6 +3476,16 @@ object MessageStore {
 
     private fun handleUpdate(update: JSONObject) {
         when (update.optString("@type")) {
+            "updateChatActionBar" -> {
+                // The server raises or clears the stranger
+                // strip live (v0.9.54, Y1) — e.g. it drops
+                // the moment the other side becomes a
+                // contact, and removeChatActionBar answers
+                // with the cleared value.
+                if (update.optLong("chat_id") != currentChatId) return
+                _actionBar.value =
+                    parseActionBar(update.optJSONObject("action_bar"))
+            }
             "updateNewMessage" -> {
                 val msg = update.optJSONObject("message") ?: return
                 if (msg.optLong("chat_id") != currentChatId) return
