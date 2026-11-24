@@ -1099,8 +1099,13 @@ private fun ReadyHost() {
                         com.tuxungram.android.ui.SharePickerScreen(
                             content = content,
                             onCancel = {
+                                // Backed out without sending:
+                                // the intake copies are deleted
+                                // too (v0.9.56, A3). A completed
+                                // send keeps clear() — TDLib may
+                                // still be reading those paths.
                                 com.tuxungram.android.td.ShareIntake
-                                    .clear()
+                                    .discard()
                             },
                             onSent = { target ->
                                 com.tuxungram.android.td.ShareIntake

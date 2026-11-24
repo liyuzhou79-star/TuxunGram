@@ -65,6 +65,7 @@ object ShareIntake {
         val appContext = context.applicationContext
         val intentType = intent.type ?: ""
         Thread {
+            sweepOldCopies(appContext)
             val files = ArrayList<SharedFile>()
             for (uri in uris) {
                 copyOne(appContext, uri, intentType)?.let {
@@ -136,5 +137,49 @@ object ShareIntake {
 
     fun clear() {
         pending.value = null
+    }
+
+    /** The user backed out of the picker without sending
+     *  (v0.9.56, A3): the copied files were never handed to
+     *  TDLib, so they are deleted outright. Sent content
+     *  goes through [clear] instead — TDLib keeps reading
+     *  the local path while the upload runs, so a sent
+     *  share's copies are only reclaimed by the age sweep
+     *  in [sweepOldCopies]. Before this split, NOTHING ever
+     *  deleted the copies and share_in grew forever. */
+    fun discard() {
+        val content = pending.value
+        pending.value = null
+        if (content != null && content.files.isNotEmpty()) {
+            Thread {
+                for (file in content.files) {
+                    try {
+                        File(file.path).delete()
+                    } catch (t: Throwable) {
+                        // Already gone — nothing to reclaim.
+                    }
+                }
+            }
+        }
+    }
+
+    /** Reclaim copies of shares that were sent long ago:
+     *  anything in share_in older than 48 hours has had
+     *  far more time than an upload needs, and once an
+     *  upload finishes TDLib keeps its own copy in its file
+     *  store anyway. Runs on capture's background thread. */
+    private fun sweepOldCopies(context: Context) {
+        try {
+            val dir = File(context.cacheDir, "share_in")
+            val cutoff = System.currentTimeMillis() -
+                48L * 60 * 60 * 1000
+            dir.listFiles()?.forEach { file ->
+                if (file.isFile && file.lastModified() < cutoff) {
+                    file.delete()
+                }
+            }
+        } catch (t: Throwable) {
+            // A failed sweep only delays the reclaim.
+        }
     }
 }

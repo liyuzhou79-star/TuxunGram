@@ -4458,7 +4458,27 @@ object MessageStore {
                     "messageSchedulingStateSendWhenOnline"
         )
         val content = msg.optJSONObject("content") ?: return base
-        return parseContent(base, content)
+        val parsed = parseContent(base, content)
+        // Speech-recognition self-heal (v0.9.56, A3): a
+        // freshly parsed voice note already carrying a
+        // terminal transcription state ends the local
+        // recognizing flag for it, whichever host did the
+        // parsing. ThreadStore / ForumStore refetch through
+        // here on updateMessageContent but never see this
+        // store's own update handler (it only serves the
+        // open main chat), so without this a failed
+        // transcription inside a thread or topic left the
+        // bubble showing "正在转文字…" forever — the stale
+        // busy flag outranked the parsed error state.
+        if (parsed.speechState == "text" ||
+            parsed.speechState == "error"
+        ) {
+            val key = msg.optLong("chat_id") to parsed.id
+            if (key in _recognizing.value) {
+                _recognizing.value = _recognizing.value - key
+            }
+        }
+        return parsed
     }
 
     private fun parseContent(base: MsgItem, content: JSONObject): MsgItem {

@@ -64,7 +64,11 @@ fun VideoTrimScreen(
     path: String,
     fileName: String,
     onDone: (String) -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    // Export-state mirror for hosts that clean up around
+    // the screen (v0.9.56, A3): while an export runs, the
+    // source file is being read and must not be reclaimed.
+    onExportingChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -78,6 +82,9 @@ fun VideoTrimScreen(
     // when the file actually has one (probe says so).
     var muteAudio by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(exporting) {
+        onExportingChange(exporting)
+    }
     var errorText by remember { mutableStateOf<String?>(null) }
 
     // Film strip: eight frames spread over the whole clip.

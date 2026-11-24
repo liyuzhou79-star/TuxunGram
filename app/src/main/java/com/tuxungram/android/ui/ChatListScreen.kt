@@ -826,6 +826,13 @@ fun ChatListScreen(
         // video detours through the shared trim screen
         // before it becomes pendingStoryVideo.
         var storyTrimPath by remember { mutableStateOf<String?>(null) }
+        // Whether the story trim screen is mid-export
+        // (v0.9.56, A3): while it is, the source copy is
+        // being read and the dismiss cleanup must not
+        // reclaim it.
+        var storyTrimExporting by remember {
+            mutableStateOf(false)
+        }
         var storyKindChooser by remember { mutableStateOf(false) }
         val storyPicker = rememberLauncherForActivityResult(
             ActivityResultContracts.GetContent()
@@ -939,7 +946,26 @@ fun ChatListScreen(
             // way the user leaves — the publish confirm
             // dialog still gets the final say.
             androidx.compose.ui.window.Dialog(
-                onDismissRequest = { storyTrimPath = null },
+                onDismissRequest = {
+                    // Dismissed without a decision (back /
+                    // outside tap): nothing was handed to the
+                    // send chain, so the picker's private copy
+                    // is deleted instead of left in the cache
+                    // (v0.9.56, A3) — unless an export is
+                    // still reading it, in which case the copy
+                    // stays (the pre-0.9.56 behaviour). The
+                    // trim screen's own onCancel is NOT this
+                    // path — it sends the original, which
+                    // keeps the file.
+                    if (!storyTrimExporting) {
+                        try {
+                            File(trimPath).delete()
+                        } catch (t: Throwable) {
+                            // Already gone — nothing to reclaim.
+                        }
+                    }
+                    storyTrimPath = null
+                },
                 properties = androidx.compose.ui.window.DialogProperties(
                     usePlatformDefaultWidth = false,
                     decorFitsSystemWindows = false
@@ -948,6 +974,7 @@ fun ChatListScreen(
                 VideoTrimScreen(
                     path = trimPath,
                     fileName = File(trimPath).name,
+                    onExportingChange = { storyTrimExporting = it },
                     onDone = { newPath ->
                         storyTrimPath = null
                         pendingStoryVideo =
