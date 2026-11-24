@@ -901,22 +901,16 @@ fun ForumTopicView(
                     Column {
                         Text("要发送「${fileToSend.third}」吗？")
                         // Video trim (v0.9.35, B4): same
-                        // entry and limits as the main chat —
-                        // MP4 only, cut without re-encoding.
-                        if (fileToSend.second == "video/mp4") {
+                        // entry as the main chat — any video
+                        // detours through the trim screen,
+                        // which probes the container and
+                        // explains the ones that cannot ride
+                        // (v0.9.57, B1).
+                        if (fileToSend.second.startsWith("video/")) {
                             TextButton(onClick = {
                                 trimmingVideo = fileToSend
                                 pendingFile = null
                             }) { Text("剪辑视频（选一段发）") }
-                        } else if (
-                            fileToSend.second.startsWith("video/")
-                        ) {
-                            Text(
-                                "这个格式暂时不能剪辑（剪辑只支持 MP4），" +
-                                    "可以照原样发送。",
-                                fontSize = 12.5.sp,
-                                color = Color.Gray
-                            )
                         }
                     }
                 },
@@ -946,8 +940,11 @@ fun ForumTopicView(
                     trimmingVideo = null
                     val base = trimTarget.third
                         .substringBeforeLast('.')
+                    val ext = trimmedPath.substringAfterLast('.')
                     pendingFile = Triple(
-                        trimmedPath, "video/mp4", base + "_trim.mp4"
+                        trimmedPath,
+                        if (ext == "webm") "video/webm" else "video/mp4",
+                        base + "_trim." + ext
                     )
                 },
                 onCancel = {

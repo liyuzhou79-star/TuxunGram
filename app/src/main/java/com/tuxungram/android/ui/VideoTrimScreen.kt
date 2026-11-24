@@ -55,9 +55,11 @@ private fun trimTimeLabel(ms: Long): String {
  * the start and end on a film strip; export is a packet
  * copy (see td/VideoTrim), so it is quick and lossless.
  * The screen says plainly that the cut snaps to keyframes
- * (about a second or two of slack) and that only MP4 can
- * be trimmed — a non-MP4 file gets the explanation and a
- * straight path back to sending the original.
+ * (about a second or two of slack) and which containers
+ * can ride (MP4 family including MOV/3GP sources, and
+ * WebM since v0.9.57) — a file in anything else gets the
+ * explanation and a straight path back to sending the
+ * original.
  */
 @Composable
 fun VideoTrimScreen(
@@ -154,19 +156,19 @@ fun VideoTrimScreen(
             ) {
                 CircularProgressIndicator(color = Color.White)
             }
-            !currentInfo.isMp4 -> Column(
+            currentInfo.family == VideoTrim.Family.OTHER -> Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(24.dp)
             ) {
                 Text(
-                    "这个视频不是 MP4 格式，暂时不能剪辑。",
+                    "这个视频的格式暂时不能剪辑。",
                     color = Color.White, fontSize = 15.sp
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "剪辑功能目前只支持 MP4。可以直接发送原视频，内容不受影响。",
+                    "剪辑目前支持 MP4、MOV、3GP 和 WebM，都是直接拷贝不重新编码。可以直接发送原视频，内容不受影响。",
                     color = Color(0xFFBDBDBD), fontSize = 13.sp
                 )
                 Spacer(Modifier.height(20.dp))
@@ -286,7 +288,8 @@ fun VideoTrimScreen(
                                 scope.launch {
                                     val outFile = File(
                                         context.cacheDir,
-                                        "trim_${System.currentTimeMillis()}.mp4"
+                                        "trim_${System.currentTimeMillis()}." +
+                                            currentInfo.outExtension
                                     )
                                     val error = withContext(
                                         Dispatchers.IO

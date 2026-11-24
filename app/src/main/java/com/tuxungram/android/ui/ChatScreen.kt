@@ -1980,8 +1980,14 @@ fun ChatScreen(
                 onDone = { newPath ->
                     val base = trimming.third
                         .substringBeforeLast('.', trimming.third)
+                    // The export follows the muxer the
+                    // source rode (v0.9.57, B1): name and
+                    // mime follow the output's real format.
+                    val ext = newPath.substringAfterLast('.')
                     pendingFile = Triple(
-                        newPath, "video/mp4", "${base}_trim.mp4"
+                        newPath,
+                        if (ext == "webm") "video/webm" else "video/mp4",
+                        "${base}_trim.$ext"
                     )
                     trimmingVideo = null
                 },
@@ -2022,12 +2028,17 @@ fun ChatScreen(
                 onDone = { newPath ->
                     val base = part.fileName
                         .substringBeforeLast('.', part.fileName)
+                    val ext = newPath.substringAfterLast('.')
                     albumParts = albumParts.mapIndexed { i, p ->
                         if (i == albumTrimIndex) {
                             p.copy(
                                 path = newPath,
-                                mimeType = "video/mp4",
-                                fileName = "${base}_trim.mp4"
+                                mimeType = if (ext == "webm") {
+                                    "video/webm"
+                                } else {
+                                    "video/mp4"
+                                },
+                                fileName = "${base}_trim.$ext"
                             )
                         } else {
                             p
@@ -2264,25 +2275,18 @@ fun ChatScreen(
                 text = {
                     Column {
                         Text("要发送「${fileToSend.third}」吗？")
-                        // Video trim entry (v0.9.33, Z1): MP4
-                        // can be trimmed before sending; other
-                        // containers get the honest note, never
-                        // a dead entry.
-                        if (fileToSend.second == "video/mp4") {
+                        // Video trim entry (v0.9.33, Z1): any
+                        // video can detour through the trim
+                        // screen before sending; the screen
+                        // itself probes the container and
+                        // explains the ones that cannot ride
+                        // (v0.9.57, B1), never a dead entry.
+                        if (fileToSend.second.startsWith("video/")) {
                             TextButton(onClick = {
                                 trimmingVideo = fileToSend
                             }) {
                                 Text("剪辑视频")
                             }
-                        } else if (
-                            fileToSend.second.startsWith("video/")
-                        ) {
-                            Text(
-                                "这个格式暂时不能剪辑（仅支持 MP4），" +
-                                    "可以直接发送原视频。",
-                                fontSize = 12.sp, color = Color.Gray,
-                                modifier = Modifier.padding(top = 6.dp)
-                            )
                         }
                     }
                 },
@@ -5164,21 +5168,13 @@ fun AlbumPreview(
                         .background(OfficialTheme.current().inBubble)
                         // Per-item trim (v0.9.34, A2): tapping
                         // a video cell opens the trimmer for
-                        // that item; non-MP4 videos explain
-                        // themselves instead of dead-ending.
+                        // that item; containers the trimmer
+                        // cannot ride explain themselves on
+                        // its own screen (v0.9.57, B1).
                         .clickable(
                             enabled = part.mimeType.startsWith("video/")
                         ) {
-                            if (part.mimeType == "video/mp4") {
-                                onTrimPart(index)
-                            } else {
-                                Toast.makeText(
-                                    context,
-                                    "这个格式暂时不能剪辑（仅支持 MP4），" +
-                                        "会按原视频发送。",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
+                            onTrimPart(index)
                         },
                     contentAlignment = Alignment.Center
                 ) {

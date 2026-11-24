@@ -13,10 +13,18 @@ import java.nio.ByteBuffer
 /**
  * Pre-send video trimming (v0.9.33, Z1): packet copy with
  * MediaExtractor + MediaMuxer — no re-encoding, so export
- * is fast and the picture is bit-identical. MP4 family
- * only: the muxer writes an MPEG-4 container, and other
- * containers are refused up front with a plain-language
- * reason instead of a broken file.
+ * is fast and the picture is bit-identical.
+ *
+ * Containers (v0.9.57, B1): the whole ISO-BMFF family
+ * rides the MPEG-4 muxer — that is MP4 proper plus MOV
+ * and 3GP sources, whose H.264/HEVC + AAC tracks are
+ * re-wrapped into an .mp4 without touching the samples
+ * (a track the muxer refuses still fails honestly at
+ * export). WebM rides the WebM muxer the same way, for
+ * VP8/VP9 + Opus/Vorbis tracks only. Anything else
+ * (AVI, FLV, or a codec no muxer here accepts) is refused
+ * up front with a plain-language reason instead of a
+ * broken file; re-encoding trims remain out of scope.
  *
  * Because nothing is re-encoded, the start point snaps to
  * the nearest keyframe at or before the picked point (the
@@ -27,32 +35,55 @@ import java.nio.ByteBuffer
  */
 object VideoTrim {
 
+    /** Which muxer family a source file can ride. */
+    enum class Family { MP4, WEBM, OTHER }
+
+    /** The only track types the platform WebM muxer
+     *  accepts (v0.9.57, B1). */
+    private val WEBM_MIMES = setOf(
+        "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9",
+        "audio/opus", "audio/vorbis"
+    )
+
     data class Info(
         val durationMs: Long,
-        val isMp4: Boolean,
+        val family: Family,
         val rotation: Int,
         /** True when the file carries an audio track; the
          *  trim screen only offers its mute switch then
          *  (v0.9.34, A2). */
-        val hasAudio: Boolean
+        val hasAudio: Boolean,
+        /** Extension for the exported file ("mp4" / "webm"),
+         *  following the muxer the source rides. */
+        val outExtension: String
     )
 
-    /** Container sniff: an MP4-family file starts with an
-     *  ftyp box (bytes 4..7). The retriever supplies the
-     *  duration and rotation. Null = unreadable file. */
+    /** Container sniff: an ISO-BMFF file starts with an
+     *  ftyp box (bytes 4..7 — MP4, MOV and 3GP all do);
+     *  a WebM/Matroska file starts with the EBML header
+     *  (1A 45 DF A3). The retriever supplies the duration
+     *  and rotation. Null = unreadable file. */
     fun probe(path: String): Info? {
-        val isMp4 = try {
+        val family = try {
             FileInputStream(File(path)).use { input ->
                 val head = ByteArray(12)
                 val read = input.read(head)
-                read == 12 &&
-                    head[4] == 'f'.code.toByte() &&
-                    head[5] == 't'.code.toByte() &&
-                    head[6] == 'y'.code.toByte() &&
-                    head[7] == 'p'.code.toByte()
+                when {
+                    read == 12 &&
+                        head[4] == 'f'.code.toByte() &&
+                        head[5] == 't'.code.toByte() &&
+                        head[6] == 'y'.code.toByte() &&
+                        head[7] == 'p'.code.toByte() -> Family.MP4
+                    read >= 4 &&
+                        head[0] == 0x1A.toByte() &&
+                        head[1] == 0x45.toByte() &&
+                        head[2] == 0xDF.toByte() &&
+                        head[3] == 0xA3.toByte() -> Family.WEBM
+                    else -> Family.OTHER
+                }
             }
         } catch (t: Throwable) {
-            false
+            Family.OTHER
         }
         val retriever = MediaMetadataRetriever()
         return try {
@@ -66,7 +97,14 @@ object VideoTrim {
             val hasAudio = retriever.extractMetadata(
                 MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO
             ) == "yes"
-            Info(duration, isMp4, rotation, hasAudio)
+            Info(
+                duration, family, rotation, hasAudio,
+                outExtension = if (family == Family.WEBM) {
+                    "webm"
+                } else {
+                    "mp4"
+                }
+            )
         } catch (t: Throwable) {
             null
         } finally {
@@ -140,8 +178,8 @@ object VideoTrim {
     ): String? {
         val info = probe(srcPath)
             ?: return "这个视频读不出来，没法剪辑。"
-        if (!info.isMp4) {
-            return "只有 MP4 格式的视频能剪辑，这个文件不是 MP4。"
+        if (info.family == Family.OTHER) {
+            return "这个视频的格式暂时不能剪辑，可以发送原视频。"
         }
         if (endMs <= startMs || startMs < 0) {
             return "起止点不对，换个范围再试。"
@@ -152,16 +190,28 @@ object VideoTrim {
             extractor.setDataSource(srcPath)
             val mux = MediaMuxer(
                 dstPath,
-                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+                if (info.family == Family.WEBM) {
+                    MediaMuxer.OutputFormat.MUXER_OUTPUT_WEBM
+                } else {
+                    MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+                }
             )
             muxer = mux
-            if (info.rotation != 0) {
+            // The orientation hint is an MPEG-4 concept; the
+            // WebM muxer has no use for it.
+            if (info.rotation != 0 &&
+                info.family == Family.MP4
+            ) {
                 mux.setOrientationHint(info.rotation)
             }
             // Map extractor tracks onto muxer tracks; only
             // video/audio tracks ride along (audio only when
             // not muted). A codec the muxer refuses fails
-            // the whole export honestly.
+            // the whole export honestly. The WebM muxer
+            // takes only VP8/VP9 video and Opus/Vorbis
+            // audio, so those tracks are checked up front
+            // (v0.9.57, B1) instead of dying inside addTrack
+            // with a framework error.
             val trackMap = HashMap<Int, Int>()
             var maxInputSize = 1024 * 1024
             for (i in 0 until extractor.trackCount) {
@@ -174,6 +224,12 @@ object VideoTrim {
                 }
                 if (muteAudio && mime.startsWith("audio/")) {
                     continue
+                }
+                if (info.family == Family.WEBM &&
+                    mime !in WEBM_MIMES
+                ) {
+                    return "这个 WebM 里的编码（$mime）没法直接" +
+                        "剪辑，可以发送原视频。"
                 }
                 val muxIndex = try {
                     mux.addTrack(format)
