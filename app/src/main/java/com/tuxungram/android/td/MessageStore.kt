@@ -322,6 +322,12 @@ data class MsgItem(
     // says getMessageAddedReactions can answer for this
     // message, so there is never a dead entry.
     val canGetAddedReactions: Boolean = false,
+    // Comment count (v0.9.55, Z1): interaction_info.reply_info
+    // .reply_count of a channel post — how many comments its
+    // discussion thread already holds (messageReplyInfo in
+    // td_api.tl, verified). -1 when TDLib ships no reply_info
+    // for this message at all.
+    val commentCount: Int = -1,
     // Outgoing delivery state derived from the chat's
     // last_read_outbox_message_id: "" (not applicable / pending),
     // "sent" (delivered, unread), "read".
@@ -3586,8 +3592,17 @@ object MessageStore {
                 if (chatId != currentChatId) return
                 val messageId = update.optLong("message_id")
                 val existing = byId[messageId] ?: return
+                val info = update.optJSONObject("interaction_info")
                 byId[messageId] = existing.copy(
-                    reactions = reactionsOf(update.optJSONObject("interaction_info"))
+                    reactions = reactionsOf(info),
+                    // Comment count rides the same update
+                    // (v0.9.55, Z1): a fresh reply_info wins;
+                    // an update without one keeps the count
+                    // the parse already had.
+                    commentCount = info
+                        ?.optJSONObject("reply_info")
+                        ?.optInt("reply_count")
+                        ?: existing.commentCount
                 )
                 publish()
             }
@@ -4320,6 +4335,10 @@ object MessageStore {
                 msg.optJSONObject("interaction_info")
                     ?.optJSONObject("reactions")
                     ?.optBoolean("can_get_added_reactions") ?: false,
+            commentCount =
+                msg.optJSONObject("interaction_info")
+                    ?.optJSONObject("reply_info")
+                    ?.optInt("reply_count") ?: -1,
             buttons = parseButtons(msg.optJSONObject("reply_markup")),
             isChannelPost = msg.optBoolean("is_channel_post"),
             isPinned = msg.optBoolean("is_pinned"),

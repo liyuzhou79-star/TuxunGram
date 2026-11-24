@@ -1351,7 +1351,10 @@ fun ThreadScreen(
                 .background(MaterialTheme.colorScheme.outlineVariant)
         )
         val err = error
-        if (err != null) {
+        if (err != null && ready) {
+            // Transient action failures (send / vote /
+            // delete) while the thread itself is up: the
+            // small red strip, as before.
             Text(
                 err,
                 color = Color(0xFFC62828),
@@ -1359,7 +1362,22 @@ fun ThreadScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
             )
         }
-        if (!ready && err == null) {
+        if (err != null && !ready) {
+            // No comment thread for this post (v0.9.55,
+            // Z1): a full explanation state with the reason
+            // in plain language — never a blank page under
+            // a red line.
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                EmptyStateMini(
+                    icon = ChatBubbleIcon,
+                    title = "没有评论区",
+                    subtitle = err
+                )
+            }
+        } else if (!ready && err == null) {
             Box(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentAlignment = Alignment.Center

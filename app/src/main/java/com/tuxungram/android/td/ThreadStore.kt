@@ -23,6 +23,16 @@ import java.util.concurrent.ConcurrentHashMap
  * nothing older than the current oldest.
  */
 object ThreadStore {
+    /** Plain-language explanation shown when a post turns
+     *  out to have no resolvable comment thread (v0.9.55,
+     *  Z1): the channel has no linked discussion group, or
+     *  this post's comments are off / its mirrored post is
+     *  gone. The thread screen renders it as a full
+     *  explanation state, never a blank page. */
+    private const val NO_THREAD_TEXT =
+        "这个帖子没有评论区：这个频道可能没有绑定讨论组，" +
+            "或者这条帖子的评论已经关了。"
+
     private val _messages = MutableStateFlow<List<MsgItem>>(emptyList())
     val messages: StateFlow<List<MsgItem>> = _messages
 
@@ -241,13 +251,13 @@ object ThreadStore {
                 return@sendRaw
             }
             if (TdClient.isError(info)) {
-                _error.value = "这个帖子没有评论区。"
+                _error.value = NO_THREAD_TEXT
                 return@sendRaw
             }
             threadChatId = info.optLong("chat_id")
             rootMessageId = info.optLong("message_thread_id")
             if (threadChatId == 0L || rootMessageId == 0L) {
-                _error.value = "这个帖子没有评论区。"
+                _error.value = NO_THREAD_TEXT
                 return@sendRaw
             }
             _ready.value = true

@@ -6572,6 +6572,66 @@ fun MessageBubble(
                         )
                     }
                 }
+                if (canComment) {
+                    // Comment strip (v0.9.55, Z1): a channel
+                    // post's bubble ends with a comments bar
+                    // under a hairline — the official layout,
+                    // in the footer's own palette. The count
+                    // is the server's reply_info.reply_count
+                    // (MessageStore); zero or not-yet-known
+                    // invites the first comment instead. The
+                    // tap opens the same thread the long-press
+                    // 评论 entry opens; a post whose thread
+                    // cannot be resolved lands on the thread
+                    // screen's plain-language explanation, not
+                    // a blank page.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 7.dp)
+                            .height(1.dp)
+                            .background(
+                                if (outgoing) {
+                                    Color.White.copy(alpha = 0.25f)
+                                } else {
+                                    Color.Black.copy(alpha = 0.10f)
+                                }
+                            )
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenThread(msg) }
+                            .padding(top = 6.dp, bottom = 1.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            ChatBubbleIcon, contentDescription = null,
+                            tint = if (outgoing) {
+                                palette.outText
+                            } else {
+                                palette.accentText
+                            },
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            if (msg.commentCount > 0) {
+                                "${formatCount(msg.commentCount)} 条评论"
+                            } else {
+                                "发表评论"
+                            },
+                            color = if (outgoing) {
+                                palette.outText
+                            } else {
+                                palette.accentText
+                            },
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
                 TranslationArea(chatId, msg)
             }
             // Official floating menu (v0.9.20, AA4): the
