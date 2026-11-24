@@ -833,6 +833,19 @@ fun ChatListScreen(
         var storyTrimExporting by remember {
             mutableStateOf(false)
         }
+        // Story photo editing (v0.9.57, B1): the publish
+        // dialog's edit button detours the picked photo
+        // through the shared photo editor (the one chat
+        // photos have had since v0.9.27 — crop / doodle /
+        // stickers / text, baked into the picture). The
+        // edited result is kept apart from
+        // pendingStoryPhoto so the dialog's privacy state,
+        // which is keyed on the pick, is not reset by an
+        // edit round-trip.
+        var storyEditPath by remember { mutableStateOf<String?>(null) }
+        var storyEditedPhoto by remember {
+            mutableStateOf<String?>(null)
+        }
         var storyKindChooser by remember { mutableStateOf(false) }
         val storyPicker = rememberLauncherForActivityResult(
             ActivityResultContracts.GetContent()
@@ -890,7 +903,7 @@ fun ChatListScreen(
                     Column {
                         Text(
                             "选照片、视频，或者直接用相机拍。" +
-                                "视频会先过一遍剪辑页，可以不剪直接发。"
+                                "照片在发布前可以先编辑，视频会先过一遍剪辑页，可以不剪直接发。"
                         )
                         Spacer(Modifier.height(8.dp))
                         TextButton(onClick = {
@@ -996,6 +1009,31 @@ fun ChatListScreen(
                 )
             }
         }
+        val editPath = storyEditPath
+        if (editPath != null) {
+            // Story photo editor (v0.9.57, B1): the shared
+            // photo editor in a full-screen dialog, the same
+            // host shape as the story trim screen above.
+            // Done swaps in the edited photo for the publish
+            // dialog waiting underneath; cancel keeps
+            // whatever the dialog already had.
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { storyEditPath = null },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false
+                )
+            ) {
+                PhotoEditorScreen(
+                    path = editPath,
+                    onDone = { newPath ->
+                        storyEditedPhoto = newPath
+                        storyEditPath = null
+                    },
+                    onCancel = { storyEditPath = null }
+                )
+            }
+        }
         val postNotice by StoryStore.postNotice.collectAsState()
         LaunchedEffect(postNotice) {
             val notice = postNotice
@@ -1037,6 +1075,7 @@ fun ChatListScreen(
                 onDismissRequest = {
                     pendingStoryPhoto = null
                     pendingStoryVideo = null
+                    storyEditedPhoto = null
                 },
                 title = { Text("发布动态？") },
                 text = {
@@ -1049,6 +1088,21 @@ fun ChatListScreen(
                             }) +
                                 "24 小时后自动归档。谁能看："
                         )
+                        if (pendingStoryPhoto != null) {
+                            TextButton(onClick = {
+                                storyEditPath = storyEditedPhoto
+                                    ?: pendingStoryPhoto
+                            }) {
+                                Text(
+                                    if (storyEditedPhoto != null) {
+                                        "照片已编辑，点这里再改"
+                                    } else {
+                                        "编辑照片（涂鸦 / 贴纸 / 文字）"
+                                    },
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(6.dp))
                         for ((value, label) in privacyOptions) {
                             Row(
@@ -1107,11 +1161,13 @@ fun ChatListScreen(
                         enabled = storyPrivacy != "selected" ||
                             storySelectedUsers.isNotEmpty(),
                         onClick = {
-                            val photoPath = pendingStoryPhoto
+                            val photoPath = storyEditedPhoto
+                                ?: pendingStoryPhoto
                             val video = pendingStoryVideo
                             val picked = storySelectedUsers.toList()
                             pendingStoryPhoto = null
                             pendingStoryVideo = null
+                            storyEditedPhoto = null
                             if (video != null) {
                                 StoryStore.postVideoStory(
                                     video.first, video.second,
@@ -1129,6 +1185,7 @@ fun ChatListScreen(
                     TextButton(onClick = {
                         pendingStoryPhoto = null
                         pendingStoryVideo = null
+                        storyEditedPhoto = null
                     }) {
                         Text("取消")
                     }
