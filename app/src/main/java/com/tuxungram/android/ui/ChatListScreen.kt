@@ -460,6 +460,29 @@ fun formatChatTime(dateSeconds: Int): String {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+/** Duration in seconds of a local video file, 0 when
+ *  unreadable — the story publish path's metadata read,
+ *  used for picked videos and again after trimming
+ *  (v0.9.55, Z4). */
+private fun storyVideoDurationSec(path: String): Double {
+    val retriever = android.media.MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(path)
+        (retriever.extractMetadata(
+            android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
+        )?.toLongOrNull() ?: 0L) / 1000.0
+    } catch (t: Throwable) {
+        0.0
+    } finally {
+        try {
+            retriever.release()
+        } catch (t: Throwable) {
+            // Nothing to release cleanly; the duration
+            // just stays 0.
+        }
+    }
+}
+
 fun ChatListScreen(
     onOpenChat: (Long) -> Unit,
     onOpenSettings: () -> Unit,
@@ -795,6 +818,14 @@ fun ChatListScreen(
         var pendingStoryVideo by remember {
             mutableStateOf<Pair<String, Double>?>(null)
         }
+        // In-app camera for stories (v0.9.55, Z2): the
+        // chooser's 相机 option opens it; a taken photo
+        // fills pendingStoryPhoto like the picker does.
+        var storyCameraOpen by remember { mutableStateOf(false) }
+        // Story video trimming (v0.9.55, Z4): a picked
+        // video detours through the shared trim screen
+        // before it becomes pendingStoryVideo.
+        var storyTrimPath by remember { mutableStateOf<String?>(null) }
         var storyKindChooser by remember { mutableStateOf(false) }
         val storyPicker = rememberLauncherForActivityResult(
             ActivityResultContracts.GetContent()
@@ -832,25 +863,13 @@ fun ChatListScreen(
                                 inputStream.copyTo(output)
                             }
                         }
-                    val retriever =
-                        android.media.MediaMetadataRetriever()
-                    val durationSec = try {
-                        retriever.setDataSource(file.absolutePath)
-                        (retriever.extractMetadata(
-                            android.media.MediaMetadataRetriever
-                                .METADATA_KEY_DURATION
-                        )?.toLongOrNull() ?: 0L) / 1000.0
-                    } catch (t: Throwable) {
-                        0.0
-                    } finally {
-                        try {
-                            retriever.release()
-                        } catch (t: Throwable) {
-                            // Nothing to release cleanly; the
-                            // duration just stays 0.
-                        }
-                    }
-                    pendingStoryVideo = file.absolutePath to durationSec
+                    // Trim first (v0.9.55, Z4): the copied
+                    // video goes through the shared trim
+                    // screen; whichever path comes back
+                    // (trimmed, or the original for non-MP4 /
+                    // back-out) becomes pendingStoryVideo
+                    // with a freshly read duration.
+                    storyTrimPath = file.absolutePath
                 } catch (t: Throwable) {
                     // Picker copy failed: stay silent, nothing posted.
                 }
@@ -860,7 +879,19 @@ fun ChatListScreen(
             AlertDialog(
                 onDismissRequest = { storyKindChooser = false },
                 title = { Text("发布动态") },
-                text = { Text("选照片还是视频？视频直接从相册选，不做剪辑。") },
+                text = {
+                    Column {
+                        Text(
+                            "选照片、视频，或者直接用相机拍。" +
+                                "视频会先过一遍剪辑页，可以不剪直接发。"
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = {
+                            storyKindChooser = false
+                            storyCameraOpen = true
+                        }) { Text("用相机拍") }
+                    }
+                },
                 confirmButton = {
                     TextButton(onClick = {
                         storyKindChooser = false
@@ -876,6 +907,59 @@ fun ChatListScreen(
                     }) { Text("视频") }
                 }
             )
+        }
+        if (storyCameraOpen) {
+            // In-app camera (v0.9.55, Z2): full-screen
+            // dialog window, same host shape as the chat
+            // screen's camera.
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { storyCameraOpen = false },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false
+                )
+            ) {
+                CameraScreen(
+                    onTaken = { path ->
+                        storyCameraOpen = false
+                        pendingStoryPhoto = path
+                    },
+                    onCancel = { storyCameraOpen = false }
+                )
+            }
+        }
+        val trimPath = storyTrimPath
+        if (trimPath != null) {
+            // Story video trim (v0.9.55, Z4): the shared
+            // trim screen in a full-screen dialog. onDone
+            // brings the trimmed file; onCancel is the
+            // trim screen's "back / send the original"
+            // path (non-MP4 explanation included), so the
+            // original becomes the pending video either
+            // way the user leaves — the publish confirm
+            // dialog still gets the final say.
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { storyTrimPath = null },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false
+                )
+            ) {
+                VideoTrimScreen(
+                    path = trimPath,
+                    fileName = File(trimPath).name,
+                    onDone = { newPath ->
+                        storyTrimPath = null
+                        pendingStoryVideo =
+                            newPath to storyVideoDurationSec(newPath)
+                    },
+                    onCancel = {
+                        storyTrimPath = null
+                        pendingStoryVideo =
+                            trimPath to storyVideoDurationSec(trimPath)
+                    }
+                )
+            }
         }
         val postNotice by StoryStore.postNotice.collectAsState()
         LaunchedEffect(postNotice) {

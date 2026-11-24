@@ -710,6 +710,28 @@ val BotIcon: ImageVector = icon("Bot", evenOdd = true) {
 
 /** Reply keyboard grid. */
 /** Speech bubble (bottom-nav chats tab, v0.9.9 W4). */
+/** Camera body with a punched-out lens (in-app camera,
+ *  v0.9.55 Z2). */
+val CameraIcon: ImageVector = icon("Camera", evenOdd = true) {
+    moveTo(9.2f, 4f)
+    lineTo(14.8f, 4f)
+    lineTo(16.8f, 7f)
+    lineTo(20f, 7f)
+    arcTo(2f, 2f, 0f, false, true, 22f, 9f)
+    lineTo(22f, 18f)
+    arcTo(2f, 2f, 0f, false, true, 20f, 20f)
+    lineTo(4f, 20f)
+    arcTo(2f, 2f, 0f, false, true, 2f, 18f)
+    lineTo(2f, 9f)
+    arcTo(2f, 2f, 0f, false, true, 4f, 7f)
+    lineTo(7.2f, 7f)
+    close()
+    moveTo(12f, 9.6f)
+    arcTo(3.4f, 3.4f, 0f, false, true, 12f, 16.4f)
+    arcTo(3.4f, 3.4f, 0f, false, true, 12f, 9.6f)
+    close()
+}
+
 val ChatBubbleIcon: ImageVector = icon("ChatBubble") {
     moveTo(5f, 21.5f)
     lineTo(8.2f, 17.5f)

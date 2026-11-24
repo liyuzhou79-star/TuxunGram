@@ -339,6 +339,15 @@ data class MsgItem(
     // decoded from voice_note.waveform's 5-bit packing
     // (v0.9.2, L5). Empty when TDLib ships none.
     val waveform: List<Int> = emptyList(),
+    // Speech recognition (v0.9.55, Z3): voice_note
+    // .speech_recognition_result as a state + text pair.
+    // state: "" (nothing shipped / never requested),
+    // "pending" (the server is recognizing; speechText
+    // holds the partial result), "text" (final transcript
+    // in speechText), "error" (the server tried and
+    // failed). SpeechRecognitionResult in td_api.tl.
+    val speechState: String = "",
+    val speechText: String = "",
     // Poll payload (POLL kind).
     val pollId: Long = 0L,
     val poll: PollUi? = null,
@@ -1059,6 +1068,61 @@ object MessageStore {
 
     fun hideTranslation(chatId: Long, messageId: Long) {
         _translations.value = _translations.value - (chatId to messageId)
+    }
+
+    // ---- Voice speech recognition (v0.9.55, Z3) ----
+    // recognizeSpeech (verified in td_api.tl) asks the
+    // server to transcribe a voice note. The result does
+    // NOT come back on this call: TDLib rewrites the
+    // message content with the voice note's
+    // speech_recognition_result (pending -> text / error),
+    // which the parser turns into MsgItem.speechState /
+    // speechText and every host re-renders through
+    // updateMessageContent. This call only fails up front
+    // (the Premium gate, secret chats), and that refusal
+    // is translated to plain language like the translation
+    // refusals. The recognizing set covers the gap between
+    // the tap and the first pending update; a finished
+    // state clears it in the updateMessageContent handler.
+
+    private val _recognizing =
+        MutableStateFlow<Set<Pair<Long, Long>>>(emptySet())
+    val recognizing: StateFlow<Set<Pair<Long, Long>>> = _recognizing
+
+    private val _speechError = MutableStateFlow<String?>(null)
+    val speechError: StateFlow<String?> = _speechError
+
+    fun clearSpeechError() {
+        _speechError.value = null
+    }
+
+    fun recognizeSpeech(chatId: Long, msg: MsgItem) {
+        val key = chatId to msg.id
+        if (key in _recognizing.value) return
+        _recognizing.value = _recognizing.value + key
+        val query = TdClient.request("recognizeSpeech").apply {
+            put("chat_id", chatId)
+            put("message_id", msg.id)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                _recognizing.value = _recognizing.value - key
+                _speechError.value = speechErrorText(response)
+            }
+        }
+    }
+
+    private fun speechErrorText(error: JSONObject): String {
+        val message = error.optString("message")
+        return when {
+            message.contains("PREMIUM", ignoreCase = true) ->
+                "语音转文字是 Telegram Premium 的功能，当前账号用不了。" +
+                    "这条语音本身没有被改动。"
+            message.contains("secret", ignoreCase = true) ->
+                "秘密聊天里的语音不能转文字。"
+            else ->
+                "转文字没能开始，再试一次。（错误码 ${error.optInt("code")}）"
+        }
     }
 
     private fun translateErrorText(error: JSONObject): String {
@@ -3569,7 +3633,18 @@ object MessageStore {
                 val messageId = update.optLong("message_id")
                 val existing = byId[messageId] ?: return
                 val content = update.optJSONObject("new_content") ?: return
-                byId[messageId] = parseContent(existing, content)
+                val updated = parseContent(existing, content)
+                byId[messageId] = updated
+                // A finished transcription (v0.9.55, Z3)
+                // ends the recognizing state the menu tap
+                // started; the bubble area keys off the
+                // parsed state from here on.
+                if (updated.speechState == "text" ||
+                    updated.speechState == "error"
+                ) {
+                    _recognizing.value = _recognizing.value -
+                        (chatId to messageId)
+                }
                 publish()
             }
             "updateMessageEdited" -> {
@@ -4247,6 +4322,33 @@ object MessageStore {
         }
     }
 
+    /** Speech-recognition state of a voice note (v0.9.55,
+     *  Z3): voice_note.speech_recognition_result's @type,
+     *  flattened to the MsgItem speechState vocabulary. */
+    private fun speechStateOf(voice: JSONObject?): String =
+        when (
+            voice?.optJSONObject("speech_recognition_result")
+                ?.optString("@type")
+        ) {
+            "speechRecognitionResultPending" -> "pending"
+            "speechRecognitionResultText" -> "text"
+            "speechRecognitionResultError" -> "error"
+            else -> ""
+        }
+
+    /** The transcript (or, while pending, the partial
+     *  transcript) of a voice note (v0.9.55, Z3). */
+    private fun speechTextOf(voice: JSONObject?): String {
+        val result = voice?.optJSONObject("speech_recognition_result")
+            ?: return ""
+        return when (result.optString("@type")) {
+            "speechRecognitionResultText" -> result.optString("text")
+            "speechRecognitionResultPending" ->
+                result.optString("partial_text")
+            else -> ""
+        }
+    }
+
     /** The messageSendingStateFailed object of a message
      *  JSON, or null when the message is not in the failed
      *  state (v0.9.44, N1/N2). */
@@ -4604,7 +4706,9 @@ object MessageStore {
                     fileSize = fileSizeOf(file),
                     fileMime = voice?.optString("mime_type") ?: "",
                     durationSec = voice?.optInt("duration", 0) ?: 0,
-                    waveform = decodeWaveform(voice?.optString("waveform"))
+                    waveform = decodeWaveform(voice?.optString("waveform")),
+                    speechState = speechStateOf(voice),
+                    speechText = speechTextOf(voice)
                 )
             }
             "messageVideoNote" -> {

@@ -741,6 +741,7 @@ fun SimpleMessageBubble(
                     }
                 }
                 TranslationArea(chatId, msg)
+                SpeechTextArea(chatId, msg)
             }
             // Official floating menu (v0.9.20, AA4): same
             // shared component as the main chat, this
@@ -797,6 +798,21 @@ fun SimpleMessageBubble(
                             menuOpen = false
                             MessageStore.clearTranslateError()
                             MessageStore.translateMessage(chatId, msg)
+                        })
+                    }
+                    if (msg.kind == MsgKind.VOICE &&
+                        msg.sendingState.isEmpty() &&
+                        msg.speechState != "text"
+                    ) {
+                        // Speech recognition (v0.9.55, Z3):
+                        // same shared MessageStore path as
+                        // the main chat; the chat id here is
+                        // the thread's own chat, which is
+                        // what recognizeSpeech must address.
+                        add(MessageMenuEntry(TextSizeIcon, "转文字") {
+                            menuOpen = false
+                            MessageStore.clearSpeechError()
+                            MessageStore.recognizeSpeech(chatId, msg)
                         })
                     }
                     if (msg.kind == MsgKind.VIDEO &&
@@ -1040,6 +1056,7 @@ fun ThreadScreen(
 ) {
     val messages by ThreadStore.messages.collectAsState()
     TranslateErrorDialog()
+    SpeechErrorDialog()
     val error by ThreadStore.error.collectAsState()
     val ready by ThreadStore.ready.collectAsState()
     val replyTarget by ThreadStore.replyTarget.collectAsState()

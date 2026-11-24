@@ -586,6 +586,7 @@ fun ChatScreen(
     }
     val sendError by MessageStore.sendError.collectAsState()
     TranslateErrorDialog()
+    SpeechErrorDialog()
     val clipboard = LocalClipboardManager.current
     // Multi-select mode (v0.7.0, F1): long-press a message and
     // choose 多选, then tap messages to add/remove them; the top
@@ -757,6 +758,11 @@ fun ChatScreen(
     }
     var pendingPhoto by remember { mutableStateOf<String?>(null) }
     var photoCaption by remember { mutableStateOf("") }
+    // In-app camera (v0.9.55, Z2): the attach menu's 相机
+    // entry opens it full-screen; a taken photo lands in
+    // pendingPhoto, the exact state the system picker
+    // fills, so preview / edit / send are shared.
+    var cameraOpen by remember { mutableStateOf(false) }
     // Pre-send photo editor (v0.9.27, T1): while set, the
     // editor owns the screen; finishing swaps the edited
     // JPEG in as the pending photo (the caption preview and
@@ -4350,6 +4356,16 @@ fun ChatScreen(
                                     picker.launch("image/*")
                                 }
                             )
+                            DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(CameraIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                                },
+                                text = { Text("相机") },
+                                onClick = {
+                                    attachMenuOpen = false
+                                    cameraOpen = true
+                                }
+                            )
                             if (clipboardImageUri != null) {
                                 DropdownMenuItem(
                                     leadingIcon = {
@@ -4919,6 +4935,29 @@ fun ChatScreen(
                     path = path,
                     title = vItem.fileName,
                     onClose = { videoItem = null }
+                )
+            }
+        }
+        if (cameraOpen) {
+            // In-app camera (v0.9.55, Z2): a true
+            // full-screen dialog window — the camera must
+            // cover the chat top bar and the Duck bar alike.
+            // A taken photo fills pendingPhoto, the same
+            // state the system picker fills.
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { cameraOpen = false },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false
+                )
+            ) {
+                CameraScreen(
+                    onTaken = { path ->
+                        cameraOpen = false
+                        pendingPhoto = path
+                        photoCaption = ""
+                    },
+                    onCancel = { cameraOpen = false }
                 )
             }
         }
@@ -6633,6 +6672,7 @@ fun MessageBubble(
                     }
                 }
                 TranslationArea(chatId, msg)
+                SpeechTextArea(chatId, msg)
             }
             // Official floating menu (v0.9.20, AA4): the
             // Material dropdown became a popup card anchored
@@ -6771,6 +6811,23 @@ fun MessageBubble(
                             menuOpen = false
                             MessageStore.clearTranslateError()
                             MessageStore.translateMessage(chatId, msg)
+                        })
+                    }
+                    if (msg.kind == MsgKind.VOICE &&
+                        msg.sendingState.isEmpty() &&
+                        msg.speechState != "text"
+                    ) {
+                        // Speech recognition (v0.9.55, Z3):
+                        // recognizeSpeech is server-side and
+                        // Premium-gated; a refusal lands in
+                        // the speech error dialog in plain
+                        // language, never a silent no-op. A
+                        // finished transcript needs no entry —
+                        // it already sits under the bubble.
+                        add(MessageMenuEntry(TextSizeIcon, "转文字") {
+                            menuOpen = false
+                            MessageStore.clearSpeechError()
+                            MessageStore.recognizeSpeech(chatId, msg)
                         })
                     }
                     if (outgoing && msg.kind == MsgKind.TEXT &&
@@ -7738,6 +7795,76 @@ fun TranslationArea(chatId: Long, msg: MsgItem) {
     }
 }
 
+/** Speech-recognition block under a voice bubble
+ *  (v0.9.55, Z3): while the server works it shows a
+ *  "正在转文字…" line plus whatever partial transcript
+ *  TDLib already shipped; the finished transcript lands
+ *  under a hairline with a 转文字 marker, in the same
+ *  shape as TranslationArea; a server-side failure gets
+ *  one plain line instead of silence. Shared by the main
+ *  chat bubble and the thread/forum bubble. */
+@Composable
+fun SpeechTextArea(chatId: Long, msg: MsgItem) {
+    if (msg.kind != MsgKind.VOICE) return
+    val recognizing by MessageStore.recognizing.collectAsState()
+    val palette = OfficialTheme.current()
+    val outgoing = msg.outgoing
+    val mainText = if (outgoing) palette.outText else palette.inText
+    val subText = if (outgoing) palette.outTime else palette.inTime
+    val busy = (chatId to msg.id) in recognizing
+    when {
+        msg.speechState == "text" -> {
+            Column(modifier = Modifier.padding(top = 5.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(
+                            if (outgoing) {
+                                Color.White.copy(alpha = 0.25f)
+                            } else {
+                                Color.Black.copy(alpha = 0.13f)
+                            }
+                        )
+                )
+                Text(
+                    "转文字",
+                    color = if (outgoing) {
+                        palette.outText
+                    } else {
+                        palette.accentText
+                    },
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 3.dp, bottom = 2.dp)
+                )
+                Text(msg.speechText, color = mainText, fontSize = 14.sp)
+            }
+        }
+        busy || msg.speechState == "pending" -> {
+            Column(modifier = Modifier.padding(top = 4.dp)) {
+                Text("正在转文字…", color = subText, fontSize = 12.sp)
+                if (msg.speechText.isNotEmpty()) {
+                    Text(
+                        msg.speechText,
+                        color = mainText,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+        }
+        msg.speechState == "error" -> {
+            Text(
+                "这条语音没能转成文字。",
+                color = subText,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+    }
+}
+
 /** One-shot dialog for a translation refusal (v0.9.5, O4):
  *  the store already turned the server error into plain
  *  language (Premium requirement, secret chat, ...). Placed
@@ -7753,6 +7880,28 @@ fun TranslateErrorDialog() {
             confirmButton = {
                 TextButton(
                     onClick = { MessageStore.clearTranslateError() }
+                ) { Text("知道了") }
+            }
+        )
+    }
+}
+
+/** One-shot dialog for a speech-recognition refusal
+ *  (v0.9.55, Z3): the store already turned the server
+ *  error into plain language (Premium requirement, secret
+ *  chat, ...). Placed once at each screen root that
+ *  offers 转文字, next to TranslateErrorDialog. */
+@Composable
+fun SpeechErrorDialog() {
+    val error by MessageStore.speechError.collectAsState()
+    if (error != null) {
+        AlertDialog(
+            onDismissRequest = { MessageStore.clearSpeechError() },
+            title = { Text("语音转文字") },
+            text = { Text(error!!) },
+            confirmButton = {
+                TextButton(
+                    onClick = { MessageStore.clearSpeechError() }
                 ) { Text("知道了") }
             }
         )
