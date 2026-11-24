@@ -76,14 +76,48 @@ class KeepAliveService : Service() {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .build()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(
-                NOTIF_ID, notif,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            startForeground(NOTIF_ID, notif)
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(
+                    NOTIF_ID, notif,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIF_ID, notif)
+            }
+        } catch (t: Throwable) {
+            // v0.9.53 (X1): the location service already
+            // guards this call; the keep-alive service did
+            // not. If the system or the ROM refuses the
+            // foreground promotion (type validation, OEM
+            // quirks), an uncaught exception here kills the
+            // whole process — stop the service instead and
+            // let the in-process receiver carry on while
+            // the process lives.
+            stopSelf()
+            return
         }
+    }
+
+    /** Android 15 caps dataSync foreground services at
+     *  6 hours inside a 24-hour window. When the cap is
+     *  hit the system calls this (the two-argument form,
+     *  API 35; the one-argument form is API 34's) and the
+     *  service MUST stop itself — otherwise the system
+     *  raises ForegroundServiceDidNotStopInTimeException
+     *  and crashes the process. This service is meant to
+     *  run indefinitely (START_STICKY), so on an Android
+     *  15 device the timeout is not an edge case but a
+     *  certainty. Stopping is graceful: the TDLib
+     *  receiver lives in-process and keeps working while
+     *  the process lives, and [start] runs again the
+     *  next time an account becomes ready (v0.9.53, X1). */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopSelf()
+    }
+
+    override fun onTimeout(startId: Int) {
+        stopSelf()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
