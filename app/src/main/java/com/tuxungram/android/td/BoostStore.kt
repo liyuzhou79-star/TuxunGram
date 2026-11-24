@@ -17,6 +17,31 @@ data class BoostSlotUi(
     val cooldownUntilDate: Int
 )
 
+/** One giveaway that was already paid for and is
+ *  waiting to be launched (prepaidGiveaway in td_api.tl;
+ *  v0.9.57, B1): the purchase happened elsewhere
+ *  (another client, a giveaway service) — launching it
+ *  is not a payment, which is why this row exists while
+ *  giveaway CREATION (a payment purpose) stays out of
+ *  scope. */
+data class PrepaidGiveawayUi(
+    /** The prepaid_giveaway id launchPrepaidGiveaway
+     *  takes. */
+    val id: Long,
+    /** Winners the draw will pick. */
+    val winnerCount: Int,
+    /** "premium" or "stars". */
+    val prizeKind: String,
+    /** Prize length when [prizeKind] is "premium". */
+    val prizeMonths: Int,
+    /** Prize amount when [prizeKind] is "stars". */
+    val prizeStars: Long,
+    /** Boosts the giveaway consumes. */
+    val boostCount: Int,
+    /** When the giveaway was paid for, unix seconds. */
+    val paymentDate: Int
+)
+
 /** One row of a chat's boost list (chatBoost in td_api.tl,
  *  listed by getChatBoosts; v0.9.34, A3). */
 data class BoostEntryUi(
@@ -51,7 +76,11 @@ data class BoostStatusUi(
     val giftCodeBoostCount: Int,
     /** Admin-only on the server; 0 for regular members. */
     val premiumMemberCount: Int,
-    val premiumMemberPercentage: Double
+    val premiumMemberPercentage: Double,
+    /** Giveaways already paid for, waiting to launch
+     *  (v0.9.57, B1). */
+    val prepaidGiveaways: List<PrepaidGiveawayUi> =
+        emptyList()
 )
 
 /**
@@ -148,6 +177,41 @@ object BoostStore {
                     applied.add(arr.optInt(i))
                 }
             }
+            val prepaid = ArrayList<PrepaidGiveawayUi>()
+            val prepaidArr =
+                response.optJSONArray("prepaid_giveaways")
+            if (prepaidArr != null) {
+                for (i in 0 until prepaidArr.length()) {
+                    val row = prepaidArr.optJSONObject(i)
+                        ?: continue
+                    val prize = row.optJSONObject("prize")
+                    prepaid.add(
+                        PrepaidGiveawayUi(
+                            id = row.optLong("id"),
+                            winnerCount =
+                                row.optInt("winner_count"),
+                            prizeKind = when (
+                                prize?.optString("@type")
+                            ) {
+                                "giveawayPrizePremium" ->
+                                    "premium"
+                                "giveawayPrizeStars" -> "stars"
+                                else -> ""
+                            },
+                            prizeMonths = prize?.optInt(
+                                "month_count"
+                            ) ?: 0,
+                            prizeStars = prize?.optLong(
+                                "star_count"
+                            ) ?: 0L,
+                            boostCount =
+                                row.optInt("boost_count"),
+                            paymentDate =
+                                row.optInt("payment_date")
+                        )
+                    )
+                }
+            }
             _status.value = BoostStatusUi(
                 level = response.optInt("level"),
                 boostCount = response.optInt("boost_count"),
@@ -162,7 +226,8 @@ object BoostStore {
                 premiumMemberCount =
                     response.optInt("premium_member_count"),
                 premiumMemberPercentage =
-                    response.optDouble("premium_member_percentage")
+                    response.optDouble("premium_member_percentage"),
+                prepaidGiveaways = prepaid
             )
             _loaded.value = true
         }
@@ -199,6 +264,65 @@ object BoostStore {
                 }
                 onDone(null)
                 load(chatId)
+            }
+        }
+    }
+
+    /** Launch a giveaway that was already paid for
+     *  (v0.9.57, B1; launchPrepaidGiveaway in td_api.tl).
+     *  The purchase happened elsewhere, so this call is
+     *  not a payment — it starts the draw with the
+     *  parameters the administrator picks: winners drawn
+     *  [winnersInDays] days from now, winners public, any
+     *  member may win (not only new ones), no country
+     *  restriction and no extra prize text. Creating a
+     *  NEW giveaway goes through the payment purposes and
+     *  stays out of scope. On success the status reloads,
+     *  so the launched row disappears from the list. */
+    fun launchPrepaid(
+        giveaway: PrepaidGiveawayUi,
+        winnersInDays: Int,
+        onDone: (String?) -> Unit
+    ) {
+        val chatId = currentChatId
+        if (chatId == 0L) {
+            onDone("助力页已经关掉了，这个抽奖没发起。")
+            return
+        }
+        val parameters = JSONObject().apply {
+            put("@type", "giveawayParameters")
+            put("boosted_chat_id", chatId)
+            put("additional_chat_ids", JSONArray())
+            put(
+                "winners_selection_date",
+                (System.currentTimeMillis() / 1000 +
+                    winnersInDays * 24 * 60 * 60).toInt()
+            )
+            put("only_new_members", false)
+            put("has_public_winners", true)
+            put("country_codes", JSONArray())
+            put("prize_description", "")
+        }
+        val query = TdClient.request("launchPrepaidGiveaway")
+            .apply {
+                put("giveaway_id", giveaway.id)
+                put("parameters", parameters)
+                put("winner_count", giveaway.winnerCount)
+                put(
+                    "star_count",
+                    if (giveaway.prizeKind == "stars") {
+                        giveaway.prizeStars
+                    } else {
+                        0L
+                    }
+                )
+            }
+        TdRepository.sendRaw(query) { response ->
+            if (TdClient.isError(response)) {
+                onDone(launchErrorText(response))
+            } else {
+                onDone(null)
+                if (currentChatId == chatId) load(chatId)
             }
         }
     }
@@ -363,6 +487,21 @@ object BoostStore {
                 "操作太频繁了，等一会儿再试。"
             else ->
                 "助力没成功：服务器拒绝了" +
+                    "（错误码 ${error.optInt("code")}）。"
+        }
+    }
+
+    private fun launchErrorText(error: JSONObject): String {
+        val message = error.optString("message")
+        return when {
+            message.contains("ADMIN", ignoreCase = true) ->
+                "只有管理员能发起抽奖。"
+            message.contains("DATE", ignoreCase = true) ->
+                "开奖时间不对，换个时间再试。"
+            message.contains("FLOOD", ignoreCase = true) ->
+                "操作太频繁了，等一会儿再试。"
+            else ->
+                "抽奖没发起成功：服务器拒绝了" +
                     "（错误码 ${error.optInt("code")}）。"
         }
     }

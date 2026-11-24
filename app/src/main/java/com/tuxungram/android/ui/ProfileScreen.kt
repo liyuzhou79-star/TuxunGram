@@ -46,6 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -195,6 +196,13 @@ fun ProfileScreen(
     var boostExpanded by remember { mutableStateOf(false) }
     var boostSelection by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var boostNotice by remember { mutableStateOf<String?>(null) }
+    // Prepaid giveaway waiting for its launch confirm
+    // (v0.9.57, B1); null = dialog closed.
+    var launchCandidate by remember {
+        mutableStateOf<
+            com.tuxungram.android.td.PrepaidGiveawayUi?
+        >(null)
+    }
     val boostStatus by com.tuxungram.android.td.BoostStore.status
         .collectAsState()
     val boostSlots by com.tuxungram.android.td.BoostStore.slots
@@ -1644,6 +1652,101 @@ fun ProfileScreen(
                                                 .padding(top = 2.dp)
                                         )
                                     }
+                                    // Prepaid giveaways
+                                    // (v0.9.57, B1): already
+                                    // paid for elsewhere and
+                                    // waiting to be launched
+                                    // from this page — the
+                                    // launch itself is not a
+                                    // payment. Creating a new
+                                    // giveaway stays out of
+                                    // scope (payment purpose).
+                                    if (st.prepaidGiveaways
+                                            .isNotEmpty()
+                                    ) {
+                                        Text(
+                                            "待发起的抽奖",
+                                            fontSize = 13.sp,
+                                            fontWeight =
+                                                FontWeight.SemiBold,
+                                            color =
+                                                profilePalette
+                                                    .accentText,
+                                            modifier = Modifier
+                                                .padding(top = 10.dp)
+                                        )
+                                        val gwDateFmt =
+                                            java.text.SimpleDateFormat(
+                                                "yyyy-MM-dd",
+                                                java.util.Locale
+                                                    .getDefault()
+                                            )
+                                        st.prepaidGiveaways
+                                            .forEach { gw ->
+                                                Row(
+                                                    verticalAlignment =
+                                                        Alignment
+                                                            .CenterVertically,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(
+                                                            vertical =
+                                                                3.dp
+                                                        )
+                                                ) {
+                                                    Column(
+                                                        modifier =
+                                                            Modifier
+                                                                .weight(
+                                                                    1f
+                                                                )
+                                                    ) {
+                                                        Text(
+                                                            when (
+                                                                gw.prizeKind
+                                                            ) {
+                                                                "premium" ->
+                                                                    "奖品：" +
+                                                                        "${gw.prizeMonths} 个月 " +
+                                                                        "Premium"
+                                                                "stars" ->
+                                                                    "奖品：" +
+                                                                        "${gw.prizeStars} 颗星星"
+                                                                else ->
+                                                                    "抽奖"
+                                                            },
+                                                            fontSize =
+                                                                13.5.sp
+                                                        )
+                                                        Text(
+                                                            "${gw.winnerCount} 位获奖者 · " +
+                                                                "需要 ${gw.boostCount} 次助力 · " +
+                                                                "购买于 " +
+                                                                gwDateFmt
+                                                                    .format(
+                                                                        java.util.Date(
+                                                                            gw.paymentDate
+                                                                                .toLong() *
+                                                                                1000L
+                                                                        )
+                                                                    ),
+                                                            fontSize =
+                                                                12.sp,
+                                                            color =
+                                                                Color.Gray
+                                                        )
+                                                    }
+                                                    TextButton(
+                                                        onClick = {
+                                                            launchCandidate =
+                                                                gw
+                                                        }
+                                                    ) {
+                                                        Text("发起")
+                                                    }
+                                                }
+                                            }
+                                    }
                                     if (boostListVisible) {
                                         // Who boosted (v0.9.34,
                                         // A3): getChatBoosts rows.
@@ -2217,6 +2320,62 @@ fun ProfileScreen(
                 }
             }
         }
+    }
+
+    // ---- Prepaid giveaway launch confirm (v0.9.57, B1) ----
+    val candidate = launchCandidate
+    if (candidate != null) {
+        var days by remember(candidate.id) { mutableStateOf(3) }
+        AlertDialog(
+            onDismissRequest = { launchCandidate = null },
+            title = { Text("发起这个抽奖？") },
+            text = {
+                Column {
+                    Text(
+                        "奖品已经付过钱了，发起只是把抽奖开起来，" +
+                            "不用再付任何费用。选一个开奖时间：",
+                        fontSize = 13.5.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    listOf(1, 3, 7).forEach { d ->
+                        Row(
+                            verticalAlignment =
+                                Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { days = d }
+                                .padding(vertical = 2.dp)
+                        ) {
+                            RadioButton(
+                                selected = days == d,
+                                onClick = { days = d }
+                            )
+                            Text(
+                                "$d 天后开奖",
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        launchCandidate = null
+                        com.tuxungram.android.td.BoostStore
+                            .launchPrepaid(candidate, days) { error ->
+                                boostNotice = error
+                                    ?: "抽奖已经发起了，到时间自动开奖。"
+                            }
+                    }
+                ) { Text("发起") }
+            },
+            dismissButton = {
+                TextButton(onClick = { launchCandidate = null }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     // ---- Admin dialogs (Batch 3, C4) ----
