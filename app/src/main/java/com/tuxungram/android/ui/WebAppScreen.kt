@@ -22,7 +22,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -409,6 +411,14 @@ fun WebAppScreen(session: WebAppSession, onClose: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .background(headerColor ?: palette.actionBarBg)
+                // v0.9.53 (X3): this screen is a full-bleed
+                // overlay outside the host's system-bars
+                // padding — without this the bar (and its
+                // close button) drew under the status bar.
+                // The background stays above the padding in
+                // the chain so the bar colour still covers
+                // the status-bar area.
+                .statusBarsPadding()
                 .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -553,6 +563,11 @@ fun WebAppScreen(session: WebAppSession, onClose: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(bottomBarColor ?: palette.panelBg)
+                    // v0.9.53 (X3): same full-bleed overlay
+                    // situation as the top bar — keep the
+                    // page's main button clear of the
+                    // navigation bar.
+                    .navigationBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

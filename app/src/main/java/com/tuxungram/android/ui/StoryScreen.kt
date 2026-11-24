@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -260,6 +261,14 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    // v0.9.53 (X3): this viewer is a
+                    // full-bleed overlay outside the host's
+                    // system-bars padding; the header pads
+                    // the status bar but the bottom bar did
+                    // not pad the navigation bar, so on
+                    // gesture / three-key navigation it sat
+                    // under the system bar.
+                    .navigationBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 14.dp)
             ) {
                 TextButton(onClick = {

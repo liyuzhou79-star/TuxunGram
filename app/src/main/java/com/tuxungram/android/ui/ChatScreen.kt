@@ -1168,7 +1168,18 @@ fun ChatScreen(
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) startRecording()
+        if (granted) {
+            startRecording()
+        } else {
+            // v0.9.53 (X2): a denial used to fail
+            // silently — the user held the record button
+            // and nothing happened, with no hint why.
+            Toast.makeText(
+                context,
+                "没有麦克风权限，录不了语音。",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
     }
     LaunchedEffect(recording) {
         while (recording) {
