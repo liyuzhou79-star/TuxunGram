@@ -82,6 +82,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -98,12 +99,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -269,6 +273,35 @@ class MainActivity : ComponentActivity() {
                 UiSettings.THEME_LIGHT -> false
                 UiSettings.THEME_DARK -> true
                 else -> systemDark
+            }
+            // System bars follow the APP theme (v0.9.54, Y4):
+            // enableEdgeToEdge's automatic styling keys off
+            // the system dark mode only, so forcing light in
+            // the app on a dark-mode phone (or the reverse)
+            // left the status / navigation icons the wrong
+            // brightness for the bars behind them. Drive the
+            // icon appearance from the same `dark` the UI
+            // uses, and paint the window itself in the
+            // palette's action-bar color so any strip the
+            // edge-to-edge content does not cover (gesture
+            // area during transitions) matches the top bar.
+            val view = LocalView.current
+            SideEffect {
+                if (!view.isInEditMode) {
+                    val window = (view.context as? android.app.Activity)
+                        ?.window ?: return@SideEffect
+                    val controller =
+                        WindowInsetsControllerCompat(window, view)
+                    controller.isAppearanceLightStatusBars = !dark
+                    controller.isAppearanceLightNavigationBars = !dark
+                    @Suppress("DEPRECATION")
+                    window.setBackgroundDrawable(
+                        android.graphics.drawable.ColorDrawable(
+                            OfficialTheme.palette(dark)
+                                .actionBarBg.toArgb()
+                        )
+                    )
+                }
             }
             val seed = Color(UiSettings.SEED_COLORS[seedIndex])
             // Official preset (v0.9.17, X1): the default

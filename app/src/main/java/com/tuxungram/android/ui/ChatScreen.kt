@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -4294,6 +4295,46 @@ fun ChatScreen(
                                 modifier = Modifier.size(24.dp)
                             )
                         }
+                        // Clipboard image (v0.9.54, Y5):
+                        // pasting an image straight into the
+                        // text field is not reachable on this
+                        // Compose version (the field accepts
+                        // text only; there is no commitContent
+                        // bridge), so the attach menu offers
+                        // the clipboard explicitly instead. The
+                        // entry exists only while the clipboard
+                        // actually holds an image Uri.
+                        val clipboardImageUri = remember(attachMenuOpen) {
+                            if (!attachMenuOpen) {
+                                null
+                            } else {
+                                try {
+                                    val cm = context.getSystemService(
+                                        android.content.Context
+                                            .CLIPBOARD_SERVICE
+                                    ) as? android.content.ClipboardManager
+                                    val clip = cm?.primaryClip
+                                    val uri = if (clip != null &&
+                                        clip.itemCount > 0
+                                    ) {
+                                        clip.getItemAt(0).uri
+                                    } else {
+                                        null
+                                    }
+                                    if (uri != null &&
+                                        context.contentResolver
+                                            .getType(uri)
+                                            ?.startsWith("image/") == true
+                                    ) {
+                                        uri
+                                    } else {
+                                        null
+                                    }
+                                } catch (t: Throwable) {
+                                    null
+                                }
+                            }
+                        }
                         DropdownMenu(
                             expanded = attachMenuOpen,
                             onDismissRequest = { attachMenuOpen = false }
@@ -4309,6 +4350,37 @@ fun ChatScreen(
                                     picker.launch("image/*")
                                 }
                             )
+                            if (clipboardImageUri != null) {
+                                DropdownMenuItem(
+                                    leadingIcon = {
+                                        Icon(ImageIcon, contentDescription = null, modifier = Modifier.size(20.dp))
+                                    },
+                                    text = { Text("粘贴剪贴板图片") },
+                                    onClick = {
+                                        attachMenuOpen = false
+                                        val file = File(
+                                            context.cacheDir,
+                                            "pick_${System.currentTimeMillis()}.jpg"
+                                        )
+                                        try {
+                                            context.contentResolver
+                                                .openInputStream(
+                                                    clipboardImageUri
+                                                )?.use { input ->
+                                                    file.outputStream()
+                                                        .use { output ->
+                                                            input.copyTo(output)
+                                                        }
+                                                }
+                                            pendingPhoto = file.absolutePath
+                                            photoCaption = ""
+                                        } catch (t: Throwable) {
+                                            // Clipboard read failed:
+                                            // stay on the chat screen.
+                                        }
+                                    }
+                                )
+                            }
                             DropdownMenuItem(
                                 leadingIcon = {
                                     Icon(ImageIcon, contentDescription = null, modifier = Modifier.size(20.dp))
@@ -6137,9 +6209,18 @@ fun MessageBubble(
                 // captionless photo / GIF stamps its time on
                 // the media itself (MediaTimeCapsule) instead
                 // of taking the footer row below.
+                // A lone video with a thumbnail renders as
+                // a media bubble (v0.9.54, Y3), not a file
+                // row, so it joins the floating-time family;
+                // a video with no thumbnail at all keeps the
+                // file row below.
+                val videoMedia = msg.kind == MsgKind.VIDEO &&
+                    (msg.thumbPath != null ||
+                        msg.miniThumbData.isNotEmpty())
                 val mediaOverlay = msg.text.isEmpty() &&
                     (msg.kind == MsgKind.PHOTO ||
-                        msg.kind == MsgKind.ANIMATION)
+                        msg.kind == MsgKind.ANIMATION ||
+                        videoMedia)
                 when (msg.kind) {
                     MsgKind.TEXT -> {
                         RichMessageText(
@@ -6253,7 +6334,23 @@ fun MessageBubble(
                         }
                     }
                     MsgKind.DOCUMENT, MsgKind.VIDEO -> {
-                        FileBubbleContent(msg)
+                        if (msg.kind == MsgKind.VIDEO && videoMedia) {
+                            if (mediaOverlay) {
+                                Box {
+                                    VideoBubbleContent(msg)
+                                    MediaTimeCapsule(
+                                        msg,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(6.dp)
+                                    )
+                                }
+                            } else {
+                                VideoBubbleContent(msg)
+                            }
+                        } else {
+                            FileBubbleContent(msg)
+                        }
                         if (msg.text.isNotEmpty()) {
                             Spacer(Modifier.height(4.dp))
                             RichMessageText(
@@ -7604,21 +7701,27 @@ fun TranslateErrorDialog() {
 
 fun formatFileSize(bytes: Long): String {
     if (bytes <= 0) return ""
-    val units = listOf("B", "KB", "MB", "GB")
-    var value = bytes.toDouble()
-    var unit = 0
-    while (value >= 1024 && unit < units.lastIndex) {
-        value /= 1024
-        unit++
-    }
-    return if (unit == 0) "${bytes}B" else String.format("%.1f%s", value, units[unit])
+    // One size format app-wide (v0.9.54, Y3): delegate to
+    // the storage page's formatBytes — "1 MB" with a space
+    // and no trailing ".0", the official client's style —
+    // instead of this file's old private "1.0MB" variant.
+    return formatBytes(bytes)
 }
 
 fun formatDuration(totalSeconds: Int): String {
     if (totalSeconds <= 0) return ""
-    val m = totalSeconds / 60
+    // Hours (v0.9.54, Y3): at an hour or more the official
+    // style is h:mm:ss; the old m:ss printed "61:01" for a
+    // one-hour video.
+    val h = totalSeconds / 3600
+    val m = (totalSeconds % 3600) / 60
     val s = totalSeconds % 60
-    return "$m:${s.toString().padStart(2, '0')}"
+    return if (h > 0) {
+        "$h:${m.toString().padStart(2, '0')}:" +
+            s.toString().padStart(2, '0')
+    } else {
+        "$m:${s.toString().padStart(2, '0')}"
+    }
 }
 
 /** Hand a downloaded file to whatever app can open it, via
@@ -8987,6 +9090,94 @@ fun PhotoBubbleContent(msg: MsgItem) {
     }
 }
 
+/** Single video as a media bubble (v0.9.54, Y3): before
+ *  this version a lone messageVideo rendered as a file
+ *  row even though its thumbnail was already parsed. The
+ *  box follows PhotoBubbleContent's sizing (220 dp wide,
+ *  real aspect ratio clamped to 110–300 dp tall, 9:16
+ *  fallback when TDLib gave no dimensions), the thumbnail
+ *  stages in progressively (downloaded thumb file, then
+ *  the inline minithumbnail), a play disc sits in the
+ *  centre, and the duration badge rides the bottom-start
+ *  in the album cell's badge style — bottom-end is where
+ *  the floating time capsule goes. Tapping the bubble
+ *  opens the viewer, as it already did for the file row. */
+@Composable
+fun VideoBubbleContent(msg: MsgItem) {
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null, msg.thumbPath, msg.miniThumbData
+    ) {
+        value = withContext(Dispatchers.IO) {
+            when {
+                msg.thumbPath != null ->
+                    decodeCached(msg.thumbPath, 1024)
+                msg.miniThumbData.isNotEmpty() ->
+                    decodeMiniThumb(msg.miniThumbData)
+                else -> null
+            }
+        }
+    }
+    val ratio = if (msg.videoWidth > 0 && msg.videoHeight > 0) {
+        msg.videoHeight.toFloat() / msg.videoWidth.toFloat()
+    } else {
+        16f / 9f
+    }
+    val heightDp = (220f * ratio).coerceIn(110f, 300f)
+    Box(modifier = Modifier.size(width = 220.dp, height = heightDp.dp)) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(OfficialTheme.current().inBubble),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "视频加载中…",
+                    color = OfficialTheme.current().textSecondary,
+                    fontSize = 13.sp
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(44.dp)
+                .background(Color(0x66000000), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(26.dp)
+            )
+        }
+        if (msg.durationSec > 0) {
+            Text(
+                formatDurationClock(msg.durationSec),
+                color = Color.White,
+                fontSize = 10.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .background(
+                        Color(0x66000000),
+                        RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 4.dp, vertical = 1.dp)
+            )
+        }
+    }
+}
+
 
 /** Paid media (v0.9.35, B1): a messagePaidMedia renders
  *  as its thumbnail(s) with one Telegram Stars price pill
@@ -9532,11 +9723,13 @@ fun GameBubbleContent(msg: MsgItem) {
     }
 }
 
-private fun formatDurationClock(totalSec: Int): String {
-    val m = totalSec / 60
-    val s = totalSec % 60
-    return "$m:${s.toString().padStart(2, '0')}"
-}
+private fun formatDurationClock(totalSec: Int): String =
+    // One duration format app-wide (v0.9.54, Y3): this used
+    // to be a second copy of the m:ss logic; it now defers
+    // to formatDuration (which handles hours) and only
+    // keeps its own zero case, since badge callers print a
+    // clock even for a zero-length clip.
+    if (totalSec <= 0) "0:00" else formatDuration(totalSec)
 
 /** Sticker image (webp decoded straight from the TDLib file);
  *  shown at a fixed chat-friendly size, no bubble chrome. */
@@ -10220,51 +10413,77 @@ fun LinkPreviewCard(msg: MsgItem) {
             }
             .padding(9.dp)
     ) {
-        if (msg.lpSiteName.isNotEmpty()) {
-            Text(
-                msg.lpSiteName,
-                color = if (outgoing) {
-                    palette.outText
-                } else {
-                    palette.accentText
-                },
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        if (msg.lpTitle.isNotEmpty()) {
-            Text(
-                msg.lpTitle,
-                color = mainText,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2
-            )
-        }
-        if (msg.lpDescription.isNotEmpty()) {
-            Text(
-                msg.lpDescription,
-                color = if (outgoing) {
-                    palette.outText.copy(alpha = 0.8f)
-                } else {
-                    palette.textSecondary
-                },
-                fontSize = 12.sp,
-                maxLines = 3
-            )
-        }
+        // Small preview images (v0.9.54, Y3): when TDLib
+        // says the preview photo is a small one (its largest
+        // size is at most 96 px wide — a site icon / favicon
+        // class image), the official layout puts a small
+        // thumbnail beside the text instead of stretching it
+        // into the full-width banner; only genuinely wide
+        // preview photos get the banner.
         val bmp = bitmap
-        if (bmp != null) {
-            Spacer(Modifier.height(6.dp))
-            Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp)
-                    .clip(RoundedCornerShape(6.dp))
-            )
+        val smallThumb = bmp != null && msg.lpPhotoWidth in 1..96
+        val texts: @Composable ColumnScope.() -> Unit = {
+            if (msg.lpSiteName.isNotEmpty()) {
+                Text(
+                    msg.lpSiteName,
+                    color = if (outgoing) {
+                        palette.outText
+                    } else {
+                        palette.accentText
+                    },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (msg.lpTitle.isNotEmpty()) {
+                Text(
+                    msg.lpTitle,
+                    color = mainText,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2
+                )
+            }
+            if (msg.lpDescription.isNotEmpty()) {
+                Text(
+                    msg.lpDescription,
+                    color = if (outgoing) {
+                        palette.outText.copy(alpha = 0.8f)
+                    } else {
+                        palette.textSecondary
+                    },
+                    fontSize = 12.sp,
+                    maxLines = 3
+                )
+            }
+        }
+        if (smallThumb) {
+            Row(verticalAlignment = Alignment.Top) {
+                Image(
+                    bitmap = bmp!!.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                )
+                Spacer(Modifier.width(8.dp))
+                Column { texts() }
+            }
+        } else {
+            texts()
+            if (bmp != null) {
+                Spacer(Modifier.height(6.dp))
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                )
+            }
         }
         // Instant View entry (v0.9.26, S1): shown only when
         // TDLib says this page has an Instant View

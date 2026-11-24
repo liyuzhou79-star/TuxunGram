@@ -308,6 +308,11 @@ data class MsgItem(
     val fileSize: Long = 0L,
     val fileMime: String = "",
     val durationSec: Int = 0,
+    // Video frame dimensions (messageVideo.width/height,
+    // v0.9.54 Y3): the media bubble sizes its thumbnail box
+    // from the real aspect instead of guessing.
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0,
     val fileDownloading: Boolean = false,
     val reactions: List<ReactionChip> = emptyList(),
     // Per-user reaction list availability (v0.9.39, F1):
@@ -339,6 +344,11 @@ data class MsgItem(
     val lpUrl: String = "",
     val lpPhotoFileId: Int = 0,
     val lpPhotoPath: String? = null,
+    // Real width of the preview's largest photo size
+    // (v0.9.54, Y3): a site icon (tens of px) renders as a
+    // small side thumbnail in the card, a real photo as the
+    // banner — the width is what tells them apart.
+    val lpPhotoWidth: Int = 0,
     // Instant View availability (v0.9.26, S1): the
     // link_preview's instant_view_version — 0 when the page
     // has no Instant View, 1/2 when getWebPageInstantView can
@@ -2822,6 +2832,7 @@ object MessageStore {
             val type = response.optString("@type")
             if (type == "linkPreview") {
                 val photo = lpPhotoFile(response)
+                    ?.optJSONObject("photo")
                 val photoId = photo?.optInt("id", 0) ?: 0
                 if (photoId != 0 &&
                     downloadedPath(photo) == null
@@ -4333,7 +4344,8 @@ object MessageStore {
         return when (content.optString("@type")) {
             "messageText" -> {
                 val lp = content.optJSONObject("link_preview")
-                val lpPhoto = lpPhotoFile(lp)
+                val lpSize = lpPhotoFile(lp)
+                val lpPhoto = lpSize?.optJSONObject("photo")
                 val lpFileId = lpPhoto?.optInt("id", 0) ?: 0
                 if (lpFileId != 0 && downloadedPath(lpPhoto) == null) {
                     requestDownload(lpFileId, priority = 1)
@@ -4349,6 +4361,7 @@ object MessageStore {
                     lpUrl = lp?.optString("url") ?: "",
                     lpPhotoFileId = lpFileId,
                     lpPhotoPath = downloadedPath(lpPhoto),
+                    lpPhotoWidth = lpSize?.optInt("width", 0) ?: 0,
                     lpInstantView = lp?.optInt("instant_view_version", 0)
                         ?: 0
                 )
@@ -4551,6 +4564,8 @@ object MessageStore {
                     fileSize = fileSizeOf(file),
                     fileMime = video?.optString("mime_type") ?: "",
                     durationSec = video?.optInt("duration", 0) ?: 0,
+                    videoWidth = video?.optInt("width", 0) ?: 0,
+                    videoHeight = video?.optInt("height", 0) ?: 0,
                     thumbFileId = vThumbId,
                     thumbPath = downloadedPath(vThumbFile),
                     miniThumbData = video?.optJSONObject("minithumbnail")
@@ -5721,9 +5736,13 @@ object MessageStore {
         }) {}
     }
 
-    /** The photo file inside a linkPreview's type object, when the
-     *  type carries one (article/app/photo/... types all expose a
-     *  `photo` photo object; pick its largest size's file). */
+    /** The largest photo SIZE inside a linkPreview's type
+     *  object, when the type carries one (article/app/photo/...
+     *  types all expose a `photo` photo object). The size —
+     *  not just its file — is returned so callers also know
+     *  the picture's real width: a 48 px site icon and a
+     *  1200 px article photo must not render the same way
+     *  (v0.9.54, Y3). */
     private fun lpPhotoFile(lp: JSONObject?): JSONObject? {
         val photo = lp?.optJSONObject("type")?.optJSONObject("photo") ?: return null
         val sizes = photo.optJSONArray("sizes") ?: return null
@@ -5732,7 +5751,7 @@ object MessageStore {
             val s = sizes.optJSONObject(i) ?: continue
             if (best == null || s.optInt("width") > best.optInt("width")) best = s
         }
-        return best?.optJSONObject("photo")
+        return best
     }
 
     /** Flatten a poll object (fields verified in td_api.tl: poll,
