@@ -174,7 +174,13 @@ fun MsgItem.withPaidFile(fileId: Int, path: String): MsgItem? {
  *  shown under the bubble until the user collapses it. */
 data class TranslationUi(
     val text: String,
-    val langLabel: String
+    val langLabel: String,
+    /** Formatting entities of the translated text, as
+     *  returned inside the translateMessageText
+     *  formattedText (v0.9.57, B2): until this version
+     *  only the raw string was kept, so links and styling
+     *  in a translation rendered as dead plain text. */
+    val entities: List<TextEntityUi> = emptyList()
 )
 
 /** One reaction shown under a bubble: the emoji, how many people
@@ -1059,7 +1065,8 @@ object MessageStore {
                     _translations.value = _translations.value +
                         (key to TranslationUi(
                             text,
-                            locale.getDisplayLanguage(locale)
+                            locale.getDisplayLanguage(locale),
+                            entitiesOf(response)
                         ))
                 }
             }

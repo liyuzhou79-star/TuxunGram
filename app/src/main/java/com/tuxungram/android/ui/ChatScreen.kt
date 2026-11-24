@@ -7797,7 +7797,26 @@ fun TranslationArea(chatId: Long, msg: MsgItem) {
                     Text("收起", fontSize = 11.sp)
                 }
             }
-            Text(t.text, color = mainText, fontSize = 14.sp)
+            // The translation renders through the same
+            // rich-text pipeline as message text (v0.9.57,
+            // B2): the server returns the translation as a
+            // formattedText whose entities belong to the
+            // translated string, so its links are live and
+            // its styling shows, instead of the dead plain
+            // text this area used to print. (Hashtag and
+            // bot-command taps keep the renderer's no-op
+            // defaults here — a translation is read, not
+            // acted on.)
+            RichMessageText(
+                msg = msg.copy(text = t.text, entities = t.entities),
+                fontSize = 14.sp,
+                color = mainText,
+                linkColor = if (outgoing) {
+                    mainText
+                } else {
+                    Color.Unspecified
+                }
+            )
         }
     }
 }

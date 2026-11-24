@@ -1055,6 +1055,7 @@ fun ThreadScreen(
     onBack: () -> Unit
 ) {
     val messages by ThreadStore.messages.collectAsState()
+    val threadRootId by ThreadStore.rootId.collectAsState()
     TranslateErrorDialog()
     SpeechErrorDialog()
     val error by ThreadStore.error.collectAsState()
@@ -1357,6 +1358,15 @@ fun ThreadScreen(
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold
             )
+            // Jump back to the post itself (v0.9.57, B2):
+            // the thread's first message, one tap away
+            // instead of paging the whole thread upwards.
+            if (ready && threadRootId != 0L) {
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { ThreadStore.jumpToRoot() }) {
+                    Text("回到原帖", fontSize = 14.sp)
+                }
+            }
         }
         Box(
             modifier = Modifier

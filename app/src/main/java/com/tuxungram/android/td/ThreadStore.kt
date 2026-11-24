@@ -142,6 +142,14 @@ object ThreadStore {
     private val _locateId = MutableStateFlow(0L)
     val locateId: StateFlow<Long> = _locateId
 
+    /** The thread's first message — the post's own copy
+     *  in the discussion chat — published for the screen's
+     *  jump-to-post button (v0.9.57, B2): until this
+     *  version the post was only reachable by paging the
+     *  whole thread to its start. */
+    private val _rootId = MutableStateFlow(0L)
+    val rootId: StateFlow<Long> = _rootId
+
     /** True while the loaded window is a jump window that
      *  no longer reaches the newest comment (v0.9.45, P1):
      *  the back-to-latest button then reloads the window
@@ -225,6 +233,7 @@ object ThreadStore {
         sourceChatId = sourceChat
         threadChatId = 0L
         rootMessageId = 0L
+        _rootId.value = 0L
         byId.clear()
         _messages.value = emptyList()
         _error.value = null
@@ -256,6 +265,7 @@ object ThreadStore {
             }
             threadChatId = info.optLong("chat_id")
             rootMessageId = info.optLong("message_thread_id")
+            _rootId.value = rootMessageId
             if (threadChatId == 0L || rootMessageId == 0L) {
                 _error.value = NO_THREAD_TEXT
                 return@sendRaw
@@ -295,6 +305,7 @@ object ThreadStore {
         sourceChatId = 0L
         threadChatId = 0L
         rootMessageId = 0L
+        _rootId.value = 0L
         byId.clear()
         _messages.value = emptyList()
     }
@@ -532,6 +543,17 @@ object ThreadStore {
             publish()
             _locateId.value = messageId
         }
+    }
+
+    /** Land on the thread's first message — the post
+     *  itself (v0.9.57, B2): the same window reload the
+     *  in-thread search uses, so it works from wherever
+     *  the user has scrolled or jumped to, and the locate
+     *  highlight marks the post when it lands. */
+    fun jumpToRoot() {
+        val root = rootMessageId
+        if (root == 0L) return
+        jumpTo(root)
     }
 
     fun clearLocate() {

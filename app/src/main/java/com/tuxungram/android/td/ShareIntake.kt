@@ -167,14 +167,29 @@ object ShareIntake {
      *  anything in share_in older than 48 hours has had
      *  far more time than an upload needs, and once an
      *  upload finishes TDLib keeps its own copy in its file
-     *  store anyway. Runs on capture's background thread. */
+     *  store anyway. Runs on capture's background thread.
+     *  The files of the share currently waiting in the
+     *  picker are never swept (v0.9.57, B2) — they are
+     *  still waiting to be sent by definition. One edge
+     *  stays accepted
+     *  and is recorded here honestly: a copy already
+     *  handed to TDLib whose upload is somehow still
+     *  queued past the 48-hour line when a later capture
+     *  runs the sweep; an upload pending that long has in
+     *  practice already failed (and a failed send can be
+     *  re-shared from the source app), while the picker
+     *  case above is the one a user can actually hit. */
     private fun sweepOldCopies(context: Context) {
         try {
             val dir = File(context.cacheDir, "share_in")
             val cutoff = System.currentTimeMillis() -
                 48L * 60 * 60 * 1000
+            val keep = pending.value?.files
+                ?.map { it.path }?.toSet() ?: emptySet()
             dir.listFiles()?.forEach { file ->
-                if (file.isFile && file.lastModified() < cutoff) {
+                if (file.isFile && file.lastModified() < cutoff &&
+                    file.absolutePath !in keep
+                ) {
                     file.delete()
                 }
             }
