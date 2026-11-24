@@ -146,9 +146,83 @@ data class ProfileUi(
  * Supergroup members page via getSupergroupMembers offset/limit;
  * basic-group members are embedded in the FullInfo itself.
  */
+/** One row of the common-groups list (v0.9.54, Y2). */
+data class CommonGroupUi(val chatId: Long, val title: String)
+
 object ProfileStore {
     private val _profile = MutableStateFlow<ProfileUi?>(null)
     val profile: StateFlow<ProfileUi?> = _profile
+
+    // ---- Common groups (v0.9.54, Y2) ----------------------
+    // The profile's 共同群组 row used to be a bare count with
+    // no way through. getGroupsInCommon (verified in
+    // td_api.tl) returns the chat ids; titles resolve through
+    // ChatStore — a group this account has never listed is
+    // fetched once and flattened into the resolved cache, so
+    // the row can show its real name instead of an id.
+
+    private val _commonGroups =
+        MutableStateFlow<List<CommonGroupUi>>(emptyList())
+    val commonGroups: StateFlow<List<CommonGroupUi>> = _commonGroups
+
+    private val _commonGroupsLoaded = MutableStateFlow(false)
+    val commonGroupsLoaded: StateFlow<Boolean> = _commonGroupsLoaded
+
+    @Volatile
+    private var commonGroupsFor = 0L
+
+    fun loadCommonGroups(userId: Long) {
+        if (userId == 0L) return
+        commonGroupsFor = userId
+        _commonGroups.value = emptyList()
+        _commonGroupsLoaded.value = false
+        val query = TdClient.request("getGroupsInCommon").apply {
+            put("user_id", userId)
+            put("offset_chat_id", 0L)
+            put("limit", 100)
+        }
+        TdRepository.sendRaw(query) { response ->
+            if (commonGroupsFor != userId) return@sendRaw
+            if (TdClient.isError(response)) {
+                _commonGroupsLoaded.value = true
+                return@sendRaw
+            }
+            val arr = response.optJSONArray("chat_ids")
+            val ids = ArrayList<Long>()
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val id = arr.optLong(i)
+                    if (id != 0L) ids.add(id)
+                }
+            }
+            publishCommonGroups(ids)
+            _commonGroupsLoaded.value = true
+            for (id in ids) {
+                if (ChatStore.itemOf(id) != null) continue
+                val getQuery = TdClient.request("getChat").apply {
+                    put("chat_id", id)
+                }
+                TdRepository.sendRaw(getQuery) { chatResponse ->
+                    if (TdClient.isError(chatResponse)) {
+                        return@sendRaw
+                    }
+                    ChatStore.noteResolvedChat(chatResponse)
+                    if (commonGroupsFor == userId) {
+                        publishCommonGroups(ids)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun publishCommonGroups(ids: List<Long>) {
+        _commonGroups.value = ids.map { id ->
+            CommonGroupUi(
+                chatId = id,
+                title = ChatStore.itemOf(id)?.title ?: ""
+            )
+        }
+    }
 
     private val nameByUser = ConcurrentHashMap<Long, String>()
     private val nameFetchPending = ConcurrentHashMap.newKeySet<Long>()

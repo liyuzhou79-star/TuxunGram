@@ -1038,6 +1038,10 @@ private fun ReadyHost() {
                     onOpenEventLog = { eventLogChatId = r.chatId },
                     onOpenJoinRequests = {
                         joinRequestsChatId = r.chatId
+                    },
+                    onOpenChat = { target ->
+                        profileChatId = null
+                        openChatId = target
                     }
                 )
                 is Route.Create -> CreateChatScreen(

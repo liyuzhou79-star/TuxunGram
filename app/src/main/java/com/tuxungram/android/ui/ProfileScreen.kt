@@ -69,6 +69,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import android.content.Intent
+import androidx.core.content.FileProvider
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
@@ -106,7 +107,8 @@ fun ProfileScreen(
     onOpenGroupSettings: () -> Unit = {},
     onOpenStats: () -> Unit = {},
     onOpenEventLog: () -> Unit = {},
-    onOpenJoinRequests: () -> Unit = {}
+    onOpenJoinRequests: () -> Unit = {},
+    onOpenChat: (Long) -> Unit = {}
 ) {
     BackHandler { onBack() }
     val profile by ProfileStore.profile.collectAsState()
@@ -178,6 +180,14 @@ fun ProfileScreen(
     var blockNotice by remember { mutableStateOf<String?>(null) }
     var deleteContactConfirm by remember { mutableStateOf(false) }
     var contactNotice by remember { mutableStateOf<String?>(null) }
+    // Safety + sharing entries (v0.9.54, Y2): common-groups
+    // list dialog, the report flow, and their outcome line.
+    var commonGroupsOpen by remember { mutableStateOf(false) }
+    var reportOpen by remember { mutableStateOf(false) }
+    var safetyNotice by remember { mutableStateOf<String?>(null) }
+    val commonGroups by ProfileStore.commonGroups.collectAsState()
+    val commonGroupsLoaded by ProfileStore.commonGroupsLoaded
+        .collectAsState()
     // User note editor (v0.9.38, E2): null = closed;
     // otherwise the draft text the dialog opened with.
     var noteDraft by remember { mutableStateOf<String?>(null) }
@@ -621,10 +631,21 @@ fun ProfileScreen(
                             )
                         }
                         if (p.userId != 0L && p.commonGroups > 0) {
+                            // Common groups (v0.9.54, Y2):
+                            // the row used to be a dead count;
+                            // now it opens the actual list
+                            // (getGroupsInCommon) and a row tap
+                            // goes into that group.
                             ProfileInfoRow(
                                 icon = PeopleIcon,
                                 label = "共同群组",
-                                value = "${p.commonGroups} 个"
+                                value = "${p.commonGroups} 个",
+                                onClick = {
+                                    commonGroupsOpen = true
+                                    ProfileStore.loadCommonGroups(
+                                        p.userId
+                                    )
+                                }
                             )
                         }
                         if (p.primaryInviteLink.isNotEmpty() &&
@@ -1066,6 +1087,55 @@ fun ProfileScreen(
                         if (blockNotice != null) {
                             Text(
                                 blockNotice!!,
+                                fontSize = 13.sp, color = Color.Gray,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
+            }
+            if ((p.userId != 0L && p.userId != me.id) ||
+                (p.userId == 0L && !caps.canManage && !p.isSecretChat)
+            ) {
+                // Share contact + report (v0.9.54, Y2): the
+                // profile used to stop at block / delete —
+                // there was no way to hand this contact to
+                // someone else, and no report entry at all.
+                // Sharing exports a real vCard (.vcf) through
+                // the system sheet; the phone line rides only
+                // when the server handed it out. Reporting
+                // runs the shared reportChat flow on this
+                // chat (groups/channels included; a profile I
+                // administer is mine, so it gets no entry).
+                item(key = "safety_actions") {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(profilePalette.windowBg)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        if (p.userId != 0L) {
+                            TextButton(onClick = {
+                                shareContactVCard(
+                                    context = context,
+                                    name = p.title,
+                                    phone = p.phone,
+                                    username = p.username
+                                )
+                            }) {
+                                Text("分享联系人")
+                            }
+                        }
+                        TextButton(onClick = { reportOpen = true }) {
+                            Text(
+                                "举报",
+                                color = Color(0xFFC62828)
+                            )
+                        }
+                        if (safetyNotice != null) {
+                            Text(
+                                safetyNotice!!,
                                 fontSize = 13.sp, color = Color.Gray,
                                 modifier = Modifier.padding(top = 4.dp)
                             )
@@ -2784,6 +2854,67 @@ fun ProfileScreen(
             }
         )
     }
+    if (commonGroupsOpen && current != null) {
+        // Common groups list (v0.9.54, Y2): rows resolve
+        // through ChatStore; a tap goes into that group.
+        AlertDialog(
+            onDismissRequest = { commonGroupsOpen = false },
+            title = { Text("共同群组") },
+            text = {
+                if (commonGroups.isEmpty()) {
+                    Text(
+                        if (commonGroupsLoaded) {
+                            "没有读到共同群组。"
+                        } else {
+                            "正在读取…"
+                        }
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(320.dp)
+                    ) {
+                        items(
+                            items = commonGroups,
+                            key = { it.chatId }
+                        ) { group ->
+                            TextButton(
+                                onClick = {
+                                    commonGroupsOpen = false
+                                    onOpenChat(group.chatId)
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    group.title.ifEmpty {
+                                        "群组 ${group.chatId}"
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { commonGroupsOpen = false }) {
+                    Text("关闭")
+                }
+            }
+        )
+    }
+    if (reportOpen) {
+        // Report this chat (v0.9.54, Y2): the shared
+        // reportChat flow; the outcome line lands under the
+        // safety entries.
+        ReportFlowDialogs(
+            chatId = chatId,
+            onClose = { reportOpen = false },
+            onNotice = { notice -> safetyNotice = notice }
+        )
+    }
     val noteDraftState = noteDraft
     if (noteDraftState != null && current != null &&
         current.userId != 0L
@@ -3066,4 +3197,56 @@ private fun exportFileName(title: String): String {
     }.trim('_').take(40)
     val base = if (cleaned.isEmpty()) "对话" else cleaned
     return "聊天记录-$base.txt"
+}
+
+/** Share a user as a vCard file (v0.9.54, Y2): a real
+ *  .vcf (FN / TEL / t.me URL) handed to the system share
+ *  sheet through FileProvider — the receiving side can be
+ *  a contacts app, another messenger, anything that takes
+ *  a contact card. The phone line is included only when
+ *  the server handed it out on the profile; a name is the
+ *  one thing a vCard cannot do without. */
+private fun shareContactVCard(
+    context: android.content.Context,
+    name: String,
+    phone: String,
+    username: String
+) {
+    val safeName = name.replace(Regex("[\\r\\n;]"), " ").trim()
+    if (safeName.isEmpty()) return
+    val card = buildString {
+        append("BEGIN:VCARD\r\n")
+        append("VERSION:3.0\r\n")
+        append("FN:").append(safeName).append("\r\n")
+        val digits = phone.filter { it.isDigit() || it == '+' }
+        if (digits.isNotEmpty()) {
+            append("TEL;TYPE=CELL:").append(digits).append("\r\n")
+        }
+        val user = username.removePrefix("@").trim()
+        if (user.isNotEmpty()) {
+            append("URL:https://t.me/").append(user).append("\r\n")
+        }
+        append("END:VCARD\r\n")
+    }
+    try {
+        val file = File(
+            context.cacheDir,
+            "contact_${System.currentTimeMillis()}.vcf"
+        )
+        file.writeText(card)
+        val uri = FileProvider.getUriForFile(
+            context, "com.tuxungram.android.fileprovider", file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/x-vcard"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(
+            Intent.createChooser(intent, "分享联系人")
+        )
+    } catch (t: Throwable) {
+        // No handler / IO failure: the entry simply does
+        // nothing visible rather than crashing the page.
+    }
 }
