@@ -4957,6 +4957,17 @@ fun ChatScreen(
                         pendingPhoto = path
                         photoCaption = ""
                     },
+                    onVideoTaken = { path ->
+                        // In-app recording (v0.9.56, A2):
+                        // the clip joins the existing
+                        // single-video send flow — the same
+                        // confirm dialog (with its trim
+                        // entry) a picked video gets.
+                        cameraOpen = false
+                        pendingFile = Triple(
+                            path, "video/mp4", File(path).name
+                        )
+                    },
                     onCancel = { cameraOpen = false }
                 )
             }

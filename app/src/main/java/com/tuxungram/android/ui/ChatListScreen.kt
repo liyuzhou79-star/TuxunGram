@@ -931,6 +931,14 @@ fun ChatListScreen(
                         storyCameraOpen = false
                         pendingStoryPhoto = path
                     },
+                    onVideoTaken = { path ->
+                        // In-app recording (v0.9.56, A2):
+                        // a story clip goes through the
+                        // same trim-first path as a picked
+                        // story video (v0.9.55, Z4).
+                        storyCameraOpen = false
+                        storyTrimPath = path
+                    },
                     onCancel = { storyCameraOpen = false }
                 )
             }
