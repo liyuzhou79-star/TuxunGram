@@ -4,6 +4,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -65,7 +67,10 @@ import kotlinx.coroutines.delay
  * presentation-only scope (recorded in the checkpoint).
  *
  * Category tabs (v0.9.36, C4): 全部 / 聊天 / 联系人 / 消息
- * over the same grouped data, plus a public section the
+ * over the same grouped data — v0.9.53 (X5) adds the
+ * media kinds 媒体 / 文件 / 链接 / 语音, which reuse the
+ * message section under a searchMessages media filter —
+ * plus a public section the
  * page lacked — searchPublicChats results (public groups,
  * channels and bots not joined yet) under the 聊天 tab
  * and in 全部. Counts are shown only where a real count
@@ -93,9 +98,23 @@ fun SearchScreen(
     val publicSearching by
         SearchStore.publicSearching.collectAsState()
     val publicTotal by SearchStore.publicTotal.collectAsState()
-    // Category tabs (v0.9.36, C4): 0 全部 / 1 聊天 /
-    // 2 联系人 / 3 消息.
+    // Category tabs (v0.9.36, C4; media kinds added in
+    // v0.9.53, X5): 0 全部 / 1 聊天 / 2 联系人 / 3 消息 /
+    // 4 媒体 / 5 文件 / 6 链接 / 7 语音. Tabs 4–7 are the
+    // same message results under a searchMessages media
+    // filter; the filter switch lives in SearchStore.
     var tab by remember { mutableStateOf(0) }
+    LaunchedEffect(tab) {
+        SearchStore.setFilter(
+            when (tab) {
+                4 -> "searchMessagesFilterPhotoAndVideo"
+                5 -> "searchMessagesFilterDocument"
+                6 -> "searchMessagesFilterUrl"
+                7 -> "searchMessagesFilterVoiceNote"
+                else -> "searchMessagesFilterEmpty"
+            }
+        )
+    }
     // Collected so the contacts section refreshes when the
     // address book finishes loading.
     val allContacts by ContactsStore.contacts.collectAsState()
@@ -188,9 +207,16 @@ fun SearchScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(palette.actionBarBg)
+                    // Eight tabs no longer fit a narrow
+                    // screen (v0.9.53, X5): the row scrolls
+                    // sideways instead of squeezing them.
+                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 8.dp)
             ) {
-                val labels = listOf("全部", "聊天", "联系人", "消息")
+                val labels = listOf(
+                    "全部", "聊天", "联系人", "消息",
+                    "媒体", "文件", "链接", "语音"
+                )
                 labels.forEachIndexed { index, label ->
                     Column(
                         horizontalAlignment =
@@ -411,9 +437,17 @@ fun SearchScreen(
                         )
                     }
                 }
-                if (tab == 0 || tab == 3) {
+                if (tab == 0 || tab >= 3) {
                 item(key = "sec_messages") {
-                    SearchSectionHeader("消息")
+                    SearchSectionHeader(
+                        when (tab) {
+                            4 -> "媒体"
+                            5 -> "文件"
+                            6 -> "链接"
+                            7 -> "语音"
+                            else -> "消息"
+                        }
+                    )
                 }
                 items(
                     items = hits,
@@ -454,7 +488,13 @@ fun SearchScreen(
                 } else if (hits.isEmpty()) {
                     item(key = "hits_empty") {
                         Text(
-                            "没有搜到消息",
+                            when (tab) {
+                                4 -> "没有搜到照片或视频"
+                                5 -> "没有搜到文件"
+                                6 -> "没有搜到带链接的消息"
+                                7 -> "没有搜到语音消息"
+                                else -> "没有搜到消息"
+                            },
                             color = palette.textSecondary,
                             fontSize = 13.sp,
                             modifier = Modifier.padding(

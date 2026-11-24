@@ -60,8 +60,31 @@ object SearchStore {
     private var query = ""
     private var nextOffset = ""
 
+    /** The searchMessages filter the message paging runs
+     *  with (v0.9.53, X5): the search page's category tabs
+     *  switch it between Empty (all messages) and the
+     *  media kinds — PhotoAndVideo / Document / Url /
+     *  VoiceNote. All four are plain searchMessages
+     *  filters, the same ones the in-chat search and the
+     *  shared-media page already run against the server. */
+    private var filterType = "searchMessagesFilterEmpty"
+
     @Volatile
     private var generation = 0
+
+    /** Switch the message filter: only the message
+     *  paging restarts (the chat / contact / public
+     *  sections do not depend on it and stay as they
+     *  are). A no-op when the filter is unchanged. */
+    fun setFilter(type: String) {
+        if (type == filterType) return
+        filterType = type
+        generation++
+        nextOffset = ""
+        _results.value = emptyList()
+        _exhausted.value = query.isEmpty()
+        if (query.isNotEmpty()) loadPage(generation)
+    }
 
     fun search(newQuery: String) {
         generation++
@@ -136,7 +159,7 @@ object SearchStore {
             put("query", query)
             put("offset", nextOffset)
             put("limit", 30)
-            put("filter", JSONObject().put("@type", "searchMessagesFilterEmpty"))
+            put("filter", JSONObject().put("@type", filterType))
             put("chat_type_filter", JSONObject.NULL)
             put("min_date", 0)
             put("max_date", 0)
