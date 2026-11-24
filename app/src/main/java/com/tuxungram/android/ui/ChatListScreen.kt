@@ -458,8 +458,6 @@ fun formatChatTime(dateSeconds: Int): String {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
 /** Duration in seconds of a local video file, 0 when
  *  unreadable — the story publish path's metadata read,
  *  used for picked videos and again after trimming
@@ -483,6 +481,8 @@ private fun storyVideoDurationSec(path: String): Double {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 fun ChatListScreen(
     onOpenChat: (Long) -> Unit,
     onOpenSettings: () -> Unit,
