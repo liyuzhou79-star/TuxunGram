@@ -515,6 +515,20 @@ fun CameraScreen(
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    // A take interrupted mid-recording
+                    // (v0.9.57, B2) lands here too; its
+                    // plain note rides along so the user
+                    // hears the clip is gone, not just that
+                    // the camera is unavailable.
+                    val note = recordNote
+                    if (note != null) {
+                        Text(
+                            note,
+                            color = Color.White, fontSize = 15.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(Modifier.height(10.dp))
+                    }
                     Text(
                         "相机打不开，可能正被其他应用占用。" +
                             "关掉占用相机的应用再试，或者先用系统相机" +
@@ -986,6 +1000,11 @@ private class StillCamera(
                     override fun onDisconnected(d: CameraDevice) {
                         d.close()
                         if (device === d) device = null
+                        // Taken over by another app
+                        // (v0.9.57, B2): land on the failure
+                        // column instead of leaving a frozen
+                        // preview with no explanation.
+                        fail()
                     }
 
                     override fun onError(d: CameraDevice, error: Int) {
@@ -1175,11 +1194,14 @@ private class VideoCamera(
                     override fun onDisconnected(d: CameraDevice) {
                         d.close()
                         if (device === d) device = null
+                        abortTake()
+                        fail()
                     }
 
                     override fun onError(d: CameraDevice, error: Int) {
                         d.close()
                         if (device === d) device = null
+                        abortTake()
                         fail()
                     }
                 },
@@ -1284,6 +1306,12 @@ private class VideoCamera(
             rec.setAudioEncodingBitRate(128_000)
             rec.setAudioSamplingRate(44_100)
             rec.setOrientationHint(orientationHint())
+            // A recorder that dies on its own (a full disk
+            // is the classic case) must not leave the
+            // screen "recording" a dead take (v0.9.57, B2).
+            rec.setOnErrorListener { _, _, _ ->
+                onRecorderError()
+            }
             rec.prepare()
             recorder = rec
             rec.surface
@@ -1364,6 +1392,60 @@ private class VideoCamera(
             mainHandler.post {
                 onRecordFailed("这段录像没能存下来，再录一次吧。")
             }
+        }
+        if (!closed && device != null) buildSession()
+    }
+
+    /** A take whose camera just went away (v0.9.57, B2)
+     *  can never be finalized: stop the recorder quietly,
+     *  delete the partial file and hand the screen its
+     *  recording-over signal plus the plain note. Without
+     *  this, a mid-take disconnect left the recorder
+     *  running against a dead surface and the screen's
+     *  timer counting over a frozen preview; the failure
+     *  column (shown by the caller right after) explains
+     *  the camera side. */
+    private fun abortTake() {
+        if (!recording) return
+        recording = false
+        try { recorder?.stop() } catch (t: Throwable) { }
+        val file = outputFile
+        if (file != null) {
+            try { file.delete() } catch (t: Throwable) { }
+            outputFile = null
+        }
+        try { session?.close() } catch (t: Throwable) { }
+        session = null
+        releaseRecorder()
+        mainHandler.post {
+            onRecordingChange(false)
+            onRecordFailed("录制被打断了，这段没有存下来。")
+        }
+    }
+
+    /** The recorder stopped by itself mid-take (the
+     *  error listener set in setupRecorder): the take is
+     *  unrecoverable, but the camera is still here, so —
+     *  like a failed stop — the partial file is deleted,
+     *  the user gets the plain note, and a fresh session
+     *  is built for the next take. */
+    private fun onRecorderError() {
+        if (closed || !recording) return
+        recording = false
+        mainHandler.post { onRecordingChange(false) }
+        val file = outputFile
+        if (file != null) {
+            try { file.delete() } catch (t: Throwable) { }
+            outputFile = null
+        }
+        try { session?.close() } catch (t: Throwable) { }
+        session = null
+        releaseRecorder()
+        mainHandler.post {
+            onRecordFailed(
+                "录制中断了，这段没有存下来" +
+                    "（可能是存储空间不足）。"
+            )
         }
         if (!closed && device != null) buildSession()
     }
