@@ -214,17 +214,48 @@ object AdminStore {
         act(query, "简介已更新。") { ProfileStore.load(chatId) }
     }
 
+    /** The restrict durations the UI offers (v0.9.53,
+     *  X4), matching the official client's picker:
+     *  label to length in seconds, 0 = forever. Before
+     *  this version a mute was hard-wired to forever —
+     *  the official client always asks for how long. */
+    val RESTRICT_DURATIONS: List<Pair<String, Int>> = listOf(
+        "1 天" to 86_400,
+        "1 周" to 604_800,
+        "1 个月" to 2_592_000,
+        "永久" to 0
+    )
+
     /** Mute a member: restricted status with every send
-     *  permission off, no expiry. */
-    fun restrictMember(chatId: Long, userId: Long) {
+     *  permission off. [durationSec] 0 (the default)
+     *  mutes forever; a positive value lifts the mute
+     *  automatically when it lapses (the server enforces
+     *  restricted_until_date, nothing local to undo). */
+    fun restrictMember(
+        chatId: Long,
+        userId: Long,
+        durationSec: Int = 0
+    ) {
         val permissions = JSONObject().put("@type", "chatPermissions")
         for (field in PERMISSION_FIELDS) permissions.put(field, false)
+        val until = if (durationSec > 0) {
+            (System.currentTimeMillis() / 1000L + durationSec).toInt()
+        } else {
+            0
+        }
         val status = JSONObject()
             .put("@type", "chatMemberStatusRestricted")
             .put("is_member", true)
-            .put("restricted_until_date", 0)
+            .put("restricted_until_date", until)
             .put("permissions", permissions)
-        setMemberStatus(chatId, userId, status, "已禁言。")
+        val label = RESTRICT_DURATIONS
+            .firstOrNull { it.second == durationSec }?.first
+        val okText = if (label != null && durationSec > 0) {
+            "已禁言 $label。"
+        } else {
+            "已禁言。"
+        }
+        setMemberStatus(chatId, userId, status, okText)
     }
 
     fun unrestrictMember(chatId: Long, userId: Long) {
@@ -617,9 +648,17 @@ object AdminStore {
         else -> "$seconds 秒"
     }
 
-    /** The slow-mode delays td_api.tl allows for
-     *  setChatSlowModeDelay. */
-    val SLOW_MODE_OPTIONS = listOf(0, 5, 10, 30, 60, 300, 900, 3600)
+    /** The slow-mode delays the picker offers: the
+     *  official client's tiers (off / 10s / 30s / 1m /
+     *  5m / 15m / 1h). A 5-second tier sat here until
+     *  v0.9.53 (X4) — the tl accepts it, but the official
+     *  picker never offers it, so it is gone from the
+     *  list; [slowModeLabel] still knows how to label a
+     *  5-second value another client set, and the
+     *  permissions page folds such a foreign value into
+     *  its radio list so the current setting stays
+     *  visible and selected. */
+    val SLOW_MODE_OPTIONS = listOf(0, 10, 30, 60, 300, 900, 3600)
 
     private fun setMemberStatus(
         chatId: Long,

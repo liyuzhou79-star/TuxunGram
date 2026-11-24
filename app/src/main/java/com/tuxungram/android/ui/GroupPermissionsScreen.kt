@@ -225,7 +225,19 @@ fun GroupPermissionsScreen(chatId: Long, onBack: () -> Unit) {
                     fontSize = 12.sp, color = Color.Gray,
                     modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
                 )
-                for (option in AdminStore.SLOW_MODE_OPTIONS) {
+                // v0.9.53 (X4): a delay set by another
+                // client that is not one of the offered
+                // tiers (e.g. 5 seconds) is folded into
+                // the list so the current value stays
+                // visible and selected instead of leaving
+                // every radio unselected.
+                val slowOptions =
+                    if (slow in AdminStore.SLOW_MODE_OPTIONS) {
+                        AdminStore.SLOW_MODE_OPTIONS
+                    } else {
+                        (AdminStore.SLOW_MODE_OPTIONS + slow).sorted()
+                    }
+                for (option in slowOptions) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier

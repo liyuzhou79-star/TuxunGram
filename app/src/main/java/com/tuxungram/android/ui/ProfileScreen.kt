@@ -164,6 +164,9 @@ fun ProfileScreen(
         }.start()
     }
     var memberAction by remember { mutableStateOf<MemberEntry?>(null) }
+    // Restrict-duration picker (v0.9.53, X4): same flow
+    // as the members page — muting asks for how long.
+    var memberRestrict by remember { mutableStateOf<MemberEntry?>(null) }
     // Secret chats (v0.6.0, E1): encryption state + fingerprint.
     val secretInfo by SecretChatStore.info.collectAsState()
     val secretNotice by SecretChatStore.notice.collectAsState()
@@ -2222,7 +2225,7 @@ fun ProfileScreen(
                     when (target.statusKind) {
                         "member" -> {
                             TextButton(onClick = {
-                                AdminStore.restrictMember(chatId, target.userId)
+                                memberRestrict = target
                                 memberAction = null
                             }) { Text("禁言（不能发言）") }
                             TextButton(onClick = {
@@ -2262,6 +2265,38 @@ fun ProfileScreen(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { memberAction = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+    // Restrict-duration picker (v0.9.53, X4).
+    val mutingMember = memberRestrict
+    if (mutingMember != null) {
+        AlertDialog(
+            onDismissRequest = { memberRestrict = null },
+            title = { Text("禁言多久") },
+            text = {
+                Column {
+                    Text(
+                        mutingMember.name
+                            .ifEmpty { "用户 ${mutingMember.userId}" },
+                        color = Color.Gray, fontSize = 13.sp
+                    )
+                    for ((label, seconds) in
+                        AdminStore.RESTRICT_DURATIONS) {
+                        TextButton(onClick = {
+                            AdminStore.restrictMember(
+                                chatId, mutingMember.userId, seconds
+                            )
+                            memberRestrict = null
+                        }) { Text(label) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { memberRestrict = null }) {
                     Text("取消")
                 }
             }

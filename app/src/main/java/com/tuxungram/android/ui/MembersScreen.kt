@@ -68,6 +68,9 @@ fun MembersScreen(chatId: Long, onBack: () -> Unit) {
     val notice by AdminStore.notice.collectAsState()
     var query by remember { mutableStateOf("") }
     var actionTarget by remember { mutableStateOf<MemberEntry?>(null) }
+    // Restrict-duration picker (v0.9.53, X4): muting asks
+    // for how long first, like the official client.
+    var restrictTarget by remember { mutableStateOf<MemberEntry?>(null) }
     // Administrator custom-title editor (v0.9.39, F2).
     var titleTarget by remember { mutableStateOf<MemberEntry?>(null) }
     var titleText by remember { mutableStateOf("") }
@@ -250,9 +253,7 @@ fun MembersScreen(chatId: Long, onBack: () -> Unit) {
                         "member" -> {
                             if (caps.canRestrict) {
                                 TextButton(onClick = {
-                                    AdminStore.restrictMember(
-                                        chatId, target.userId
-                                    )
+                                    restrictTarget = target
                                     actionTarget = null
                                 }) { Text("禁言（不能发言）") }
                             }
@@ -325,6 +326,40 @@ fun MembersScreen(chatId: Long, onBack: () -> Unit) {
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { actionTarget = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // Restrict-duration picker (v0.9.53, X4): the tiers
+    // are AdminStore.RESTRICT_DURATIONS; a timed mute
+    // lifts by itself when restricted_until_date passes.
+    val muting = restrictTarget
+    if (muting != null) {
+        AlertDialog(
+            onDismissRequest = { restrictTarget = null },
+            title = { Text("禁言多久") },
+            text = {
+                Column {
+                    Text(
+                        muting.name.ifEmpty { "用户 ${muting.userId}" },
+                        fontSize = 13.sp, color = Color.Gray
+                    )
+                    for ((label, seconds) in
+                        AdminStore.RESTRICT_DURATIONS) {
+                        TextButton(onClick = {
+                            AdminStore.restrictMember(
+                                chatId, muting.userId, seconds
+                            )
+                            restrictTarget = null
+                        }) { Text(label) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { restrictTarget = null }) {
                     Text("取消")
                 }
             }
