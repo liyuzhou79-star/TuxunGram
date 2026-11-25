@@ -162,9 +162,10 @@ object WebAppStore {
                 message.contains("SECRET", true) ->
                 "秘密聊天里不能打开小程序。"
             else ->
+                // Plain language only (v0.9.60, E3): no raw
+                // server sentence appended.
                 "小程序打开失败，再试一次。（错误码 " +
-                    "${response.optInt("code")}）" +
-                    if (message.isNotEmpty()) " $message" else ""
+                    "${response.optInt("code")}）"
         }
     }
 

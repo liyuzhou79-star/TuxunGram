@@ -389,12 +389,12 @@ object StoryStore {
         TdRepository.sendRaw(query) { response ->
             _postNotice.value = if (TdClient.isError(response)) {
                 // Server refusals (video too long, unsupported
-                // format, limits) surface with their code and
-                // message instead of a fake success.
-                val detail = response.optString("message")
+                // format, limits) surface as a plain-language
+                // failure with the numeric code — never a fake
+                // success, and never the raw English server
+                // sentence (v0.9.60, E3).
                 "发布失败，再试一次。（错误码 " +
-                    "${response.optInt("code")}）" +
-                    if (detail.isNotEmpty()) " $detail" else ""
+                    "${response.optInt("code")}）"
             } else {
                 val who = when (privacy) {
                     "contacts" -> "联系人可见"

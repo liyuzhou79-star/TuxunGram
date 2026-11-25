@@ -381,9 +381,10 @@ object StickerSetStore {
                                 "512 像素），换一个文件再试。"
                         }
                     else ->
+                        // Plain language only (v0.9.60, E3):
+                        // no raw server sentence appended.
                         "创建失败，再试一次。（错误码 " +
-                            "${response.optInt("code")}）" +
-                            if (message.isNotEmpty()) " $message" else ""
+                            "${response.optInt("code")}）"
                 }
                 return@sendRaw
             }

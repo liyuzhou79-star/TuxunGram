@@ -262,9 +262,12 @@ object TwoFactorStore {
             upper.contains("FLOOD") ->
                 "试得太频繁了，服务器让先等一会儿再试。"
             else ->
-                "$what 没成（错误码 " +
-                    "${result?.optInt("code") ?: 0}）。" +
-                    "服务器原话：$raw"
+                // Plain language only (v0.9.60, E3): the raw
+                // server sentence used to be quoted verbatim
+                // after this — it stays out of the UI now;
+                // the numeric code remains for support.
+                "$what 没成，再试一次。（错误码 " +
+                    "${result?.optInt("code") ?: 0}）"
         }
     }
 }

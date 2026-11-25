@@ -5742,11 +5742,13 @@ object MessageStore {
         }
         TdRepository.sendRaw(query) { response ->
             if (TdClient.isError(response)) {
-                val message = response.optString("message")
+                // Plain language only (v0.9.60, E3): the raw
+                // server sentence used to ride along after
+                // the code — English gibberish to a user. The
+                // numeric code stays for support screenshots.
                 onResult(
                     "查不到这次抽奖的状态，再试一次。（错误码 " +
-                        "${response.optInt("code")}）" +
-                        if (message.isNotEmpty()) " $message" else ""
+                        "${response.optInt("code")}）"
                 )
                 return@sendRaw
             }
