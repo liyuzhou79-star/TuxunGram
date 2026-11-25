@@ -54,6 +54,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -382,6 +386,18 @@ fun CameraScreen(
                                     view.start()
                                     clipPlaying = true
                                 }
+                            }
+                            // Accessibility (v0.9.60, E2): the
+                            // full-screen tap target is invisible
+                            // — without a label a screen reader
+                            // user lands on a nameless button.
+                            .semantics {
+                                contentDescription = if (clipPlaying) {
+                                    "暂停播放"
+                                } else {
+                                    "继续播放"
+                                }
+                                role = Role.Button
                             }
                     )
                     if (!clipPlaying) {
@@ -744,6 +760,18 @@ fun CameraScreen(
                                                 controller.startRecording()
                                             }
                                         }
+                                    }
+                                    // Accessibility (v0.9.60, E2):
+                                    // the record disc carries no
+                                    // text — name it for readers.
+                                    .semantics {
+                                        contentDescription =
+                                            if (recording) {
+                                                "停止录像"
+                                            } else {
+                                                "开始录像"
+                                            }
+                                        role = Role.Button
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
@@ -784,6 +812,12 @@ fun CameraScreen(
                                             controllerRef.value
                                         capturing = controller != null &&
                                             controller.capture()
+                                    }
+                                    // Accessibility (v0.9.60, E2):
+                                    // name the shutter disc.
+                                    .semantics {
+                                        contentDescription = "拍照"
+                                        role = Role.Button
                                     }
                             )
                         }

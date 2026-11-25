@@ -2603,12 +2603,16 @@ fun ChatScreen(
                     Spacer(Modifier.weight(1f))
                     IconButton(
                         onClick = { MessageStore.dismissActionBar() },
-                        modifier = Modifier.size(32.dp)
+                        // 40dp touch target (v0.9.60, E2; was
+                        // 32 — the bar's own height is set by
+                        // its TextButtons, so this costs no
+                        // extra vertical room).
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
                             Icons.Filled.Close,
                             contentDescription = "关闭这条提示",
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }

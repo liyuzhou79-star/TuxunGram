@@ -44,6 +44,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -160,6 +164,9 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
         }
 
         // Tap zones: left third = previous, rest = next.
+        // Accessibility (v0.9.60, E2): the zones are
+        // invisible — give each a spoken name so a screen
+        // reader user can move between stories too.
         Row(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
@@ -168,6 +175,10 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
                     .clickable {
                         if (index > 0) index-- else onBack()
                     }
+                    .semantics {
+                        contentDescription = "上一条动态"
+                        role = Role.Button
+                    }
             )
             Box(
                 modifier = Modifier
@@ -175,6 +186,10 @@ fun StoryViewerScreen(chatId: Long, onBack: () -> Unit) {
                     .fillMaxSize()
                     .clickable {
                         if (index < stories.lastIndex) index++ else onBack()
+                    }
+                    .semantics {
+                        contentDescription = "下一条动态"
+                        role = Role.Button
                     }
             )
         }

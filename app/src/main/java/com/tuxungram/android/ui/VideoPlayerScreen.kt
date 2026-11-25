@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -32,6 +33,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -168,6 +173,12 @@ fun VideoPlayerScreen(path: String, title: String, onClose: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .clickable { togglePlay() }
+                // Accessibility (v0.9.60, E2): the full-screen
+                // tap toggles playback — name it for readers.
+                .semantics {
+                    contentDescription = if (playing) "暂停" else "播放"
+                    role = Role.Button
+                }
         )
         Column(
             modifier = Modifier
@@ -205,14 +216,11 @@ fun VideoPlayerScreen(path: String, title: String, onClose: () -> Unit) {
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                if (playing) "⏸" else "▶",
-                color = Color.White,
-                fontSize = 20.sp,
-                modifier = Modifier
-                    .clickable { togglePlay() }
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
-            )
+            PlayerGlyphButton(
+                label = if (playing) "暂停" else "播放",
+                glyph = if (playing) "⏸" else "▶",
+                fontSize = 20
+            ) { togglePlay() }
             Spacer(Modifier.width(6.dp))
             Text(
                 formatDuration(positionMs / 1000),
@@ -246,46 +254,73 @@ fun VideoPlayerScreen(path: String, title: String, onClose: () -> Unit) {
             )
             Spacer(Modifier.width(10.dp))
             // Mute toggle (v0.9.52, W2).
-            Text(
-                if (muted) "🔇" else "🔊",
-                fontSize = 16.sp,
-                modifier = Modifier
-                    .clickable {
-                        muted = !muted
-                        mediaPlayer?.let { applyMute(it, muted) }
-                    }
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
-            )
+            PlayerGlyphButton(
+                label = if (muted) "取消静音" else "静音",
+                glyph = if (muted) "🔇" else "🔊",
+                fontSize = 16
+            ) {
+                muted = !muted
+                mediaPlayer?.let { applyMute(it, muted) }
+            }
             // Speed chip (v0.9.52, W2): cycles 1x -> 1.5x -> 2x.
-            Text(
-                if (speed == speed.toInt().toFloat()) {
+            PlayerGlyphButton(
+                label = "播放速度，当前 " +
+                    if (speed == speed.toInt().toFloat()) {
+                        "${speed.toInt()} 倍"
+                    } else {
+                        "$speed 倍"
+                    },
+                glyph = if (speed == speed.toInt().toFloat()) {
                     "${speed.toInt()}x"
                 } else {
                     "${speed}x"
                 },
-                color = Color.White,
-                fontSize = 13.sp,
-                modifier = Modifier
-                    .clickable {
-                        speed = when (speed) {
-                            1f -> 1.5f
-                            1.5f -> 2f
-                            else -> 1f
-                        }
-                        mediaPlayer?.let { applySpeed(it, speed) }
-                    }
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
-            )
+                fontSize = 13
+            ) {
+                speed = when (speed) {
+                    1f -> 1.5f
+                    1.5f -> 2f
+                    else -> 1f
+                }
+                mediaPlayer?.let { applySpeed(it, speed) }
+            }
             // Rotate toggle (v0.9.52, W2): the only way the
             // player changes orientation — never automatic.
-            Text(
-                "⟳",
-                color = Color.White,
-                fontSize = 17.sp,
-                modifier = Modifier
-                    .clickable { toggleRotate() }
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
-            )
+            PlayerGlyphButton(
+                label = "旋转画面",
+                glyph = "⟳",
+                fontSize = 17
+            ) { toggleRotate() }
         }
+    }
+}
+
+/** One control-bar glyph button (v0.9.60, E2): the bar's
+ *  controls used to be bare clickable glyph Texts — hit
+ *  areas around 30dp and nothing a screen reader could
+ *  name. Each now sits in a 48dp box with a spoken label;
+ *  the glyph itself is decorative inside it. */
+@Composable
+private fun PlayerGlyphButton(
+    label: String,
+    glyph: String,
+    fontSize: Int,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clickable { onClick() }
+            .semantics {
+                contentDescription = label
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            glyph,
+            color = Color.White,
+            fontSize = fontSize.sp
+        )
     }
 }

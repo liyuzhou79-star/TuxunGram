@@ -211,9 +211,13 @@ fun ContactsScreen(
                 Icon(
                     Icons.Filled.Close, contentDescription = "清空",
                     tint = palette.textSecondary,
+                    // 36dp hit area around the 18dp glyph
+                    // (v0.9.60, E2; the clickable used to be
+                    // the glyph itself).
                     modifier = Modifier
-                        .size(18.dp)
+                        .size(36.dp)
                         .clickable { query = "" }
+                        .padding(9.dp)
                 )
             }
         }

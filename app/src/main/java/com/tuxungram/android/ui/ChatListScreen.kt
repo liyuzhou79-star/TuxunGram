@@ -699,7 +699,8 @@ fun ChatListScreen(
                 }
                 IconButton(
                     onClick = { folderCreateOpen = true },
-                    modifier = Modifier.size(40.dp)
+                    // 48dp touch target (v0.9.60, E2; was 40).
+                    modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
                         Icons.Filled.Add, contentDescription = "新建文件夹",

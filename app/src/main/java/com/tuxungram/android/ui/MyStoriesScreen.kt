@@ -60,6 +60,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -244,6 +248,17 @@ private fun StoryGridCell(story: MyStoryUi, onClick: () -> Unit) {
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF263238))
             .clickable { onClick() }
+            // Accessibility (v0.9.60, E2): the cell is a
+            // picture with two small overlay texts — merge
+            // it into one named stop for screen readers.
+            .semantics(mergeDescendants = true) {
+                contentDescription =
+                    (if (story.isVideo) "视频动态" else "动态") +
+                        (if (story.isPinned) "，已置顶" else "") +
+                        "，${story.viewCount} 次浏览，" +
+                        formatDayLabel(story.dateSeconds)
+                role = Role.Button
+            }
     ) {
         val bmp = bitmap
         if (bmp != null) {
