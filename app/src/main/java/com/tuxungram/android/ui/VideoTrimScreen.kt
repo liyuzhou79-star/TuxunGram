@@ -168,12 +168,21 @@ fun VideoTrimScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "剪辑目前支持 MP4、MOV、3GP 和 WebM，都是直接拷贝不重新编码。可以直接发送原视频，内容不受影响。",
+                    "剪辑目前支持 MP4、MOV、3GP 和 WebM，都是直接拷贝不重新编码。返回后可以照常用原视频发送，内容不受影响。",
                     color = Color(0xFFBDBDBD), fontSize = 13.sp
                 )
                 Spacer(Modifier.height(20.dp))
+                // The button only ever goes back (v0.9.59,
+                // D4): what "back" lands on differs per host —
+                // the single-send and topic hosts return to
+                // their send-confirmation dialog, the album
+                // host to the album preview, the story host
+                // to the publish confirmation with the original
+                // video. The old label promised a direct send
+                // the button never performs; this one names
+                // the outcome every host actually delivers.
                 Button(onClick = onCancel) {
-                    Text("返回，直接发送原视频")
+                    Text("返回，用原视频发送")
                 }
             }
             else -> {
