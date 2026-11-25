@@ -33,9 +33,20 @@ import org.json.JSONObject
  * added since v0.9.24 was checked against this file —
  * label_dots (v0.9.28) and the download center's
  * concurrency / retry settings (DownloadStore's own
- * prefs, v0.9.23) were missing and are now in. Deliberately
+ * prefs, v0.9.23) were missing and are now in.
+ *
+ * Re-audit (v0.9.59, D1): every UiSettings key is in
+ * (hide_recents_on_lock and storage_optimizer had already
+ * joined with their own versions); the one real gap was
+ * in AppLock — its two NON-credential preferences, the
+ * fingerprint-unlock toggle and the auto-lock timeout,
+ * sat in the same prefs file as the PIN material and had
+ * been swept out with it, though neither reveals anything
+ * about the PIN. They are exported now, as an "app_lock"
+ * section holding just those two values. Deliberately
  * still out, with reasons: the app-lock PIN material
- * (a credential — never exported, like proxy passwords);
+ * itself (salt / hash / length — a credential, never
+ * exported, like proxy passwords);
  * the auto-download tier labels in AutoDownloadStore
  * (a local mirror of server-side state — the real setting
  * lives on the account via setAutoDownloadSettings and
@@ -157,6 +168,18 @@ object SettingsBackup {
                 )
                 put("retry_limit", DownloadStore.retryLimit.value)
             })
+            // App-lock preferences (v0.9.59, D1): ONLY the
+            // two non-credential choices — fingerprint
+            // unlock on/off and the auto-lock timeout. The
+            // PIN material itself never travels (see the
+            // header note).
+            put("app_lock", JSONObject().apply {
+                put("biometric", AppLock.biometricEnabled.value)
+                put(
+                    "auto_lock_minutes",
+                    AppLock.autoLockMinutes.value
+                )
+            })
         }.toString(2)
     }
 
@@ -206,6 +229,8 @@ object SettingsBackup {
         var proxyAutoFailover: Boolean? = null
         var downloadMaxConcurrent: Int? = null
         var downloadRetryLimit: Int? = null
+        var appLockBiometric: Boolean? = null
+        var appLockMinutes: Int? = null
         val uiObj = root.optJSONObject("ui")
         if (uiObj != null) {
             try {
@@ -321,6 +346,24 @@ object SettingsBackup {
                 }
             } catch (t: Throwable) {
                 return "备份里的下载设置部分格式不对，设置没有改动。"
+            }
+        }
+        if (root.has("app_lock")) {
+            val lockObj = root.optJSONObject("app_lock")
+                ?: return "备份里的应用锁部分格式不对，设置没有改动。"
+            try {
+                if (lockObj.has("biometric")) {
+                    appLockBiometric = lockObj.getBoolean("biometric")
+                }
+                if (lockObj.has("auto_lock_minutes")) {
+                    val v = lockObj.getInt("auto_lock_minutes")
+                    if (v !in AppLock.AUTO_LOCK_OPTIONS) {
+                        return "备份里的自动锁定取值不对，设置没有改动。"
+                    }
+                    appLockMinutes = v
+                }
+            } catch (t: Throwable) {
+                return "备份里的应用锁部分格式不对，设置没有改动。"
             }
         }
         if (root.has("chat_wallpapers")) {
@@ -503,6 +546,8 @@ object SettingsBackup {
             DownloadStore.setMaxConcurrent(it)
         }
         downloadRetryLimit?.let { DownloadStore.setRetryLimit(it) }
+        appLockBiometric?.let { AppLock.setBiometricEnabled(it) }
+        appLockMinutes?.let { AppLock.setAutoLockMinutes(it) }
 
         val proxies = stagedProxies
         if (proxies != null) {
