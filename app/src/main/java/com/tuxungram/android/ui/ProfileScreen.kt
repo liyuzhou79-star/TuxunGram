@@ -2330,7 +2330,17 @@ fun ProfileScreen(
             onDismissRequest = { launchCandidate = null },
             title = { Text("发起这个抽奖？") },
             text = {
-                Column {
+                // Scrollable text area (v0.9.58, C3): on a
+                // short screen at a large font scale the
+                // explanation plus the three day choices
+                // must stay reachable instead of pushing
+                // the dialog's buttons off the bottom.
+                Column(
+                    modifier = Modifier.verticalScroll(
+                        androidx.compose.foundation
+                            .rememberScrollState()
+                    )
+                ) {
                     Text(
                         "奖品已经付过钱了，发起只是把抽奖开起来，" +
                             "不用再付任何费用。选一个开奖时间：",

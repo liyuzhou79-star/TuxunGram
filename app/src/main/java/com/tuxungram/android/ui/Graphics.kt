@@ -225,7 +225,10 @@ fun IconRow(
                     Text(
                         subtitle,
                         color = palette.textSecondary,
-                        fontSize = 12.5.sp
+                        // Official settings-cell subtitle
+                        // size (v0.9.58, C2): TextCell /
+                        // TextCheckCell draw theirs at 13.
+                        fontSize = 13.sp
                     )
                 }
             }
@@ -264,7 +267,9 @@ fun IconRow(
                 }
             )
             if (subtitle != null) {
-                Text(subtitle, color = Color.Gray, fontSize = 12.5.sp)
+                // Same 13 sp as the official branch
+                // (v0.9.58, C2).
+                Text(subtitle, color = Color.Gray, fontSize = 13.sp)
             }
         }
         if (trailing != null) {
@@ -376,7 +381,10 @@ fun ProfileInfoRow(
         Spacer(Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                value, fontSize = 15.sp,
+                // Official profile info rows ride
+                // TextCell: value 16, label 13 (v0.9.58,
+                // C2; was 15 / 12.5 here).
+                value, fontSize = 16.sp,
                 color = if (valueAccent) {
                     palette.accentText
                 } else {
@@ -386,7 +394,7 @@ fun ProfileInfoRow(
             Text(
                 label,
                 color = palette.textSecondary,
-                fontSize = 12.5.sp
+                fontSize = 13.sp
             )
         }
     }

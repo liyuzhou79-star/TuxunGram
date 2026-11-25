@@ -381,7 +381,10 @@ private fun ContactRow(contact: ContactEntry, onClick: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { onClick() }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                // UserCell row height (v0.9.58, C2):
+                // 46 dp avatar + 6 dp vertical padding
+                // = the official 58 dp row.
+                .padding(horizontal = 16.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (contact.photoPath != null) {
@@ -435,7 +438,10 @@ private fun ContactRow(contact: ContactEntry, onClick: () -> Unit) {
                         } else {
                             palette.textSecondary
                         },
-                        fontSize = 13.sp,
+                        // UserCell status size (v0.9.58,
+                        // C2): the official contacts row
+                        // draws its status line at 15.
+                        fontSize = 15.sp,
                         overflow = TextOverflow.Ellipsis,
                         maxLines = 1
                     )

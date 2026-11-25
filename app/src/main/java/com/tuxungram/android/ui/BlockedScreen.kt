@@ -108,7 +108,10 @@ fun BlockedScreen(onBack: () -> Unit) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        // UserCell metrics (v0.9.58, C2):
+                        // 46 dp avatar + 6 dp vertical
+                        // padding = the official 58 dp row.
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Official gradient placeholder avatar
@@ -120,7 +123,7 @@ fun BlockedScreen(onBack: () -> Unit) {
                     )
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(46.dp)
                             .background(
                                 androidx.compose.ui.graphics.Brush
                                     .verticalGradient(
@@ -137,7 +140,9 @@ fun BlockedScreen(onBack: () -> Unit) {
                             entry.name.trim().firstOrNull()?.toString() ?: "?",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
+                            // Same initial size as the
+                            // contacts page's 46 dp discs.
+                            fontSize = 18.sp
                         )
                     }
                     Spacer(Modifier.width(10.dp))
@@ -150,7 +155,8 @@ fun BlockedScreen(onBack: () -> Unit) {
                                     "对话 ${entry.senderId}"
                                 }
                             },
-                            fontSize = 15.sp
+                            // UserCell name size (v0.9.58, C2).
+                            fontSize = 16.sp
                         )
                         if (entry.senderKind == "chat") {
                             Text("频道/群组", color = Color.Gray, fontSize = 12.sp)

@@ -19,6 +19,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -1220,6 +1222,15 @@ fun PhotoEditorScreen(
             EditMode.DRAW -> Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Bounded scroll (v0.9.58, C3): at a
+                    // short screen height with a large font
+                    // the fixed control rows could overflow
+                    // the non-scrolling root column and clip
+                    // off the bottom; the cap sits above the
+                    // panel's natural height, so normal
+                    // screens see no change.
+                    .heightIn(max = 248.dp)
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp)
                     .padding(bottom = 10.dp)
             ) {
@@ -1382,6 +1393,10 @@ fun PhotoEditorScreen(
             EditMode.ADJUST -> Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Same bounded scroll as the draw
+                    // panel (v0.9.58, C3).
+                    .heightIn(max = 248.dp)
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp)
                     .padding(bottom = 10.dp)
             ) {
@@ -1516,6 +1531,14 @@ fun PhotoEditorScreen(
             EditMode.STICKER -> Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Same bounded scroll as the draw
+                    // panel (v0.9.58, C3): the tab row,
+                    // the fixed-height grid and the
+                    // caption together sit near the cap,
+                    // and a large font scale tips them
+                    // over it on short screens.
+                    .heightIn(max = 248.dp)
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp)
                     .padding(bottom = 10.dp)
             ) {

@@ -1071,11 +1071,14 @@ fun SettingsScreen(
                 .padding(vertical = 10.dp)
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("官方壁纸图库", fontSize = 15.sp)
+                // Detail-settings row sizes (v0.9.58,
+                // C2): the official two-line settings
+                // row draws title 16 / detail 13.
+                Text("官方壁纸图库", fontSize = 16.sp)
                 Text(
                     "Telegram 官方背景和你用过的背景，设好会" +
                         "同步到你账号的其他客户端。",
-                    color = Color.Gray, fontSize = 12.5.sp
+                    color = Color.Gray, fontSize = 13.sp
                 )
             }
             Text(
