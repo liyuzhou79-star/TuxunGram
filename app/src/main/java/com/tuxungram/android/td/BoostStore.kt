@@ -147,6 +147,16 @@ object BoostStore {
 
     private var currentChatId = 0L
 
+    /** Giveaway ids with a launch already in flight
+     *  (v0.9.58, C1): the confirm dialog closes the moment
+     *  it is confirmed, so without this guard the row's
+     *  launch button could fire a second launch for the
+     *  same giveaway while the first is still travelling —
+     *  the server would refuse it and the user would see a
+     *  failure notice right after a success. */
+    private val launchingGiveawayIds =
+        ConcurrentHashMap.newKeySet<Long>()
+
     fun load(chatId: Long) {
         currentChatId = chatId
         _status.value = null
@@ -289,6 +299,10 @@ object BoostStore {
             onDone("助力页已经关掉了，这个抽奖没发起。")
             return
         }
+        if (!launchingGiveawayIds.add(giveaway.id)) {
+            onDone("这个抽奖正在发起中，等它完成再看。")
+            return
+        }
         val parameters = JSONObject().apply {
             put("@type", "giveawayParameters")
             put("boosted_chat_id", chatId)
@@ -318,6 +332,7 @@ object BoostStore {
                 )
             }
         TdRepository.sendRaw(query) { response ->
+            launchingGiveawayIds.remove(giveaway.id)
             if (TdClient.isError(response)) {
                 onDone(launchErrorText(response))
             } else {
