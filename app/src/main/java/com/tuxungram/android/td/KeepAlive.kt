@@ -330,8 +330,22 @@ object Notifier {
         }
     }
 
-    private fun mentionsMe(content: JSONObject?): Boolean {
-        if (content == null || myId == 0L) return false
+    private fun mentionsMe(content: JSONObject?): Boolean =
+        mentionsMe(content, myId, myUsername)
+
+    /** The mention check against an explicit identity
+     *  (v0.9.59, D3): the foreground wrapper above passes
+     *  this account's own id / username; the background-
+     *  account path (BackgroundAccounts) passes the OWNING
+     *  account's, resolved through its own client. While
+     *  the identity is unknown (id 0) the answer is always
+     *  false — a muted chat stays silent, never the reverse. */
+    internal fun mentionsMe(
+        content: JSONObject?,
+        id: Long,
+        username: String
+    ): Boolean {
+        if (content == null || id == 0L) return false
         val texts = ArrayList<JSONObject>(2)
         content.optJSONObject("text")?.let { texts.add(it) }
         content.optJSONObject("caption")?.let { texts.add(it) }
@@ -344,11 +358,11 @@ object Notifier {
                     ?.optJSONObject("type") ?: continue
                 when (type.optString("@type")) {
                     "textEntityTypeMentionName" ->
-                        if (type.optLong("user_id") == myId) {
+                        if (type.optLong("user_id") == id) {
                             return true
                         }
                     "textEntityTypeMention" -> {
-                        if (myUsername.isEmpty()) continue
+                        if (username.isEmpty()) continue
                         val entity = entities.optJSONObject(i)
                             ?: continue
                         val start = entity.optInt("offset")
@@ -357,7 +371,7 @@ object Notifier {
                             start + length <= body.length &&
                             body.substring(start, start + length)
                                 .equals(
-                                    "@$myUsername",
+                                    "@$username",
                                     ignoreCase = true
                                 )
                         ) {

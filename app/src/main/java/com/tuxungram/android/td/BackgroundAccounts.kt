@@ -54,6 +54,18 @@ object BackgroundAccounts {
          *  notification mark-read action (same role as
          *  Notifier's foreground map). */
         val lastMessageIdByChat = ConcurrentHashMap<Long, Long>()
+
+        /** This account's own user id / username, for the
+         *  muted-group mention bypass (v0.9.59, D3),
+         *  resolved lazily through this session's own
+         *  client. 0 / "" while unknown — and unknown means
+         *  a muted chat stays silent, never the reverse
+         *  (the foreground path's rule). */
+        @Volatile
+        var myId: Long = 0L
+
+        @Volatile
+        var myUsername: String = ""
     }
 
     private val sessions = ConcurrentHashMap<Int, Session>()
@@ -272,6 +284,27 @@ object BackgroundAccounts {
         session.client.send(params) {}
     }
 
+    /** Resolve this account's own identity through its own
+     *  client (v0.9.59, D3), mirroring Notifier.ensureMe on
+     *  the foreground path. Lazy: the first muted message
+     *  pays the round trip and, exactly like the foreground,
+     *  stays silent while the identity is still unknown. */
+    private fun ensureMe(session: Session) {
+        if (session.myId != 0L) return
+        session.client.send(TdClient.request("getMe")) { me ->
+            if (TdClient.isError(me)) return@send
+            session.myId = me.optLong("id")
+            val direct = me.optString("username")
+            session.myUsername = if (direct.isNotEmpty()) {
+                direct
+            } else {
+                me.optJSONObject("usernames")
+                    ?.optJSONArray("active_usernames")
+                    ?.optString(0) ?: ""
+            }
+        }
+    }
+
     private fun onNewMessage(session: Session, update: JSONObject) {
         // The same master switch as the foreground: the
         // settings 通知 toggle governs background reception
@@ -295,7 +328,30 @@ object BackgroundAccounts {
             if (TdClient.isError(chat)) return@send
             val muteFor = chat.optJSONObject("notification_settings")
                 ?.optInt("mute_for", 0) ?: 0
-            if (muteFor > 0) return@send
+            if (muteFor > 0) {
+                // Muted chats stay silent — EXCEPT a group
+                // message that @-mentions this account (the
+                // official rule). The foreground path has
+                // applied it since v0.9.43 (M3); this path
+                // recorded it as a known difference then,
+                // and v0.9.59 (D3) closes it: the mention is
+                // checked against THIS account's own identity
+                // (see ensureMe). Channels and private chats
+                // have no mention bypass.
+                val type = chat.optJSONObject("type")
+                val isGroup = when (type?.optString("@type")) {
+                    "chatTypeBasicGroup" -> true
+                    "chatTypeSupergroup" ->
+                        type.optBoolean("is_channel") != true
+                    else -> false
+                }
+                ensureMe(session)
+                val mentionBypass = isGroup && Notifier.mentionsMe(
+                    message.optJSONObject("content"),
+                    session.myId, session.myUsername
+                )
+                if (!mentionBypass) return@send
+            }
             val label = AccountStore.labels.value[session.slot]
                 ?: "账号 ${session.slot + 1}"
             // Category channel + content hiding (v0.9.43,
