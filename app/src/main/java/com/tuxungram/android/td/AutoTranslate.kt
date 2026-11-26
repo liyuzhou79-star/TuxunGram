@@ -57,13 +57,16 @@ object AutoTranslate {
     @Volatile
     private var slot = 0
 
-    /** Chats paused for this process run after a gate
-     *  refusal; flipping the switch off and on clears the
-     *  pause (the user may have gained Premium meanwhile). */
+    /** Chats paused after a gate refusal. Persisted per
+     *  slot (v0.9.62, G5 audit): a process restart must not
+     *  resurrect the queue into the same server wall, nor
+     *  repeat a notice that promised to appear only once.
+     *  Flipping the switch off and on clears the pause (the
+     *  user may have gained Premium meanwhile). */
     private val paused = ConcurrentHashMap.newKeySet<Long>()
 
-    /** Chats whose pause notice already fired this run —
-     *  the promise is "told once", not once per message. */
+    /** Chats whose pause notice already fired; persisted
+     *  with the pause itself, for the same reason. */
     private val noticed = ConcurrentHashMap.newKeySet<Long>()
 
     private data class Job(val chatId: Long, val item: MsgItem)
@@ -78,16 +81,24 @@ object AutoTranslate {
 
     private fun key() = "chats_$slot"
 
+    private fun pausedKey() = "paused_$slot"
+
     fun init(context: Context) {
         appContext = context.applicationContext
         slot = AccountStore.currentSlot()
-        _enabled.value = load()
+        _enabled.value = load(key())
+        paused.clear()
+        paused.addAll(load(pausedKey()))
+        // A persisted pause means its notice already fired
+        // before the restart; never tell it twice.
+        noticed.clear()
+        noticed.addAll(paused)
     }
 
-    private fun load(): Set<Long> {
+    private fun load(k: String): Set<Long> {
         val ctx = appContext ?: return emptySet()
         val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(key(), "") ?: ""
+            .getString(k, "") ?: ""
         if (raw.isEmpty()) return emptySet()
         return try {
             val arr = JSONArray(raw)
@@ -111,12 +122,22 @@ object AutoTranslate {
             .apply()
     }
 
+    private fun persistPaused() {
+        val ctx = appContext ?: return
+        val arr = JSONArray()
+        for (id in paused) arr.put(id)
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(pausedKey(), arr.toString())
+            .apply()
+    }
+
     fun isEnabled(chatId: Long): Boolean = chatId in _enabled.value
 
     fun setEnabled(chatId: Long, on: Boolean) {
         if (chatId == 0L) return
         if (on) {
-            paused.remove(chatId)
+            if (paused.remove(chatId)) persistPaused()
+            noticed.remove(chatId)
             if (!isEnabled(chatId)) {
                 _enabled.value = _enabled.value + chatId
                 persist()
@@ -141,6 +162,7 @@ object AutoTranslate {
             queuedKeys.clear()
         }
         paused.clear()
+        persistPaused()
         noticed.clear()
     }
 
@@ -265,7 +287,7 @@ object AutoTranslate {
      *  user set it; the pause is what stops the requests,
      *  and flipping the switch off/on retries deliberately. */
     private fun pauseChat(chatId: Long) {
-        paused.add(chatId)
+        if (paused.add(chatId)) persistPaused()
         dropQueued(chatId)
         if (noticed.add(chatId)) {
             val title = ChatStore.itemOf(chatId)?.title
