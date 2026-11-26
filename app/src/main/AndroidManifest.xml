@@ -19,6 +19,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- In-app update install (v0.9.62, G3): exercised only
+         when the user taps 安装 on the update block; the
+         system still gates it per-app and the UI routes to
+         the allow page when it is off. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Round video notes (v0.9.14, U4) are recorded through
          the system camera app; on Android 11+ the capture

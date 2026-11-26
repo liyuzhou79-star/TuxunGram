@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.Icons
@@ -125,6 +126,7 @@ import com.tuxungram.android.td.ScopeNotifyUi
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import com.tuxungram.android.td.UpdateChecker
+import com.tuxungram.android.td.UpdateDownloader
 import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -2567,14 +2569,216 @@ fun SettingsScreen(
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
-                TextButton(onClick = {
-                    val intent = Intent(
-                        Intent.ACTION_VIEW,
-                        android.net.Uri.parse(updateInfo.url)
-                    )
-                    settingsContext.startActivity(intent)
-                }) {
-                    Text("去下载")
+                // In-app download + install (v0.9.62,
+                // G3): when the check resolved a direct APK
+                // asset, offer downloading it right here
+                // (progress + cancel) and handing it to the
+                // system installer; the release-page link
+                // stays as the fallback, and also as the
+                // only route when no asset was resolved.
+                val dlRaw by UpdateDownloader.state
+                    .collectAsState()
+                val dl = if (
+                    dlRaw.version == updateInfo.latestVersion
+                ) {
+                    dlRaw
+                } else {
+                    com.tuxungram.android.td
+                        .UpdateDownloadState()
+                }
+                var installHint by remember {
+                    mutableStateOf(false)
+                }
+                if (updateInfo.apkUrl.isNotEmpty()) {
+                    when (dl.status) {
+                        "downloading" -> Column {
+                            if (dl.totalBytes > 0) {
+                                LinearProgressIndicator(
+                                    progress = {
+                                        (dl.downloadedBytes
+                                            .toFloat() /
+                                            dl.totalBytes)
+                                            .coerceIn(0f, 1f)
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 6.dp)
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 6.dp)
+                                )
+                            }
+                            Row(
+                                verticalAlignment =
+                                    Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    if (dl.totalBytes > 0) {
+                                        "正在下载 " +
+                                            formatBytes(
+                                                dl.downloadedBytes
+                                            ) + " / " +
+                                            formatBytes(
+                                                dl.totalBytes
+                                            )
+                                    } else {
+                                        "正在下载 " +
+                                            formatBytes(
+                                                dl.downloadedBytes
+                                            )
+                                    },
+                                    color = Color.Gray,
+                                    fontSize = 12.5.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = {
+                                    UpdateDownloader.cancel()
+                                }) {
+                                    Text("取消")
+                                }
+                            }
+                        }
+                        "done" -> Column {
+                            Row {
+                                TextButton(onClick = {
+                                    val file = dl.filePath
+                                        ?.let { File(it) }
+                                    if (file != null &&
+                                        file.exists()
+                                    ) {
+                                        if (UpdateDownloader
+                                                .canInstall(
+                                                    settingsContext
+                                                )
+                                        ) {
+                                            installHint = false
+                                            settingsContext
+                                                .startActivity(
+                                                    UpdateDownloader
+                                                        .installIntent(
+                                                            settingsContext,
+                                                            file
+                                                        )
+                                                )
+                                        } else {
+                                            // The install
+                                            // permission is
+                                            // asked for only
+                                            // now, at install
+                                            // time: route to
+                                            // the system's
+                                            // allow page; the
+                                            // file stays, so
+                                            // coming back and
+                                            // tapping 安装
+                                            // again finishes.
+                                            installHint = true
+                                            settingsContext
+                                                .startActivity(
+                                                    UpdateDownloader
+                                                        .unknownSourcesIntent(
+                                                            settingsContext
+                                                        )
+                                                )
+                                        }
+                                    }
+                                }) {
+                                    Text("安装")
+                                }
+                                TextButton(onClick = {
+                                    val intent = Intent(
+                                        Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(
+                                            updateInfo.url
+                                        )
+                                    )
+                                    settingsContext
+                                        .startActivity(intent)
+                                }) {
+                                    Text("去下载页")
+                                }
+                            }
+                            if (installHint) {
+                                Text(
+                                    "系统还没允许本应用安装更新：" +
+                                        "在刚打开的系统页里允许，" +
+                                        "回来再点一次「安装」即可，" +
+                                        "下载好的文件不会丢。",
+                                    color = Color(0xFFC62828),
+                                    fontSize = 12.5.sp
+                                )
+                            }
+                        }
+                        "error" -> Column {
+                            Text(
+                                dl.error ?: "下载失败，再试一次。",
+                                color = Color(0xFFC62828),
+                                fontSize = 12.5.sp,
+                                modifier = Modifier
+                                    .padding(top = 4.dp)
+                            )
+                            Row {
+                                TextButton(onClick = {
+                                    UpdateDownloader.start(
+                                        settingsContext,
+                                        updateInfo.latestVersion,
+                                        updateInfo.apkUrl
+                                    )
+                                }) {
+                                    Text("重试")
+                                }
+                                TextButton(onClick = {
+                                    val intent = Intent(
+                                        Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(
+                                            updateInfo.url
+                                        )
+                                    )
+                                    settingsContext
+                                        .startActivity(intent)
+                                }) {
+                                    Text("去下载页")
+                                }
+                            }
+                        }
+                        else -> Row {
+                            TextButton(onClick = {
+                                installHint = false
+                                UpdateDownloader.start(
+                                    settingsContext,
+                                    updateInfo.latestVersion,
+                                    updateInfo.apkUrl
+                                )
+                            }) {
+                                Text("直接下载安装")
+                            }
+                            TextButton(onClick = {
+                                val intent = Intent(
+                                    Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(
+                                        updateInfo.url
+                                    )
+                                )
+                                settingsContext
+                                    .startActivity(intent)
+                            }) {
+                                Text("去下载页")
+                            }
+                        }
+                    }
+                } else {
+                    TextButton(onClick = {
+                        val intent = Intent(
+                            Intent.ACTION_VIEW,
+                            android.net.Uri.parse(updateInfo.url)
+                        )
+                        settingsContext.startActivity(intent)
+                    }) {
+                        Text("去下载")
+                    }
                 }
             }
             "error" -> Text(

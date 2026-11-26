@@ -17,7 +17,13 @@ data class UpdateInfo(
     val state: String = "idle",
     val latestVersion: String = "",
     val notes: String = "",
-    val url: String = ""
+    val url: String = "",
+    // Direct APK asset URL of the newest release
+    // (v0.9.62, G3): the settings page can download and
+    // install in-app when this is present; empty when the
+    // release could not be resolved to an asset (the page
+    // then keeps the release-page link only).
+    val apkUrl: String = ""
 )
 
 /**
@@ -65,7 +71,8 @@ object UpdateChecker {
                 return compare(
                     currentVersion, tag,
                     release.optString("body"),
-                    release.optString("html_url")
+                    release.optString("html_url"),
+                    apkUrlOf(release)
                 )
             }
         }
@@ -73,24 +80,50 @@ object UpdateChecker {
         val tag = tags?.optJSONObject(0)?.optString("name")
             ?.removePrefix("v") ?: ""
         if (tag.isEmpty()) return UpdateInfo(state = "error")
-        return compare(
-            currentVersion, tag, "",
-            "https://github.com/$REPO/releases"
+        // The tags fallback knows only the version name; one
+        // more call resolves that tag's release so the notes
+        // and the direct APK asset come along too (v0.9.62,
+        // G3). A miss keeps the old link-only behaviour.
+        val byTag = getJson(
+            "https://api.github.com/repos/$REPO/releases/tags/v$tag"
         )
+        return compare(
+            currentVersion, tag,
+            byTag?.optString("body") ?: "",
+            byTag?.optString("html_url")
+                ?: "https://github.com/$REPO/releases",
+            byTag?.let { apkUrlOf(it) } ?: ""
+        )
+    }
+
+    /** The release's APK asset download URL: the first
+     *  asset whose name ends in .apk (each release carries
+     *  exactly one). "" when the release has none. */
+    private fun apkUrlOf(release: JSONObject): String {
+        val assets = release.optJSONArray("assets") ?: return ""
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            if (asset.optString("name").endsWith(".apk")) {
+                return asset.optString("browser_download_url")
+            }
+        }
+        return ""
     }
 
     private fun compare(
         currentVersion: String,
         latest: String,
         notes: String,
-        url: String
+        url: String,
+        apkUrl: String
     ): UpdateInfo =
         if (isNewer(latest, currentVersion)) {
             UpdateInfo(
                 state = "available",
                 latestVersion = latest,
                 notes = notes.trim().take(600),
-                url = url
+                url = url,
+                apkUrl = apkUrl
             )
         } else {
             UpdateInfo(state = "latest", latestVersion = latest)
