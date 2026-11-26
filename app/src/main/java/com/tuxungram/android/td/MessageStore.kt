@@ -1077,6 +1077,67 @@ object MessageStore {
         _translations.value = _translations.value - (chatId to messageId)
     }
 
+    /** Gate refusals (v0.9.62, G1): the server walls
+     *  translation behind Premium, and the tl forbids it in
+     *  secret chats. Both refusals are permanent for this
+     *  account/chat pair, so an automatic queue must stop
+     *  instead of retrying every message into the same wall.
+     *  Same signals translateErrorText maps to words. */
+    fun isTranslateGateError(error: JSONObject): Boolean {
+        val message = error.optString("message")
+        return message.contains("PREMIUM", ignoreCase = true) ||
+            message.contains("secret", ignoreCase = true)
+    }
+
+    /** Auto-translate worker entry (v0.9.62, G1): the same
+     *  translateMessageText call as [translateMessage], but
+     *  the outcome is reported to the caller instead of the
+     *  one-shot error dialog — a queue must not pop a dialog
+     *  per failure. [onResult] receives true only for a gate
+     *  refusal (see [isTranslateGateError]); a success lands
+     *  in the same [translations] flow the manual path uses,
+     *  so bubbles render both identically. */
+    fun translateAuto(
+        chatId: Long,
+        msg: MsgItem,
+        onResult: (Boolean) -> Unit
+    ) {
+        val key = chatId to msg.id
+        if (key in _translating.value ||
+            key in _translations.value
+        ) {
+            onResult(false)
+            return
+        }
+        _translating.value = _translating.value + key
+        val locale = java.util.Locale.getDefault()
+        val lang = locale.language.ifEmpty { "zh" }
+        val query = TdClient.request("translateMessageText").apply {
+            put("chat_id", chatId)
+            put("message_id", msg.id)
+            put("to_language_code", lang)
+            put("tone", "")
+        }
+        TdRepository.sendRaw(query) { response ->
+            _translating.value = _translating.value - key
+            when {
+                TdClient.isError(response) ->
+                    onResult(isTranslateGateError(response))
+                response.optString("text").isEmpty() ->
+                    onResult(false)
+                else -> {
+                    _translations.value = _translations.value +
+                        (key to TranslationUi(
+                            response.optString("text"),
+                            locale.getDisplayLanguage(locale),
+                            entitiesOf(response)
+                        ))
+                    onResult(false)
+                }
+            }
+        }
+    }
+
     // ---- Voice speech recognition (v0.9.55, Z3) ----
     // recognizeSpeech (verified in td_api.tl) asks the
     // server to transcribe a voice note. The result does
@@ -1921,6 +1982,10 @@ object MessageStore {
     fun open(chatId: Long) {
         attach()
         currentChatId = chatId
+        // Auto-translate queue (v0.9.62, G1): work queued for
+        // a chat the user has left is dropped — switching
+        // away stops that chat's automatic translation.
+        AutoTranslate.onOpenChat(chatId)
         // Access + new-message state start from a clean
         // slate per chat (v0.9.44, N3/N4/N5): no bar, badge
         // or read behaviour may leak across chats.
@@ -3608,6 +3673,10 @@ object MessageStore {
                     ) {
                         SoundFx.arrival()
                     }
+                    // Whole-chat auto-translate (v0.9.62,
+                    // G1): a no-op unless this chat's switch
+                    // is on; the store queues and throttles.
+                    AutoTranslate.onIncoming(currentChatId, item)
                 }
             }
             "updateMessageSendSucceeded" -> {

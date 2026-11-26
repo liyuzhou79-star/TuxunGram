@@ -138,6 +138,7 @@ object TdRepository {
         LocalPins.init(context)
         JoinPending.init(context)
         LocalLabels.init(context)
+        AutoTranslate.init(context)
         DownloadStore.init(context)
         AutoDownloadStore.init(context)
         val gen = clientGeneration.get()
@@ -314,6 +315,7 @@ object TdRepository {
                         // leaves with the account (H4).
                         LocalPins.clear()
                         LocalLabels.clear()
+                        AutoTranslate.clear()
                         // Stay on "正在退出…" — the process
                         // is about to restart into the login
                         // flow; flashing the Closed screen's

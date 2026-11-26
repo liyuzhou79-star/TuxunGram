@@ -125,6 +125,7 @@ import androidx.compose.ui.unit.sp
 import android.provider.ContactsContract
 import com.tuxungram.android.td.AdminStore
 import com.tuxungram.android.td.AlbumPart
+import com.tuxungram.android.td.AutoTranslate
 import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.AuthState
@@ -587,6 +588,20 @@ fun ChatScreen(
     val sendError by MessageStore.sendError.collectAsState()
     TranslateErrorDialog()
     SpeechErrorDialog()
+    AutoTranslateNoticeDialog()
+    // Whole-chat auto-translate (v0.9.62, G1): the switch
+    // is per chat and lives on this phone (AutoTranslate);
+    // while it is on, the loaded window is offered to the
+    // throttled queue — repeat offers are no-ops for
+    // messages already translated or queued.
+    val autoTranslateChats by AutoTranslate.enabled
+        .collectAsState()
+    val autoTranslateOn = chatId in autoTranslateChats
+    LaunchedEffect(chatId, autoTranslateOn, messages) {
+        if (autoTranslateOn) {
+            AutoTranslate.onWindow(chatId, messages)
+        }
+    }
     val clipboard = LocalClipboardManager.current
     // Multi-select mode (v0.7.0, F1): long-press a message and
     // choose 多选, then tap messages to add/remove them; the top
@@ -1691,6 +1706,32 @@ fun ChatScreen(
                                 ).show()
                             }
                         )
+                        if (chat?.isSecret != true) {
+                            // Whole-chat auto-translate
+                            // (v0.9.62, G1): a per-chat,
+                            // on-this-phone switch. Secret
+                            // chats get no entry — the tl
+                            // forbids translating their
+                            // messages at all, so a switch
+                            // there could only lie.
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (autoTranslateOn) {
+                                            "自动翻译：开"
+                                        } else {
+                                            "自动翻译：关"
+                                        }
+                                    )
+                                },
+                                onClick = {
+                                    headerMenuOpen = false
+                                    AutoTranslate.setEnabled(
+                                        chatId, !autoTranslateOn
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -7892,6 +7933,28 @@ fun SpeechTextArea(chatId: Long, msg: MsgItem) {
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
+    }
+}
+
+/** One-shot dialog for an auto-translate pause (v0.9.62,
+ *  G1): AutoTranslate paused a chat after the server's gate
+ *  refusal and composed the plain-language reason itself.
+ *  Shown once per chat per run, next to the other one-shot
+ *  translation dialogs. */
+@Composable
+fun AutoTranslateNoticeDialog() {
+    val notice by AutoTranslate.notice.collectAsState()
+    if (notice != null) {
+        AlertDialog(
+            onDismissRequest = { AutoTranslate.clearNotice() },
+            title = { Text("自动翻译") },
+            text = { Text(notice!!) },
+            confirmButton = {
+                TextButton(
+                    onClick = { AutoTranslate.clearNotice() }
+                ) { Text("知道了") }
+            }
+        )
     }
 }
 
