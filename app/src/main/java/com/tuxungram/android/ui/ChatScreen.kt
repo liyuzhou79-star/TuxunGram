@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -126,6 +127,8 @@ import android.provider.ContactsContract
 import com.tuxungram.android.td.AdminStore
 import com.tuxungram.android.td.AlbumPart
 import com.tuxungram.android.td.AutoTranslate
+import com.tuxungram.android.td.SavedTagUi
+import com.tuxungram.android.td.SavedTagsStore
 import com.tuxungram.android.td.AppLock
 import com.tuxungram.android.td.DeepLink
 import com.tuxungram.android.td.AuthState
@@ -492,6 +495,11 @@ fun ChatScreen(
     val actionBar by MessageStore.actionBar.collectAsState()
     var reportFlowOpen by remember { mutableStateOf(false) }
     var addContactOpen by remember { mutableStateOf(false) }
+    // Chat export dialog (v0.9.62, G4): the chat-menu entry
+    // into the same ChatExporter the profile page uses.
+    var exportDialogOpen by remember(chatId) {
+        mutableStateOf(false)
+    }
     val historyBlocked by MessageStore.historyBlocked
         .collectAsState()
     val pendingNew by MessageStore.pendingNewCount
@@ -589,6 +597,13 @@ fun ChatScreen(
     TranslateErrorDialog()
     SpeechErrorDialog()
     AutoTranslateNoticeDialog()
+    if (exportDialogOpen) {
+        ChatExportDialog(
+            chatId = chatId,
+            title = chat?.title ?: "",
+            onDismiss = { exportDialogOpen = false }
+        )
+    }
     // Whole-chat auto-translate (v0.9.62, G1): the switch
     // is per chat and lives on this phone (AutoTranslate);
     // while it is on, the loaded window is offered to the
@@ -601,6 +616,16 @@ fun ChatScreen(
         if (autoTranslateOn) {
             AutoTranslate.onWindow(chatId, messages)
         }
+    }
+    // Saved Messages tags (v0.9.62, G2): the saved chat is
+    // the private chat with oneself; SavedTagsStore resolves
+    // its id once through the same route the chat list uses.
+    val savedChatId by SavedTagsStore.savedChatId
+        .collectAsState()
+    val isSavedChat = chatId != 0L && chatId == savedChatId
+    LaunchedEffect(chatId) { SavedTagsStore.resolveSavedChatId() }
+    LaunchedEffect(isSavedChat) {
+        if (isSavedChat) SavedTagsStore.load()
     }
     val clipboard = LocalClipboardManager.current
     // Multi-select mode (v0.7.0, F1): long-press a message and
@@ -1732,6 +1757,18 @@ fun ChatScreen(
                                 }
                             )
                         }
+                        // Chat export (v0.9.62, G4): the
+                        // chat-menu entry into the export
+                        // the profile page has offered since
+                        // v0.9.12 — same exporter, same
+                        // dialog behaviour.
+                        DropdownMenuItem(
+                            text = { Text("导出聊天记录") },
+                            onClick = {
+                                headerMenuOpen = false
+                                exportDialogOpen = true
+                            }
+                        )
                     }
                 }
             }
@@ -1746,6 +1783,13 @@ fun ChatScreen(
                 .height(0.5.dp)
                 .background(OfficialTheme.current().divider)
         )
+
+        if (isSavedChat) {
+            // Saved Messages tag filter (v0.9.62, G2): a
+            // chip row of the account's saved tags plus,
+            // while one is selected, its message results.
+            SavedTagsSection()
+        }
 
         if (isForum) {
             // Forum group (v0.8.0, G2): the topic list (or one
@@ -3054,6 +3098,7 @@ fun ChatScreen(
                             },
                         onForward = onForward,
                         chatId = chatId,
+                        isSavedChat = isSavedChat,
                         canDeleteAny = adminCaps.canDeleteAny,
                         selectionMode = selectionMode,
                         selected = msg.id in selectedIds,
@@ -5837,6 +5882,10 @@ fun MessageBubble(
     allowedReactions: List<String>?,
     onForward: (List<MsgItem>) -> Unit,
     chatId: Long = 0L,
+    // Saved Messages chat (v0.9.62, G2): the long-press
+    // menu gains a 标签 entry — in the saved chat a
+    // message's reactions are its tags.
+    isSavedChat: Boolean = false,
     canDeleteAny: Boolean = false,
     selectionMode: Boolean = false,
     selected: Boolean = false,
@@ -5903,6 +5952,8 @@ fun MessageBubble(
     var textPressed by remember(msg.id) { mutableStateOf(false) }
     // Select-text page (v0.9.44, N7).
     var selectTextOpen by remember { mutableStateOf(false) }
+    // Saved Messages tag picker (v0.9.62, G2).
+    var tagDialogOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var reactionOpen by remember { mutableStateOf(false) }
@@ -6865,6 +6916,22 @@ fun MessageBubble(
                             MessageStore.translateMessage(chatId, msg)
                         })
                     }
+                    if (isSavedChat &&
+                        msg.sendingState.isEmpty()
+                    ) {
+                        // Saved Messages tags (v0.9.62, G2):
+                        // in the saved chat a message's
+                        // reactions ARE its tags (the tl's
+                        // savedMessagesTag is a ReactionType),
+                        // so the picker toggles reactions
+                        // under their tag name.
+                        add(MessageMenuEntry(
+                            Icons.Filled.Star, "标签"
+                        ) {
+                            menuOpen = false
+                            tagDialogOpen = true
+                        })
+                    }
                     if (msg.kind == MsgKind.VOICE &&
                         msg.sendingState.isEmpty() &&
                         msg.speechState != "text"
@@ -6992,6 +7059,13 @@ fun MessageBubble(
         SelectableTextDialog(
             text = msg.text,
             onDismiss = { selectTextOpen = false }
+        )
+    }
+    if (tagDialogOpen) {
+        SavedTagPickerDialog(
+            msg = msg,
+            chatId = chatId,
+            onDismiss = { tagDialogOpen = false }
         )
     }
     if (editOpen) {
@@ -7956,6 +8030,514 @@ fun AutoTranslateNoticeDialog() {
             }
         )
     }
+}
+
+/** Saved Messages tag filter section (v0.9.62, G2):
+ *  rendered under the top bar only inside the saved chat.
+ *  A chip row (全部 + one chip per tag from
+ *  getSavedMessagesTags); selecting a chip pages
+ *  searchSavedMessages for that tag into a results list —
+ *  tapping a hit jumps the chat window to it, like the
+ *  in-chat search results. Long-pressing a chip renames
+ *  the tag (setSavedMessagesTagLabel; Premium-gated by the
+ *  server, refusals in plain words). */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SavedTagsSection() {
+    val tags by SavedTagsStore.tags.collectAsState()
+    val selected by SavedTagsStore.selected.collectAsState()
+    val results by SavedTagsStore.results.collectAsState()
+    val total by SavedTagsStore.resultsTotal.collectAsState()
+    val exhausted by SavedTagsStore.resultsExhausted
+        .collectAsState()
+    var renameTag by remember { mutableStateOf<SavedTagUi?>(null) }
+    if (tags.isEmpty() && selected == null) return
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(OfficialTheme.current().windowBg)
+    ) {
+        LazyRow(
+            contentPadding = PaddingValues(
+                horizontal = 12.dp, vertical = 6.dp
+            )
+        ) {
+            item(key = "tag_all") {
+                SavedTagChip(
+                    text = "全部",
+                    selected = selected == null,
+                    onClick = { SavedTagsStore.select(null) },
+                    onLongClick = null
+                )
+            }
+            items(tags, key = { it.key }) { tag ->
+                Spacer(Modifier.width(6.dp))
+                SavedTagChip(
+                    text = tag.display,
+                    selected = selected?.key == tag.key,
+                    onClick = { SavedTagsStore.select(tag) },
+                    onLongClick = { renameTag = tag }
+                )
+            }
+        }
+        val sel = selected
+        if (sel != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "「${sel.display}」下的收藏" +
+                        if (total >= 0) "（共 $total 条）" else "",
+                    fontSize = 12.5.sp, color = Color.Gray
+                )
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = {
+                    SavedTagsStore.select(null)
+                }) {
+                    Text("清除筛选", fontSize = 12.5.sp)
+                }
+            }
+            if (results.isEmpty()) {
+                Text(
+                    "这个标签下暂时没有收藏消息。",
+                    fontSize = 13.sp, color = Color.Gray,
+                    modifier = Modifier.padding(
+                        horizontal = 16.dp, vertical = 8.dp
+                    )
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 240.dp)
+                        .background(OfficialTheme.current().panelBg)
+                ) {
+                    items(results, key = { "taghit_${it.id}" }) { hit ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    MessageStore.jumpTo(hit.id)
+                                }
+                                .padding(
+                                    horizontal = 16.dp,
+                                    vertical = 7.dp
+                                )
+                        ) {
+                            Text(
+                                hit.text.ifEmpty {
+                                    when (hit.kind) {
+                                        MsgKind.PHOTO -> "[图片]"
+                                        MsgKind.VIDEO -> "[视频]"
+                                        MsgKind.VOICE -> "[语音]"
+                                        MsgKind.DOCUMENT -> "[文件]"
+                                        MsgKind.AUDIO -> "[音频]"
+                                        MsgKind.STICKER -> "[贴纸]"
+                                        MsgKind.ANIMATION -> "[动图]"
+                                        MsgKind.POLL -> "[投票]"
+                                        MsgKind.LOCATION -> "[位置]"
+                                        MsgKind.CONTACT -> "[联系人]"
+                                        else -> "[消息]"
+                                    }
+                                },
+                                fontSize = 14.sp, maxLines = 2
+                            )
+                            Text(
+                                formatMsgTime(hit.dateSeconds),
+                                color = Color.Gray, fontSize = 11.sp
+                            )
+                        }
+                    }
+                    if (!exhausted) {
+                        item(key = "tag_more") {
+                            TextButton(onClick = {
+                                SavedTagsStore.loadMoreResults()
+                            }) {
+                                Text("加载更多")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    val rt = renameTag
+    if (rt != null) {
+        SavedTagRenameDialog(
+            tag = rt,
+            onDismiss = { renameTag = null }
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SavedTagChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?
+) {
+    Box(
+        modifier = Modifier
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                RoundedCornerShape(50)
+            )
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .padding(horizontal = 12.dp, vertical = 5.dp)
+    ) {
+        Text(
+            text, fontSize = 12.5.sp,
+            color = if (selected) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        )
+    }
+}
+
+/** Rename a saved tag (v0.9.62, G2). The server gates
+ *  setSavedMessagesTagLabel to Premium; a refusal stays in
+ *  the dialog in plain words and the label is unchanged. */
+@Composable
+fun SavedTagRenameDialog(tag: SavedTagUi, onDismiss: () -> Unit) {
+    var text by remember(tag.key) { mutableStateOf(tag.label) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text("标签改名") },
+        text = {
+            Column {
+                Text(
+                    "给这个标签起个名字（最多 12 个字），" +
+                        "在所有设备上都能看到。改名是 Telegram " +
+                        "Premium 的功能，免费账号会被服务器拒绝。",
+                    color = Color.Gray, fontSize = 12.5.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        if (it.length <= 12) text = it
+                    },
+                    singleLine = true,
+                    label = { Text("标签名") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (error != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        error!!,
+                        color = Color(0xFFC62828),
+                        fontSize = 12.5.sp
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !saving,
+                onClick = {
+                    saving = true
+                    SavedTagsStore.setLabel(tag, text) { err ->
+                        saving = false
+                        if (err == null) {
+                            onDismiss()
+                        } else {
+                            error = err
+                        }
+                    }
+                }
+            ) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+/** Tag picker for one saved message (v0.9.62, G2), opened
+ *  from the bubble's long-press menu inside the saved
+ *  chat. In Saved Messages a message's reactions ARE its
+ *  tags (savedMessagesTag is a ReactionType), so each row
+ *  toggles the ordinary reaction; the check mark follows
+ *  the message's chosen reactions as they update. */
+@Composable
+fun SavedTagPickerDialog(
+    msg: MsgItem,
+    chatId: Long,
+    onDismiss: () -> Unit
+) {
+    val tags by SavedTagsStore.tags.collectAsState()
+    val context = LocalContext.current
+    val candidates = LinkedHashSet<String>()
+    for (t in tags) {
+        if (t.emoji.isNotEmpty()) candidates.add(t.emoji)
+    }
+    for (e in MessageStore.COMMON_REACTIONS) candidates.add(e)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("收藏标签") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 380.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "在收藏里，给消息加的回应就是标签；" +
+                        "之后能在收藏顶部按标签筛选。" +
+                        "点一下加上、再点一下去掉。",
+                    color = Color.Gray, fontSize = 12.5.sp
+                )
+                Spacer(Modifier.height(6.dp))
+                for (emoji in candidates) {
+                    val chosen = msg.reactions.any {
+                        it.emoji == emoji && it.chosen
+                    }
+                    val tag = tags.firstOrNull { it.emoji == emoji }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                MessageStore.toggleReactionIn(
+                                    chatId, msg, emoji
+                                ) { err ->
+                                    Toast.makeText(
+                                        context, err,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(emoji, fontSize = 20.sp)
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            when {
+                                tag == null -> "新标签"
+                                tag.label.isNotEmpty() -> tag.label
+                                else -> "已用 ${tag.count} 次"
+                            },
+                            fontSize = 14.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (chosen) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = "已加上",
+                                tint = MaterialTheme.colorScheme
+                                    .primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("完成") }
+        }
+    )
+}
+
+/** Chat export dialog for the chat-menu entry (v0.9.62,
+ *  G4): the same ChatExporter state flow and behaviour as
+ *  the profile page's dialog (v0.9.12) — range choice,
+ *  live progress with cancel, then save-to… or share.
+ *  Kept as a sibling implementation rather than a shared
+ *  component because the two hosts hold their own saver
+ *  launchers; the exporter itself is the single source of
+ *  truth underneath both. */
+@Composable
+fun ChatExportDialog(
+    chatId: Long,
+    title: String,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val es by com.tuxungram.android.td.ChatExporter.state
+        .collectAsState()
+    var exportAll by remember { mutableStateOf(false) }
+    var savedNotice by remember { mutableStateOf<String?>(null) }
+    val saver = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        val donePath = com.tuxungram.android.td.ChatExporter
+            .state.value.donePath
+        if (uri != null && donePath != null) {
+            Thread {
+                try {
+                    java.io.FileInputStream(File(donePath))
+                        .use { input ->
+                            context.contentResolver
+                                .openOutputStream(uri)
+                                ?.use { output ->
+                                    input.copyTo(output)
+                                }
+                        }
+                    savedNotice = "已保存到你选的位置。"
+                } catch (t: Throwable) {
+                    savedNotice = "保存失败，再试一次。"
+                }
+                com.tuxungram.android.td.ChatExporter.reset()
+            }.start()
+        }
+    }
+    fun close() {
+        if (!es.running) {
+            savedNotice = null
+            com.tuxungram.android.td.ChatExporter.reset()
+            onDismiss()
+        }
+    }
+    AlertDialog(
+        onDismissRequest = { close() },
+        title = { Text("导出聊天记录") },
+        text = {
+            Column {
+                when {
+                    es.running -> {
+                        Text(
+                            "正在拉取历史记录，已拿到 ${es.count} 条…"
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "消息多的群拉全部记录要花点时间，" +
+                                "可以随时取消，取消不会生成文件。",
+                            color = Color.Gray, fontSize = 12.5.sp
+                        )
+                    }
+                    es.donePath != null -> Text(
+                        "导出完成，共 ${es.doneCount} 条。" +
+                            "点「保存到…」选个位置把它存下来，" +
+                            "或点「分享」直接发出去。" +
+                            if (es.truncated) {
+                                "注意：这个对话的记录超过了导出" +
+                                    "上限 100000 条，本文件只有" +
+                                    "最近的 100000 条，更早的记录" +
+                                    "没有包含进来。"
+                            } else {
+                                ""
+                            }
+                    )
+                    es.error != null -> Text(es.error!!)
+                    savedNotice != null -> Text(savedNotice!!)
+                    else -> {
+                        Text(
+                            "把这个对话的文字记录存成一个 .txt " +
+                                "文件：每条一行，带时间和发送者。" +
+                                "图片、视频、文件只留一行占位说明，" +
+                                "不导文件本身。"
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { exportAll = false }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            RadioText(!exportAll, "最近 1000 条")
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { exportAll = true }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            RadioText(exportAll, "全部记录")
+                        }
+                        if (exportAll) {
+                            Text(
+                                "全部记录：消息特别多的群可能要" +
+                                    "几分钟，期间请别关 App；最多" +
+                                    "导出最近 100000 条，超出的部分" +
+                                    "会在文件开头写明。",
+                                color = Color.Gray,
+                                fontSize = 12.5.sp
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when {
+                es.running -> TextButton(onClick = {
+                    com.tuxungram.android.td.ChatExporter
+                        .cancel()
+                }) { Text("取消导出") }
+                es.donePath != null -> Row {
+                    TextButton(onClick = {
+                        val path = es.donePath
+                            ?: return@TextButton
+                        val uri = androidx.core.content
+                            .FileProvider.getUriForFile(
+                                context,
+                                "com.tuxungram.android" +
+                                    ".fileprovider",
+                                File(path)
+                            )
+                        val share = Intent(
+                            Intent.ACTION_SEND
+                        ).apply {
+                            type = "text/plain"
+                            putExtra(
+                                Intent.EXTRA_STREAM, uri
+                            )
+                            addFlags(
+                                Intent
+                                    .FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
+                        context.startActivity(
+                            Intent.createChooser(
+                                share, "分享聊天记录"
+                            )
+                        )
+                    }) { Text("分享") }
+                    TextButton(onClick = {
+                        saver.launch(exportFileName(title))
+                    }) { Text("保存到…") }
+                }
+                es.error != null || savedNotice != null ->
+                    TextButton(onClick = { close() }) {
+                        Text("关闭")
+                    }
+                else -> TextButton(onClick = {
+                    com.tuxungram.android.td.ChatExporter.start(
+                        context, chatId, title,
+                        if (exportAll) 0 else 1000
+                    )
+                }) { Text("开始导出") }
+            }
+        },
+        dismissButton = {
+            if (!es.running && es.donePath == null) {
+                TextButton(onClick = { close() }) {
+                    Text("取消")
+                }
+            }
+        }
+    )
 }
 
 /** One-shot dialog for a translation refusal (v0.9.5, O4):

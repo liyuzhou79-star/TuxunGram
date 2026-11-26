@@ -20,7 +20,11 @@ data class ExportState(
     val count: Int = 0,
     val donePath: String? = null,
     val doneCount: Int = 0,
-    val error: String? = null
+    val error: String? = null,
+    // The export stopped at MAX_LINES while older history
+    // remained (v0.9.62, G4): the file and the dialog both
+    // say so — a truncated export never looks complete.
+    val truncated: Boolean = false
 )
 
 private data class ExportLine(
@@ -41,9 +45,20 @@ private data class ExportLine(
  * MessageStore: its parseMessage auto-kicks photo downloads,
  * which a text export must not do. Progress and cancellation
  * ride the state flow; a cancelled or failed export writes
- * nothing.
+ * nothing. v0.9.62 (G4): service messages reuse the chat's
+ * own service wording via servicePreviewText (cache reads
+ * only, no parsing), and the pull is capped at MAX_LINES
+ * with the truncation stated in the file and the dialog.
  */
 object ChatExporter {
+
+    /** Hard line cap (v0.9.62, G4): even "全部记录" stops
+     *  here. The lines are held in memory until written, so
+     *  an unbounded pull of a million-message chat could
+     *  take the process down; 100k lines is far beyond any
+     *  realistic read-back and the truncation is stated in
+     *  the file header and the dialog, never silent. */
+    const val MAX_LINES = 100_000
 
     private val _state = MutableStateFlow(ExportState())
     val state: StateFlow<ExportState> = _state
@@ -123,11 +138,20 @@ object ChatExporter {
             _state.value = ExportState(
                 chatId = chatId, running = true, count = lines.size
             )
-            val reachedLimit = limit > 0 && lines.size >= limit
+            val hitCap = lines.size >= MAX_LINES
+            val reachedLimit =
+                (limit > 0 && lines.size >= limit) || hitCap
             if (!addedOlder || reachedLimit || arr == null ||
                 arr.length() == 0
             ) {
-                finish(context, gen, chatId, title, limit, lines)
+                // Truncated only when the cap — not the
+                // user's own range choice and not the true
+                // end of history — is what stopped the pull.
+                finish(
+                    context, gen, chatId, title, limit, lines,
+                    truncated = hitCap && addedOlder &&
+                        (limit == 0 || limit > MAX_LINES)
+                )
             } else {
                 page(context, gen, chatId, title, limit, oldest, lines)
             }
@@ -143,7 +167,8 @@ object ChatExporter {
         chatId: Long,
         title: String,
         limit: Int,
-        lines: ArrayList<ExportLine>
+        lines: ArrayList<ExportLine>,
+        truncated: Boolean
     ) {
         if (gen != generation) return
         if (cancelled) {
@@ -152,10 +177,15 @@ object ChatExporter {
             )
             return
         }
-        val trimmed = if (limit > 0 && lines.size > limit) {
+        val effectiveLimit = if (limit > 0) {
+            minOf(limit, MAX_LINES)
+        } else {
+            MAX_LINES
+        }
+        val trimmed = if (lines.size > effectiveLimit) {
             // Pages arrived newest-first, so the head of the
             // list is the newest slice the user asked for.
-            ArrayList(lines.subList(0, limit))
+            ArrayList(lines.subList(0, effectiveLimit))
         } else {
             lines
         }
@@ -163,7 +193,10 @@ object ChatExporter {
         val senderKeys = trimmed.map { it.senderKey }
             .filter { it.isNotEmpty() }.distinct()
         if (senderKeys.isEmpty()) {
-            writeFile(context, gen, chatId, title, trimmed, emptyMap())
+            writeFile(
+                context, gen, chatId, title, trimmed,
+                emptyMap(), truncated
+            )
             return
         }
         val names = HashMap<String, String>()
@@ -172,7 +205,10 @@ object ChatExporter {
             val done: (String) -> Unit = { name ->
                 synchronized(names) { names[key] = name }
                 if (remaining.decrementAndGet() == 0) {
-                    writeFile(context, gen, chatId, title, trimmed, names)
+                    writeFile(
+                        context, gen, chatId, title, trimmed,
+                        names, truncated
+                    )
                 }
             }
             if (key.startsWith("u")) {
@@ -216,7 +252,8 @@ object ChatExporter {
         chatId: Long,
         title: String,
         lines: List<ExportLine>,
-        names: Map<String, String>
+        names: Map<String, String>,
+        truncated: Boolean
     ) {
         Thread {
             try {
@@ -240,6 +277,14 @@ object ChatExporter {
                     out.newLine()
                     out.write("共 ${lines.size} 条")
                     out.newLine()
+                    if (truncated) {
+                        out.write(
+                            "注意：这个对话的记录超过了导出上限 " +
+                                "$MAX_LINES 条，本文件只包含最近的 " +
+                                "$MAX_LINES 条，更早的记录没有包含进来。"
+                        )
+                        out.newLine()
+                    }
                     out.write(
                         "说明：图片、视频、文件等媒体只保留一行占位说明，" +
                             "不包含文件本身。"
@@ -264,7 +309,8 @@ object ChatExporter {
                     _state.value = ExportState(
                         chatId = chatId,
                         donePath = file.absolutePath,
-                        doneCount = lines.size
+                        doneCount = lines.size,
+                        truncated = truncated
                     )
                 } else if (gen == generation) {
                     file.delete()
@@ -305,6 +351,20 @@ object ChatExporter {
             if (caption.isEmpty()) base else "$base $caption"
         val text: String
         var system = false
+        // Service family (v0.9.62, G4): the export line is
+        // the same sentence the chat itself shows, composed
+        // by MessageStore's service wording — until now the
+        // export reduced almost every service message to a
+        // bare 「服务消息」. That wording reads only name
+        // caches (no parsing, no downloads), so the
+        // exporter's independence rule still holds.
+        if (MessageStore.isServiceContentType(type)) {
+            val line = MessageStore.servicePreviewText(msg)
+            return ExportLine(
+                dateSec, senderKey,
+                line.ifEmpty { "服务消息" }, system = true
+            )
+        }
         when (type) {
             "messageText" -> {
                 text = formattedText(content, "text")

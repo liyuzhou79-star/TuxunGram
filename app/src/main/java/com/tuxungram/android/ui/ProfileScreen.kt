@@ -2731,7 +2731,16 @@ fun ProfileScreen(
                         }
                         es.donePath != null -> Text(
                             "导出完成，共 ${es.doneCount} 条。" +
-                                "点「保存到…」选个位置把它存下来。"
+                                "点「保存到…」选个位置把它存下来，" +
+                                "或点「分享」直接发出去。" +
+                                if (es.truncated) {
+                                    "注意：这个对话的记录超过了导出" +
+                                        "上限 100000 条，本文件只有" +
+                                        "最近的 100000 条，更早的记录" +
+                                        "没有包含进来。"
+                                } else {
+                                    ""
+                                }
                         )
                         es.error != null -> Text(es.error!!)
                         exportSavedNotice != null ->
@@ -2779,11 +2788,36 @@ fun ProfileScreen(
                     es.running -> TextButton(onClick = {
                         com.tuxungram.android.td.ChatExporter.cancel()
                     }) { Text("取消导出") }
-                    es.donePath != null -> TextButton(onClick = {
-                        exportSaver.launch(
-                            exportFileName(current?.title ?: "")
-                        )
-                    }) { Text("保存到…") }
+                    es.donePath != null -> Row {
+                        TextButton(onClick = {
+                            val path = es.donePath ?: return@TextButton
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                "com.tuxungram.android.fileprovider",
+                                File(path)
+                            )
+                            val share = Intent(
+                                Intent.ACTION_SEND
+                            ).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(
+                                    Intent
+                                        .FLAG_GRANT_READ_URI_PERMISSION
+                                )
+                            }
+                            context.startActivity(
+                                Intent.createChooser(
+                                    share, "分享聊天记录"
+                                )
+                            )
+                        }) { Text("分享") }
+                        TextButton(onClick = {
+                            exportSaver.launch(
+                                exportFileName(current?.title ?: "")
+                            )
+                        }) { Text("保存到…") }
+                    }
                     es.error != null ||
                         exportSavedNotice != null -> TextButton(
                         onClick = {
@@ -3355,7 +3389,7 @@ private fun SecretKeyIdenticon(
 /** Suggested save-picker name for a chat export (v0.9.12,
  *  S4): the chat title with filesystem-hostile characters
  *  folded to underscores. */
-private fun exportFileName(title: String): String {
+fun exportFileName(title: String): String {
     val cleaned = buildString {
         for (ch in title) {
             if (ch.isLetterOrDigit() || ch == '-' || ch == '_') {
