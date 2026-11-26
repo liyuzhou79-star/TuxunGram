@@ -180,6 +180,16 @@ object SettingsBackup {
                     AppLock.autoLockMinutes.value
                 )
             })
+            // Local premium (v0.9.63, H1): the on-device
+            // decoration configuration (master switch, name
+            // sticker, badge, banner, icon style). It is a
+            // local cosmetic choice like the label dots, so
+            // it rides the backup; the file stays a local
+            // file, and importing it onto another account
+            // applies the decorations to THAT account's own
+            // name there — nothing about it ever reaches a
+            // server either way.
+            put("local_premium", LocalPremium.toJson())
         }.toString(2)
     }
 
@@ -231,6 +241,7 @@ object SettingsBackup {
         var downloadRetryLimit: Int? = null
         var appLockBiometric: Boolean? = null
         var appLockMinutes: Int? = null
+        var localPremium: String? = null
         val uiObj = root.optJSONObject("ui")
         if (uiObj != null) {
             try {
@@ -365,6 +376,18 @@ object SettingsBackup {
             } catch (t: Throwable) {
                 return "备份里的应用锁部分格式不对，设置没有改动。"
             }
+        }
+        if (root.has("local_premium")) {
+            val obj = root.optJSONObject("local_premium")
+                ?: return "备份里的本地会员部分格式不对，设置没有改动。"
+            // Validated by the store's own parser (v0.9.63,
+            // H1): the sticker must be one of the built-in
+            // choices and the banner index in range, exactly
+            // the checks the prefs loader applies.
+            if (LocalPremium.parse(obj.toString()) == null) {
+                return "备份里的本地会员部分格式不对，设置没有改动。"
+            }
+            localPremium = obj.toString()
         }
         if (root.has("chat_wallpapers")) {
             val obj = root.optJSONObject("chat_wallpapers")
@@ -548,6 +571,7 @@ object SettingsBackup {
         downloadRetryLimit?.let { DownloadStore.setRetryLimit(it) }
         appLockBiometric?.let { AppLock.setBiometricEnabled(it) }
         appLockMinutes?.let { AppLock.setAutoLockMinutes(it) }
+        localPremium?.let { LocalPremium.replaceAll(it) }
 
         val proxies = stagedProxies
         if (proxies != null) {

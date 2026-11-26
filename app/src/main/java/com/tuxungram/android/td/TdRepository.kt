@@ -138,6 +138,7 @@ object TdRepository {
         LocalPins.init(context)
         JoinPending.init(context)
         LocalLabels.init(context)
+        LocalPremium.init(context)
         AutoTranslate.init(context)
         DownloadStore.init(context)
         AutoDownloadStore.init(context)
@@ -315,6 +316,7 @@ object TdRepository {
                         // leaves with the account (H4).
                         LocalPins.clear()
                         LocalLabels.clear()
+                        LocalPremium.clear()
                         AutoTranslate.clear()
                         // Stay on "正在退出…" — the process
                         // is about to restart into the login

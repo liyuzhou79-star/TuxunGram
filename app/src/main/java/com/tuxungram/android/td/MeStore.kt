@@ -20,7 +20,13 @@ data class MeUi(
     /** user.profile_photo.id — the id deleteProfilePhoto wants
      *  (NOT the small file's id). 0 = no photo set. */
     val photoId: Long = 0L,
-    val photoPath: String? = null
+    val photoPath: String? = null,
+    /** user.is_premium (v0.9.63, H1): the SERVER's word on
+     *  whether this account really has Telegram Premium.
+     *  Kept strictly separate from the local-premium
+     *  decorations (td/LocalPremium), which are this phone's
+     *  own cosmetics and never interact with this flag. */
+    val isPremium: Boolean = false
 ) {
     val displayName: String
         get() = listOf(firstName, lastName)
@@ -103,6 +109,7 @@ object MeStore {
             phone = user.optString("phone_number"),
             bio = if (keepBio) previous.bio else "",
             photoId = photo?.optLong("id") ?: 0L,
+            isPremium = user.optBoolean("is_premium"),
             photoPath = resolved
                 ?: if (previous.photoId == (photo?.optLong("id") ?: 0L)) {
                     previous.photoPath
