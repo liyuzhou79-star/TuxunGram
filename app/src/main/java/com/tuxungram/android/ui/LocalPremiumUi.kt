@@ -135,6 +135,11 @@ fun DecoratedOwnName(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // The name always carries the row weight (audit
+        // round 18): when decorations follow it, the name —
+        // never the sticker or the badge — is what shrinks,
+        // so a long name cannot push the decorations off
+        // the surface or the surface's other content out.
         Text(
             name,
             fontSize = fontSize,
@@ -142,7 +147,7 @@ fun DecoratedOwnName(
             fontWeight = fontWeight,
             maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
-            modifier = nameModifier
+            modifier = nameModifier.weight(1f, fill = false)
         )
         if (enabled && sticker.isNotEmpty()) {
             Spacer(Modifier.width(4.dp))
@@ -341,7 +346,10 @@ fun LocalPremiumSection() {
             )
             Spacer(Modifier.height(8.dp))
             val options = listOf("") + LocalPremium.STICKERS
-            for (rowItems in options.chunked(6)) {
+            // Five per row: six 46 dp cells plus spacers
+            // would overflow the group on a narrow screen
+            // (audit round 18).
+            for (rowItems in options.chunked(5)) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

@@ -135,8 +135,7 @@ fun HomeDrawerContent(
                         name = me.displayName.ifEmpty { "我" },
                         color = palette.textPrimary,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp,
-                        nameModifier = Modifier.weight(1f, fill = false)
+                        fontSize = 16.sp
                     )
                     if (me.phone.isNotEmpty()) {
                         Text(
@@ -263,9 +262,7 @@ fun HomeDrawerContent(
                             DecoratedOwnName(
                                 name = label,
                                 color = palette.textPrimary,
-                                fontSize = 15.sp,
-                                nameModifier = Modifier
-                                    .weight(1f, fill = false)
+                                fontSize = 15.sp
                             )
                         } else {
                             Text(

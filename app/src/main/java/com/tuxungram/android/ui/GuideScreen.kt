@@ -62,7 +62,7 @@ private val GUIDE_PAGES = listOf(
     ),
     GuidePage(
         GlobeIcon, "连不上？先看代理",
-        "连不上 Telegram 时，先去「设置 → 代理」填一个代理，填好就能连，不用开系统 VPN。"
+        "连不上 Telegram 时，先去「设置 → 账号与资料 → 代理」填一个代理，填好就能连，不用开系统 VPN。"
     ),
     GuidePage(
         Icons.Filled.Refresh, "登录后会自动同步",

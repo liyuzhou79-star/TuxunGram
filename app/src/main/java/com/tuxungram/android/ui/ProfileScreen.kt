@@ -473,6 +473,7 @@ fun ProfileScreen(
                     if (isOwnProfile) {
                         DecoratedOwnName(
                             name = p.title,
+                            maxLines = 2,
                             color = profilePalette.textPrimary,
                             // 20 sp matches the official
                             // profile header name (v0.9.49,

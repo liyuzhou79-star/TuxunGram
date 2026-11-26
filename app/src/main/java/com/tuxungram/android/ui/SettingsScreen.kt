@@ -607,7 +607,7 @@ fun SettingsScreen(
                     } else {
                         Color.Unspecified
                     },
-                    nameModifier = Modifier.weight(1f, fill = false)
+                    maxLines = 2
                 )
                 if (me.phone.isNotEmpty()) {
                     Text(

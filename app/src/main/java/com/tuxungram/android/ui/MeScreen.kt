@@ -204,6 +204,7 @@ fun MeScreen(
             Spacer(Modifier.height(12.dp))
             DecoratedOwnName(
                 name = me.displayName.ifEmpty { "我" },
+                maxLines = 2,
                 // White over a local-premium banner, the
                 // plain primary colour otherwise.
                 color = if (bannerActive) {
