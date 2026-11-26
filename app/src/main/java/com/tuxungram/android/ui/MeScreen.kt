@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import com.tuxungram.android.BuildConfig
 import com.tuxungram.android.td.ContactsStore
 import com.tuxungram.android.td.CrashLog
+import com.tuxungram.android.td.LocalPremium
 import com.tuxungram.android.td.MeStore
 
 /**
@@ -84,6 +85,22 @@ fun MeScreen(
 ) {
     BackHandler(enabled = onBack != null) { onBack?.invoke() }
     val me by MeStore.me.collectAsState()
+    // Local premium (v0.9.63, H1): this page is the user's
+    // own identity card, so it is the banner's home and one
+    // of the decoration surfaces. Everything below renders
+    // exactly as before while the master switch is off.
+    val premiumOn by LocalPremium.enabled.collectAsState()
+    val premiumBanner by LocalPremium.banner.collectAsState()
+    val premiumIcons by LocalPremium.iconStyle.collectAsState()
+    val bannerPair = LocalPremium.BANNER_COLORS
+        .getOrNull(premiumBanner)
+    val bannerActive = premiumOn && premiumBanner != 0 &&
+        bannerPair != null && bannerPair.first != 0L
+    val actionIconTint = if (premiumOn && premiumIcons) {
+        LocalPremiumGold
+    } else {
+        null
+    }
     // Unseen crash-record dot (v0.9.42, K4): the About
     // entry below carries a small red dot while a crash
     // recorded on this phone has not been looked at yet.
@@ -131,15 +148,32 @@ fun MeScreen(
             )
         }
         // Official self-profile header: identity on the
-        // plain bar background, no gradient banner.
+        // plain bar background, no gradient banner. The one
+        // exception is the user's own local-premium banner
+        // (v0.9.63, H1): a gradient they picked, on this
+        // page only, with white header text over it.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(palette.actionBarBg)
+                .then(
+                    if (bannerActive) {
+                        Modifier.background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color(bannerPair!!.first),
+                                    Color(bannerPair.second)
+                                )
+                            )
+                        )
+                    } else {
+                        Modifier.background(palette.actionBarBg)
+                    }
+                )
                 .padding(vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(modifier = Modifier.clickable { onEditProfile() }) {
+            OwnAvatarBadge(sizeDp = 100) {
                 val path = me.photoPath
                 if (path != null) {
                     AvatarImage(path, 100)
@@ -166,17 +200,28 @@ fun MeScreen(
                     }
                 }
             }
+            }
             Spacer(Modifier.height(12.dp))
-            Text(
-                me.displayName.ifEmpty { "我" },
-                color = palette.textPrimary,
+            DecoratedOwnName(
+                name = me.displayName.ifEmpty { "我" },
+                // White over a local-premium banner, the
+                // plain primary colour otherwise.
+                color = if (bannerActive) {
+                    Color.White
+                } else {
+                    palette.textPrimary
+                },
                 // Same header family as the profile page:
                 // 20 sp (v0.9.49, T1 — was 22).
                 fontSize = 20.sp, fontWeight = FontWeight.SemiBold
             )
             Text(
                 "在线",
-                color = palette.accentText,
+                color = if (bannerActive) {
+                    Color.White.copy(alpha = 0.85f)
+                } else {
+                    palette.accentText
+                },
                 fontSize = 14.sp
             )
         }
@@ -227,24 +272,28 @@ fun MeScreen(
             IconRow(
                 Icons.Filled.Edit, "编辑资料",
                 "名字、简介、头像、用户名",
+                iconTint = actionIconTint,
                 onClick = onEditProfile
             )
             SettingsDivider()
             IconRow(
                 QrIcon, "我的二维码",
                 "扫码打开我的主页",
+                iconTint = actionIconTint,
                 onClick = onOpenMyQr
             )
             SettingsDivider()
             IconRow(
                 ImageIcon, "我的动态",
                 "发到资料页的动态、谁看过、删除",
+                iconTint = actionIconTint,
                 onClick = onOpenMyStories
             )
             SettingsDivider()
             IconRow(
                 Icons.Filled.Star, "已保存消息",
                 "发给自己的收藏夹",
+                iconTint = actionIconTint,
                 onClick = {
                     ContactsStore.openSavedMessages { id ->
                         if (id != null) onOpenSavedChat(id)
@@ -255,18 +304,21 @@ fun MeScreen(
             IconRow(
                 Icons.Filled.Settings, "设置",
                 "代理、外观、隐私、存储都在这里",
+                iconTint = actionIconTint,
                 onClick = onOpenSettingsTab
             )
             SettingsDivider()
             IconRow(
                 Icons.Filled.List, "更新日志",
                 "每个版本都改了什么",
+                iconTint = actionIconTint,
                 onClick = onOpenChangelog
             )
             SettingsDivider()
             IconRow(
                 Icons.Filled.Info, "关于",
                 "关于我们这个软件",
+                iconTint = actionIconTint,
                 onClick = onOpenAbout,
                 trailing = if (crashUnseen) {
                     {

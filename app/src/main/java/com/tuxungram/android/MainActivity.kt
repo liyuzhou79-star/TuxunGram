@@ -132,6 +132,7 @@ import com.tuxungram.android.td.LinkRouter
 import com.tuxungram.android.td.ProxyConfig
 import com.tuxungram.android.td.ProxyStore
 import com.tuxungram.android.td.TdClient
+import com.tuxungram.android.td.LocalPremium
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
 import com.tuxungram.android.td.WebAppStore
@@ -142,6 +143,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 import com.tuxungram.android.ui.ArchiveScreen
+import com.tuxungram.android.ui.LocalPremiumGold
 import com.tuxungram.android.ui.SavedTopicsScreen
 import com.tuxungram.android.ui.BlockedScreen
 import com.tuxungram.android.ui.DownloadsScreen
@@ -817,6 +819,12 @@ private fun ReadyHost() {
     // Duck bar switch (v0.9.19, Z5): off removes the bottom
     // bar entirely; home navigation is the drawer's alone.
     val duckBar by UiSettings.duckBar.collectAsState()
+    // Local premium (v0.9.63, H1): with the premium-style
+    // icons switch on, the 我的 tab of the bottom bar — the
+    // tab that is the user's own identity — takes the gold
+    // selected colours instead of the theme accent.
+    val premiumOn by LocalPremium.enabled.collectAsState()
+    val premiumIcons by LocalPremium.iconStyle.collectAsState()
     // Proxy links (v0.9.9, W3) ask for the Settings tab,
     // where the proxy editor opens prefilled.
     val openSettingsWanted by DeepLink.pendingOpenSettings.collectAsState()
@@ -1253,6 +1261,14 @@ private fun ReadyHost() {
                 unselectedIconColor = navPalette.textSecondary,
                 unselectedTextColor = navPalette.textSecondary
             )
+            // The 我的 tab's gold variant (v0.9.63, H1).
+            val navItemColorsGold = NavigationBarItemDefaults.colors(
+                selectedIconColor = LocalPremiumGold,
+                selectedTextColor = LocalPremiumGold,
+                indicatorColor = LocalPremiumGold.copy(alpha = 0.15f),
+                unselectedIconColor = navPalette.textSecondary,
+                unselectedTextColor = navPalette.textSecondary
+            )
             if (duckBar) {
             NavigationBar(
                 containerColor = navPalette.panelBg,
@@ -1302,7 +1318,11 @@ private fun ReadyHost() {
                 NavigationBarItem(
                     selected = homeTab == 3,
                     onClick = { homeTab = 3 },
-                    colors = navItemColors,
+                    colors = if (premiumOn && premiumIcons) {
+                        navItemColorsGold
+                    } else {
+                        navItemColors
+                    },
                     icon = {
                         Icon(
                             Icons.Filled.AccountCircle,

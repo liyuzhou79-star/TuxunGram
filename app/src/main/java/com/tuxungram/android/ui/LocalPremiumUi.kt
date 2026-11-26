@@ -160,14 +160,23 @@ fun DecoratedOwnName(
 /** The user's own avatar with the local-premium badge on
  *  its bottom-right corner (v0.9.63, H1), when the badge
  *  switch is on. [content] draws the avatar itself at
- *  [sizeDp]; the wrapper adds nothing otherwise. */
+ *  [sizeDp]; the wrapper adds nothing otherwise.
+ *  [showBadge] is the caller's own-identity proof: a
+ *  surface that renders arbitrary avatars through one code
+ *  path (the profile page) passes it false for everyone
+ *  who is not the signed-in user, so the badge can never
+ *  land on another person. */
 @Composable
-fun OwnAvatarBadge(sizeDp: Int, content: @Composable () -> Unit) {
+fun OwnAvatarBadge(
+    sizeDp: Int,
+    showBadge: Boolean = true,
+    content: @Composable () -> Unit
+) {
     val enabled by LocalPremium.enabled.collectAsState()
     val badge by LocalPremium.badge.collectAsState()
     Box {
         content()
-        if (enabled && badge) {
+        if (showBadge && enabled && badge) {
             LocalPremiumBadge(
                 size = (sizeDp * 0.36f).dp,
                 modifier = Modifier.align(Alignment.BottomEnd)
@@ -480,8 +489,8 @@ fun LocalPremiumSection() {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("会员风格图标", fontSize = 15.sp)
                     Text(
-                        "底部导航栏的「我的」、抽屉头部和「我」页面里" +
-                            "与你有关的图标换成金色。",
+                        "底部导航栏的「我的」、「我」页面的操作行图标、" +
+                            "抽屉里当前账号的对勾换成金色。",
                         color = Color.Gray, fontSize = 12.sp
                     )
                 }

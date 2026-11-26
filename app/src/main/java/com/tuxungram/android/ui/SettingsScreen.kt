@@ -598,15 +598,16 @@ fun SettingsScreen(
             Column(modifier = Modifier
                 .weight(1f)
                 .padding(start = 14.dp)) {
-                Text(
-                    me.displayName.ifEmpty { "我的资料" },
+                DecoratedOwnName(
+                    name = me.displayName.ifEmpty { "我的资料" },
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = if (settingsOfficial) {
                         settingsPalette.textPrimary
                     } else {
                         Color.Unspecified
-                    }
+                    },
+                    nameModifier = Modifier.weight(1f, fill = false)
                 )
                 if (me.phone.isNotEmpty()) {
                     Text(
@@ -793,7 +794,18 @@ fun SettingsScreen(
                     }
                 }
                 Spacer(Modifier.width(12.dp))
-                Text(slotLabel, fontSize = 15.sp)
+                if (slot == currentSlot) {
+                    // Current account row (v0.9.63, H1): an
+                    // account-switcher surface, so the own
+                    // name carries the local decorations
+                    // here; other slots stay plain.
+                    DecoratedOwnName(
+                        name = slotLabel,
+                        fontSize = 15.sp
+                    )
+                } else {
+                    Text(slotLabel, fontSize = 15.sp)
+                }
                 if (slot == currentSlot) {
                     Text(
                         "（当前）",

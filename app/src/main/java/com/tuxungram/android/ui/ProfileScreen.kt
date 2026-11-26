@@ -392,6 +392,14 @@ fun ProfileScreen(
                 val wallReady = p.userId != 0L &&
                     profilePhotos.userId == p.userId &&
                     profilePhotos.photos.isNotEmpty()
+                // Own profile (v0.9.63, H1): the one profile
+                // page that carries the local-premium
+                // decorations — the signed-in user's own.
+                // Every other profile renders exactly as
+                // before; the decorations never touch anyone
+                // else's page.
+                val isOwnProfile = p.userId != 0L &&
+                    p.userId == me.id
                 val statusLine = when {
                     p.isSecretChat -> "秘密聊天"
                     p.userId != 0L ->
@@ -426,6 +434,10 @@ fun ProfileScreen(
                             Modifier
                         }
                     ) {
+                        OwnAvatarBadge(
+                            sizeDp = 100,
+                            showBadge = isOwnProfile
+                        ) {
                         if (liveItem?.photoPath != null) {
                             AvatarImage(path = liveItem.photoPath, sizeDp = 100)
                         } else {
@@ -455,16 +467,27 @@ fun ProfileScreen(
                                 )
                             }
                         }
+                        }
                     }
                     Spacer(Modifier.height(12.dp))
-                    Text(
-                        p.title,
-                        color = profilePalette.textPrimary,
-                        // 20 sp matches the official profile
-                        // header name (v0.9.49, T1 — was 22).
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    if (isOwnProfile) {
+                        DecoratedOwnName(
+                            name = p.title,
+                            color = profilePalette.textPrimary,
+                            // 20 sp matches the official
+                            // profile header name (v0.9.49,
+                            // T1 — was 22).
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    } else {
+                        Text(
+                            p.title,
+                            color = profilePalette.textPrimary,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                     Text(
                         statusLine,
                         color = if (

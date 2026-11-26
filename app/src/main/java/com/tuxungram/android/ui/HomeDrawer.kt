@@ -53,6 +53,7 @@ import com.tuxungram.android.td.AccountStore
 import com.tuxungram.android.td.BackgroundAccounts
 import com.tuxungram.android.td.ChatStore
 import com.tuxungram.android.td.ContactsStore
+import com.tuxungram.android.td.LocalPremium
 import com.tuxungram.android.td.MeStore
 import com.tuxungram.android.td.TdRepository
 import com.tuxungram.android.td.UiSettings
@@ -98,43 +99,44 @@ fun HomeDrawerContent(
                 }
                 .padding(start = 16.dp, end = 8.dp, top = 20.dp, bottom = 12.dp)
         ) {
-            val path = me.photoPath
-            if (path != null) {
-                AvatarImage(path, 64)
-            } else {
-                val pair = OfficialTheme.avatarColors(
-                    me.id, OfficialTheme.dark
-                )
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(pair.first, pair.second)
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        me.displayName.trim().firstOrNull()?.toString()
-                            ?: "?",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 26.sp
+            OwnAvatarBadge(sizeDp = 64) {
+                val path = me.photoPath
+                if (path != null) {
+                    AvatarImage(path, 64)
+                } else {
+                    val pair = OfficialTheme.avatarColors(
+                        me.id, OfficialTheme.dark
                     )
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(pair.first, pair.second)
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            me.displayName.trim().firstOrNull()?.toString()
+                                ?: "?",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 26.sp
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        me.displayName.ifEmpty { "我" },
+                    DecoratedOwnName(
+                        name = me.displayName.ifEmpty { "我" },
                         color = palette.textPrimary,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
-                        overflow = TextOverflow.Ellipsis,
-                        maxLines = 1
+                        nameModifier = Modifier.weight(1f, fill = false)
                     )
                     if (me.phone.isNotEmpty()) {
                         Text(
@@ -190,6 +192,13 @@ fun HomeDrawerContent(
                 val bgUnread by BackgroundAccounts.unreadBySlot
                     .collectAsState()
                 val fgChats by ChatStore.chats.collectAsState()
+                // Local premium (v0.9.63, H1): the current
+                // account's check turns gold with the
+                // premium-style icons switch.
+                val premiumOn by LocalPremium.enabled
+                    .collectAsState()
+                val premiumIcons by LocalPremium.iconStyle
+                    .collectAsState()
                 for (slot in slots) {
                     val label = labels[slot] ?: "账号 ${slot + 1}"
                     val slotPath = (
@@ -243,14 +252,32 @@ fun HomeDrawerContent(
                             }
                         }
                         Spacer(Modifier.width(12.dp))
-                        Text(
-                            label,
-                            color = palette.textPrimary,
-                            fontSize = 15.sp,
-                            overflow = TextOverflow.Ellipsis,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
+                        if (slot == currentSlot) {
+                            // The current account's row is
+                            // one of the local-premium
+                            // surfaces (v0.9.63, H1): the
+                            // decorations belong to the
+                            // signed-in identity only, so the
+                            // other slots keep the plain
+                            // label they have always had.
+                            DecoratedOwnName(
+                                name = label,
+                                color = palette.textPrimary,
+                                fontSize = 15.sp,
+                                nameModifier = Modifier
+                                    .weight(1f, fill = false)
+                            )
+                        } else {
+                            Text(
+                                label,
+                                color = palette.textPrimary,
+                                fontSize = 15.sp,
+                                overflow = TextOverflow.Ellipsis,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                            )
+                        }
                         if (unread > 0) {
                             Spacer(Modifier.width(8.dp))
                             Box(
@@ -275,7 +302,11 @@ fun HomeDrawerContent(
                             Icon(
                                 Icons.Filled.Check,
                                 contentDescription = "当前账号",
-                                tint = palette.accent,
+                                tint = if (premiumOn && premiumIcons) {
+                                    LocalPremiumGold
+                                } else {
+                                    palette.accent
+                                },
                                 modifier = Modifier.size(20.dp)
                             )
                         }
