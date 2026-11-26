@@ -136,7 +136,7 @@ object LocalPremium {
      *  value or a hostile backup can only ever produce a
      *  valid configuration or none at all. Shared by the
      *  prefs loader and the settings-backup importer. */
-    fun parse(raw: String): Config? {
+    private fun parse(raw: String): Config? {
         return try {
             val obj = JSONObject(raw)
             val sticker = obj.optString("sticker", "")
@@ -156,6 +156,12 @@ object LocalPremium {
             null
         }
     }
+
+    /** True when [raw] is a configuration object this
+     *  store would accept (the settings-backup importer's
+     *  staging check; the importer still applies through
+     *  [replaceAll], which re-validates). */
+    fun isValid(raw: String): Boolean = parse(raw) != null
 
     /** The configuration as one JSON object — the prefs
      *  storage form and the settings-backup section share

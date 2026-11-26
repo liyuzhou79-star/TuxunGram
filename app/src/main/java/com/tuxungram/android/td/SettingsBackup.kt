@@ -384,7 +384,7 @@ object SettingsBackup {
             // H1): the sticker must be one of the built-in
             // choices and the banner index in range, exactly
             // the checks the prefs loader applies.
-            if (LocalPremium.parse(obj.toString()) == null) {
+            if (!LocalPremium.isValid(obj.toString())) {
                 return "备份里的本地会员部分格式不对，设置没有改动。"
             }
             localPremium = obj.toString()
