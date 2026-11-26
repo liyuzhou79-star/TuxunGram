@@ -839,3 +839,30 @@ val QrIcon: ImageVector = icon("Qr", evenOdd = true) {
     moveTo(14f, 19f); horizontalLineTo(16f); verticalLineTo(21f); horizontalLineTo(14f); close()
     moveTo(18.5f, 18.5f); horizontalLineTo(21f); verticalLineTo(21f); horizontalLineTo(18.5f); close()
 }
+
+/** Local-premium badge glyph (v0.9.63, H1): a diamond with
+ *  a star cut out of it (even-odd fill), drawn for the
+ *  settings category row. The badge the user actually
+ *  sees next to their name is the gradient Canvas version
+ *  in LocalPremiumUi.kt; this is its flat icon form. Both
+ *  are drawn here from plain geometry — no official
+ *  artwork is used anywhere in the feature. */
+val LocalPremiumBadgeIcon: ImageVector =
+    icon("LocalPremiumBadge", evenOdd = true) {
+        moveTo(12f, 2f)
+        lineTo(22f, 12f)
+        lineTo(12f, 22f)
+        lineTo(2f, 12f)
+        close()
+        moveTo(12f, 7.4f)
+        lineTo(13.09f, 10.5f)
+        lineTo(16.37f, 10.58f)
+        lineTo(13.76f, 12.57f)
+        lineTo(14.7f, 15.72f)
+        lineTo(12f, 13.85f)
+        lineTo(9.3f, 15.72f)
+        lineTo(10.24f, 12.57f)
+        lineTo(7.63f, 10.58f)
+        lineTo(10.91f, 10.5f)
+        close()
+    }

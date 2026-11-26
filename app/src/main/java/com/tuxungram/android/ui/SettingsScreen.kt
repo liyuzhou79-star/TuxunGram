@@ -60,6 +60,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -80,6 +82,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
@@ -180,6 +183,24 @@ fun openDownloadedFile(context: android.content.Context, path: String) {
     }
 }
 
+/** Settings categories (v0.9.63, H2): the settings home
+ *  lists these; each opens as a second-level page in place
+ *  of the old single long scroll. Every existing section
+ *  lives in exactly one category (see the wrap sites in
+ *  SettingsScreen) — nothing was dropped or re-keyed, only
+ *  regrouped. */
+private enum class SettingsPage(val title: String) {
+    HOME("设置"),
+    ACCOUNT("账号与资料"),
+    APPEARANCE("外观"),
+    NOTIFY("通知"),
+    PRIVACY("隐私与安全"),
+    CHAT_MEDIA("聊天与媒体"),
+    STORAGE("存储与下载"),
+    LOCAL_PREMIUM("本地会员"),
+    ABOUT("关于")
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SettingsScreen(
@@ -194,7 +215,17 @@ fun SettingsScreen(
     onOpenChangelog: () -> Unit = {},
     onOpenGuide: () -> Unit = {}
 ) {
-    BackHandler { onBack() }
+    // Category navigation (v0.9.63, H2): back from a
+    // category page returns to the home list first; back
+    // from the home list leaves the settings screen.
+    var page by remember { mutableStateOf(SettingsPage.HOME) }
+    BackHandler {
+        if (page != SettingsPage.HOME) {
+            page = SettingsPage.HOME
+        } else {
+            onBack()
+        }
+    }
     val settingsContext = LocalContext.current
     // Proxy list (v0.6.0, E4): entries live in ProxyStore; the
     // editor dialog below creates or edits one entry.
@@ -215,6 +246,10 @@ fun SettingsScreen(
             ProxyStore.pendingPrefill.value = null
             proxyEditor = pre
             proxyEditorOpen = true
+            // The editor lives on the 账号与资料 page now
+            // (v0.9.63, H2): land the user on that page so
+            // the prefilled dialog is what they see.
+            page = SettingsPage.ACCOUNT
         }
     }
     var proxyDeleteTarget by remember { mutableStateOf<ProxyConfig?>(null) }
@@ -435,6 +470,11 @@ fun SettingsScreen(
         )
     }
 
+    // Own profile header data: collected once here (it used
+    // to be declared mid-column) because both the home
+    // account header and the 账号与资料 page read it
+    // (v0.9.63, H2).
+    val me by MeStore.me.collectAsState()
     val settingsScroll = rememberScrollState()
     // Official single-column layout (v0.9.20, AA1): the
     // page is a gray band (official graySection under the
@@ -475,7 +515,13 @@ fun SettingsScreen(
                 .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = {
+                if (page != SettingsPage.HOME) {
+                    page = SettingsPage.HOME
+                } else {
+                    onBack()
+                }
+            }) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "返回",
@@ -487,7 +533,7 @@ fun SettingsScreen(
                 )
             }
             Text(
-                "设置",
+                page.title,
                 fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
                 color = if (settingsOfficial) {
                     settingsPalette.actionBarTitle
@@ -514,7 +560,7 @@ fun SettingsScreen(
         // official settings screen opens; tapping opens the
         // edit-profile page. Everything renders from
         // MeStore, so an edit shows here the moment it lands.
-        val me by MeStore.me.collectAsState()
+        if (page == SettingsPage.HOME) {
         SettingsGroup {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -599,6 +645,196 @@ fun SettingsScreen(
             )
         }
         }
+        }
+        if (page == SettingsPage.HOME) {
+            Spacer(Modifier.height(14.dp))
+            SettingsGroup {
+                SettingsCategoryRow(
+                    icon = Icons.Filled.AccountCircle,
+                    title = "账号与资料",
+                    subtitle = "多账号切换、代理连接、编辑资料",
+                    onClick = { page = SettingsPage.ACCOUNT }
+                )
+                SettingsDivider()
+                SettingsCategoryRow(
+                    icon = PaletteIcon,
+                    title = "外观",
+                    subtitle = "主题、聊天背景、字号、本地标签",
+                    onClick = { page = SettingsPage.APPEARANCE }
+                )
+                SettingsDivider()
+                SettingsCategoryRow(
+                    icon = Icons.Filled.Notifications,
+                    title = "通知",
+                    subtitle = "后台接收、音效、按类别的通知偏好",
+                    onClick = { page = SettingsPage.NOTIFY }
+                )
+                SettingsDivider()
+                SettingsCategoryRow(
+                    icon = ShieldIcon,
+                    title = "隐私与安全",
+                    subtitle = "隐私设置、应用锁、已登录设备、拉黑名单",
+                    onClick = { page = SettingsPage.PRIVACY }
+                )
+                SettingsDivider()
+                SettingsCategoryRow(
+                    icon = ChatBubbleIcon,
+                    title = "聊天与媒体",
+                    subtitle = "贴纸包管理",
+                    onClick = { page = SettingsPage.CHAT_MEDIA }
+                )
+                SettingsDivider()
+                SettingsCategoryRow(
+                    icon = StorageIcon,
+                    title = "存储与下载",
+                    subtitle = "存储空间、下载管理、自动下载",
+                    onClick = { page = SettingsPage.STORAGE }
+                )
+                SettingsDivider()
+                SettingsCategoryRow(
+                    icon = LocalPremiumBadgeIcon,
+                    title = "本地会员",
+                    subtitle = "只在这台手机上自己看得到的装饰",
+                    iconTint = LocalPremiumGold,
+                    onClick = { page = SettingsPage.LOCAL_PREMIUM }
+                )
+                SettingsDivider()
+                SettingsCategoryRow(
+                    icon = Icons.Filled.Info,
+                    title = "关于",
+                    subtitle = "检查更新、更新日志、设置备份、退出登录",
+                    onClick = { page = SettingsPage.ABOUT }
+                )
+            }
+        }
+        if (page == SettingsPage.ACCOUNT) {
+        SettingsSectionHeader("账号")
+        SettingsGroup {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "可以登录多个 Telegram 账号，每个账号的数据各自独立。其他账号会保持在线：来了新消息会带着账号名通知你，每个账号的未读数显示在这一行右边。切换账号时 App 会自动重启一下，稍等片刻就好。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        // Online total with the honest memory cost
+        // (v0.9.40, G3): the foreground account plus every
+        // background session that reached Ready. Each
+        // online account is a full TDLib instance.
+        val bgOnline by BackgroundAccounts.onlineBackgroundCount
+            .collectAsState()
+        Text(
+            "当前在线账号：${1 + bgOnline} 个。每个在线账号约多占几十 MB 内存，账号越多越明显；不想让某个账号保持在线，退出那个账号的登录即可。",
+            color = Color.Gray, fontSize = 13.sp
+        )
+        val accountSlots by AccountStore.slots.collectAsState()
+        val currentSlot by AccountStore.current.collectAsState()
+        val accountLabels by AccountStore.labels.collectAsState()
+        val accountAvatars by AccountStore.avatars.collectAsState()
+        // Unread totals per account (v0.9.10): background
+        // accounts publish theirs from TDLib's
+        // updateUnreadMessageCount; the running account's
+        // total is the live sum over its chat list.
+        val bgUnread by BackgroundAccounts.unreadBySlot.collectAsState()
+        val fgChats by ChatStore.chats.collectAsState()
+        for ((slotIndex, slot) in accountSlots.withIndex()) {
+            if (slotIndex > 0) SettingsDivider()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (slot != currentSlot) {
+                            TdRepository.switchAccount(slot)
+                        }
+                    }
+                    .padding(vertical = 8.dp)
+            ) {
+                // Avatar per slot (v0.9.9, W0): the running
+                // account's photo comes from MeStore live; the
+                // other slots show the path remembered while
+                // they were last active (their clients are not
+                // running). A stale path whose file is gone
+                // falls back to the initial letter.
+                val slotLabel = accountLabels[slot] ?: "账号 ${slot + 1}"
+                val slotPath = (
+                    if (slot == currentSlot) {
+                        me.photoPath ?: accountAvatars[slot]
+                    } else {
+                        accountAvatars[slot]
+                    }
+                    )?.takeIf { java.io.File(it).exists() }
+                if (slotPath != null) {
+                    AvatarImage(path = slotPath, sizeDp = 40)
+                } else {
+                    val slotPair = OfficialTheme.avatarColors(
+                        slot.toLong() + 1, OfficialTheme.dark
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                androidx.compose.ui.graphics.Brush
+                                    .verticalGradient(
+                                        listOf(
+                                            slotPair.first,
+                                            slotPair.second
+                                        )
+                                    ),
+                                CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            slotLabel.trim().firstOrNull()?.toString()
+                                ?: "?",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Text(slotLabel, fontSize = 15.sp)
+                if (slot == currentSlot) {
+                    Text(
+                        "（当前）",
+                        color = Color.Gray, fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
+                }
+                val slotUnread = if (slot == currentSlot) {
+                    fgChats.sumOf { it.unreadCount }
+                } else {
+                    bgUnread[slot] ?: 0
+                }
+                if (slotUnread > 0) {
+                    Spacer(Modifier.weight(1f))
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                MaterialTheme.colorScheme.primary,
+                                RoundedCornerShape(10.dp)
+                            )
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            UiSettings.badgeText(slotUnread),
+                            color = Color.White,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+        }
+        SettingsDivider()
+        IconRow(
+            icon = Icons.Filled.Add,
+            title = "添加账号",
+            onClick = { TdRepository.addAccount() }
+        )
+        }
+        }
+        if (page == SettingsPage.ACCOUNT) {
         SettingsSectionHeader("代理")
         SettingsGroup {
         Spacer(Modifier.height(4.dp))
@@ -942,6 +1178,8 @@ fun SettingsScreen(
             )
         }
         }
+        }
+        if (page == SettingsPage.APPEARANCE) {
         SettingsSectionHeader("显示")
         SettingsGroup {
         Spacer(Modifier.height(4.dp))
@@ -961,6 +1199,8 @@ fun SettingsScreen(
             }
         }
         }
+        }
+        if (page == SettingsPage.APPEARANCE) {
         SettingsSectionHeader("外观")
         SettingsGroup {
         Spacer(Modifier.height(4.dp))
@@ -1316,131 +1556,8 @@ fun SettingsScreen(
             LabelManageDialog(onDismiss = { labelManageOpen = false })
         }
         }
-        SettingsSectionHeader("账号")
-        SettingsGroup {
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "可以登录多个 Telegram 账号，每个账号的数据各自独立。其他账号会保持在线：来了新消息会带着账号名通知你，每个账号的未读数显示在这一行右边。切换账号时 App 会自动重启一下，稍等片刻就好。",
-            color = Color.Gray, fontSize = 13.sp
-        )
-        // Online total with the honest memory cost
-        // (v0.9.40, G3): the foreground account plus every
-        // background session that reached Ready. Each
-        // online account is a full TDLib instance.
-        val bgOnline by BackgroundAccounts.onlineBackgroundCount
-            .collectAsState()
-        Text(
-            "当前在线账号：${1 + bgOnline} 个。每个在线账号约多占几十 MB 内存，账号越多越明显；不想让某个账号保持在线，退出那个账号的登录即可。",
-            color = Color.Gray, fontSize = 13.sp
-        )
-        val accountSlots by AccountStore.slots.collectAsState()
-        val currentSlot by AccountStore.current.collectAsState()
-        val accountLabels by AccountStore.labels.collectAsState()
-        val accountAvatars by AccountStore.avatars.collectAsState()
-        // Unread totals per account (v0.9.10): background
-        // accounts publish theirs from TDLib's
-        // updateUnreadMessageCount; the running account's
-        // total is the live sum over its chat list.
-        val bgUnread by BackgroundAccounts.unreadBySlot.collectAsState()
-        val fgChats by ChatStore.chats.collectAsState()
-        for ((slotIndex, slot) in accountSlots.withIndex()) {
-            if (slotIndex > 0) SettingsDivider()
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        if (slot != currentSlot) {
-                            TdRepository.switchAccount(slot)
-                        }
-                    }
-                    .padding(vertical = 8.dp)
-            ) {
-                // Avatar per slot (v0.9.9, W0): the running
-                // account's photo comes from MeStore live; the
-                // other slots show the path remembered while
-                // they were last active (their clients are not
-                // running). A stale path whose file is gone
-                // falls back to the initial letter.
-                val slotLabel = accountLabels[slot] ?: "账号 ${slot + 1}"
-                val slotPath = (
-                    if (slot == currentSlot) {
-                        me.photoPath ?: accountAvatars[slot]
-                    } else {
-                        accountAvatars[slot]
-                    }
-                    )?.takeIf { java.io.File(it).exists() }
-                if (slotPath != null) {
-                    AvatarImage(path = slotPath, sizeDp = 40)
-                } else {
-                    val slotPair = OfficialTheme.avatarColors(
-                        slot.toLong() + 1, OfficialTheme.dark
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(
-                                androidx.compose.ui.graphics.Brush
-                                    .verticalGradient(
-                                        listOf(
-                                            slotPair.first,
-                                            slotPair.second
-                                        )
-                                    ),
-                                CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            slotLabel.trim().firstOrNull()?.toString()
-                                ?: "?",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Text(slotLabel, fontSize = 15.sp)
-                if (slot == currentSlot) {
-                    Text(
-                        "（当前）",
-                        color = Color.Gray, fontSize = 12.sp,
-                        modifier = Modifier.padding(start = 6.dp)
-                    )
-                }
-                val slotUnread = if (slot == currentSlot) {
-                    fgChats.sumOf { it.unreadCount }
-                } else {
-                    bgUnread[slot] ?: 0
-                }
-                if (slotUnread > 0) {
-                    Spacer(Modifier.weight(1f))
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                MaterialTheme.colorScheme.primary,
-                                RoundedCornerShape(10.dp)
-                            )
-                            .padding(horizontal = 6.dp, vertical = 1.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            UiSettings.badgeText(slotUnread),
-                            color = Color.White,
-                            fontSize = 11.sp
-                        )
-                    }
-                }
-            }
         }
-        SettingsDivider()
-        IconRow(
-            icon = Icons.Filled.Add,
-            title = "添加账号",
-            onClick = { TdRepository.addAccount() }
-        )
-        }
+        if (page == SettingsPage.PRIVACY) {
         SettingsSectionHeader("安全")
         SettingsGroup {
         Spacer(Modifier.height(4.dp))
@@ -1722,14 +1839,18 @@ fun SettingsScreen(
             )
         }
         }
+        }
         // Privacy is its own section now (v0.9.20, AA1):
         // it used to live inside the 安全 card; the entries
         // are unchanged, only the grouping follows the
         // official page (privacy has its own section there).
+        if (page == SettingsPage.PRIVACY) {
         SettingsSectionHeader("隐私")
         SettingsGroup {
             PrivacySection()
         }
+        }
+        if (page == SettingsPage.NOTIFY) {
         SettingsSectionHeader("通知")
         SettingsGroup {
         Spacer(Modifier.height(4.dp))
@@ -1851,6 +1972,8 @@ fun SettingsScreen(
             }
         }
         }
+        }
+        if (page == SettingsPage.CHAT_MEDIA) {
         SettingsSectionHeader("贴纸包")
         SettingsGroup {
         Spacer(Modifier.height(4.dp))
@@ -1871,6 +1994,8 @@ fun SettingsScreen(
             }
         )
         }
+        }
+        if (page == SettingsPage.STORAGE) {
         SettingsSectionHeader("存储空间")
         SettingsGroup {
         Spacer(Modifier.height(4.dp))
@@ -2518,6 +2643,11 @@ fun SettingsScreen(
         // the app's only network call outside TDLib and runs
         // only when this button is tapped — stated on the
         // page itself, in small print under the button.
+        }
+        if (page == SettingsPage.LOCAL_PREMIUM) {
+            LocalPremiumSection()
+        }
+        if (page == SettingsPage.ABOUT) {
         SettingsSectionHeader("关于")
         SettingsGroup {
         val updateInfo by UpdateChecker.state.collectAsState()
@@ -2901,6 +3031,7 @@ fun SettingsScreen(
             onClick = { TdRepository.logOut() }
         )
         }
+        }
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -3246,4 +3377,54 @@ private fun formatMuteRemaining(seconds: Int): String = when {
     seconds >= 3600 -> "${seconds / 3600} 小时"
     seconds >= 60 -> "${seconds / 60} 分钟"
     else -> "$seconds 秒"
+}
+
+/** One settings category row (v0.9.63, H2): a Material 3
+ *  ListItem — leading icon, title, one-line summary and a
+ *  trailing chevron — inside the home page's category
+ *  group. The glyph tint follows the page's own rule
+ *  (secondary under the official preset, the theme primary
+ *  under a custom accent) unless [iconTint] pins one, as
+ *  the local-premium row does with its gold. */
+@Composable
+private fun SettingsCategoryRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    iconTint: Color? = null,
+    onClick: () -> Unit
+) {
+    val accentMode by UiSettings.accentMode.collectAsState()
+    val palette = OfficialTheme.current()
+    ListItem(
+        headlineContent = { Text(title, fontSize = 16.sp) },
+        supportingContent = { Text(subtitle, fontSize = 13.sp) },
+        leadingContent = {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = iconTint
+                    ?: if (accentMode ==
+                        UiSettings.ACCENT_OFFICIAL
+                    ) {
+                        palette.textSecondary
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                modifier = Modifier.size(24.dp)
+            )
+        },
+        trailingContent = {
+            Icon(
+                Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = Color.Gray,
+                modifier = Modifier.size(20.dp)
+            )
+        },
+        colors = ListItemDefaults.colors(
+            containerColor = Color.Transparent
+        ),
+        modifier = Modifier.clickable { onClick() }
+    )
 }
